@@ -1,15 +1,19 @@
-"""Calibrator: derives per-asset-class success thresholds from existing fwbg runs.
+"""Calibrator: seeds per-asset-class criteria YAMLs and refreshes baseline stats.
 
-Scans `settings.fwbg_test_results_dir/<run>/results.json + strategy.json`,
-groups elite candidates by asset class (FOREX / INDEX / COMMODITY / CRYPTO),
-computes quantiles of available metrics, and writes:
+What it does:
+1. **Always**: scan fwbg test_results, compute per-metric quantiles per asset
+   class, write `_calibration_baseline.json` (read-only reference data).
+2. **Idempotently**: for each known asset class with no existing YAML, seed
+   `<class>.yaml` from `criteria_defaults.DEFAULT_CRITERIA_BY_CLASS`.
+3. **Never overwrites**: existing YAMLs are preserved. User edits in the
+   dashboard survive every `POST /calibrate`.
 
-- `data/criteria/<ASSET_CLASS>.yaml` — editable success thresholds in the
-  schema documented in section 6.1 of the design doc.
-- `data/criteria/_calibration_baseline.json` — raw stats + per-metric quantiles,
-  preserved for comparison when criteria are recalibrated later.
+Why this split: deriving gate thresholds from a mostly-unprofitable historical
+sample is unsound — see criteria_defaults.py for the rationale. The baseline
+JSON remains useful for comparison (the dashboard renders it side-by-side
+with the current YAMLs), but it never feeds the gates directly.
 
-Pure stats, no LLM. See design doc section 4 (Calibrator row) and section 6.1.
+Pure stats / no LLM. See design doc section 4 (Calibrator) and 6.1.
 """
 
 from __future__ import annotations
@@ -23,6 +27,11 @@ from pathlib import Path
 from typing import Any
 
 import yaml
+
+from fwbg_agents.agents.criteria_defaults import (
+    DEFAULT_CRITERIA_BY_CLASS,
+    default_criteria,
+)
 
 log = logging.getLogger(__name__)
 
@@ -48,35 +57,17 @@ SYMBOL_ASSET_CLASS: dict[str, str] = {
 }
 
 
-# Metrics we try to extract from each elite result.
-# value: (extractor description, "higher is better"?)
-# Quantile target: lower 50%/75% if higher-is-better; upper 50%/25% otherwise.
-METRIC_HIGHER_IS_BETTER: dict[str, bool] = {
-    "sharpe": True,
-    "win_rate": True,
-    "trades": True,
-    "calmar": True,
-    "profit_factor": True,
-    "rrr": True,
-    "fold_stability": True,
-    "annual_return": True,
-    "dsr": True,
-    "max_drawdown": False,
-    "pbo": False,
-    "mc_pvalue": False,
-}
-
-
 @dataclass
 class CalibrationResult:
-    """Outcome of a single Calibrator run."""
+    """Outcome of a single Calibrator pass."""
 
     ran_at: datetime
     runs_scanned: int
     runs_with_elite: int
     asset_classes: dict[str, int]  # asset_class -> elite candidate count
     baseline_path: Path
-    criteria_files: list[Path] = field(default_factory=list)
+    seeded_criteria_files: list[Path] = field(default_factory=list)
+    preserved_criteria_files: list[Path] = field(default_factory=list)
 
 
 def classify_symbol(symbol: str) -> str:
@@ -101,9 +92,8 @@ def _load_unified_metrics(run_dir: Path, symbol: str) -> dict[str, Any]:
     """Read `grid_details/<symbol>/unified_metrics.json` if present.
 
     fwbg writes the richer per-symbol metrics (max_drawdown, profit_factor,
-    annual_return, n_wins, n_losses, ...) into this nested file rather than
-    duplicating them into elite_results. Calibrator merges them in so the
-    YAML can use max_drawdown as a hard_blocker.
+    annual_return, n_wins/n_losses, ...) into this nested file rather than
+    duplicating them into elite_results.
     """
     path = run_dir / "grid_details" / symbol / "unified_metrics.json"
     if not path.is_file():
@@ -116,14 +106,8 @@ def _load_unified_metrics(run_dir: Path, symbol: str) -> dict[str, Any]:
 
 
 def _extract_metrics(elite: dict[str, Any], run_dir: Path | None = None) -> dict[str, float]:
-    """Pull the success metrics we care about out of one elite_results entry.
-
-    elite_results carries a compact summary; the full per-symbol numbers
-    (max_drawdown, profit_factor, ...) live in
-    `<run>/grid_details/<symbol>/unified_metrics.json`. If `run_dir` is
-    provided we merge those in — overriding any duplicate keys, since the
-    unified_metrics file is the source of truth for those fields.
-    """
+    """Pull observed metric values out of one elite_results entry, merging in
+    the richer unified_metrics.json when present."""
     merged: dict[str, Any] = dict(elite)
     if run_dir is not None:
         symbol = elite.get("symbol")
@@ -135,32 +119,25 @@ def _extract_metrics(elite: dict[str, Any], run_dir: Path | None = None) -> dict
         "sharpe": merged.get("sharpe"),
         "win_rate": merged.get("win_rate"),
         "trades": merged.get("trades"),
-        "calmar": merged.get("calmar"),
         "profit_factor": merged.get("profit_factor"),
+        "max_drawdown": merged.get("max_drawdown"),
+        "calmar": merged.get("calmar"),
+        "annual_return": merged.get("annual_return"),
         "rrr": merged.get("rrr"),
         "fold_stability": merged.get("fold_stability"),
-        "annual_return": merged.get("annual_return"),
-        "dsr": merged.get("dsr"),
-        # DSR and PBO are not yet emitted by fwbg (per-iteration multiple-testing
-        # corrections are an agent-level concept — they belong to the Analyst, not
-        # to a single backtest). Kept here so when fwbg eventually emits them, no
-        # Calibrator change is needed.
-        "max_drawdown": merged.get("max_drawdown"),
-        "pbo": merged.get("pbo"),
         "mc_pvalue": mc.get("p_value") if isinstance(mc, dict) else None,
     }
     return {k: v for k, v in ((k, _safe_float(v)) for k, v in metrics_raw.items()) if v is not None}
 
 
 def _quantiles(values: list[float]) -> dict[str, float] | None:
-    """Compute the quantiles we need to fill the YAML schema."""
+    """Quantile summary used by the baseline JSON (informational only)."""
     if not values:
         return None
     sv = sorted(values)
     n = len(sv)
 
     def q(p: float) -> float:
-        # Linear interpolation between closest ranks.
         if n == 1:
             return sv[0]
         idx = p * (n - 1)
@@ -197,12 +174,7 @@ def _scan_run(run_dir: Path) -> list[dict[str, Any]]:
     return [e for e in elite if isinstance(e, dict) and e.get("symbol")]
 
 
-def _extract_metrics_for_elite(elite: dict[str, Any], run_dir: Path) -> dict[str, float]:
-    """Convenience: forwards to _extract_metrics with the run_dir attached."""
-    return _extract_metrics(elite, run_dir=run_dir)
-
-
-def _build_quantiles_by_class(
+def _build_baseline(
     test_results_dir: Path,
 ) -> tuple[dict[str, dict[str, dict[str, float]]], int, int, dict[str, int]]:
     """Scan all runs, return per-class per-metric quantiles + counters."""
@@ -212,7 +184,7 @@ def _build_quantiles_by_class(
     elite_counts: dict[str, int] = {}
 
     if not test_results_dir.is_dir():
-        log.warning("calibrator: %s does not exist; calibration will be empty", test_results_dir)
+        log.warning("calibrator: %s does not exist; baseline will be empty", test_results_dir)
         return {}, 0, 0, {}
 
     for run_dir in sorted(test_results_dir.iterdir()):
@@ -246,122 +218,67 @@ def _build_quantiles_by_class(
     return quantiles_by_class, runs_scanned, runs_with_elite, elite_counts
 
 
-def _threshold_op(metric: str, percentile_value: float) -> str:
-    """Render a threshold expression like '>= 1.2' or '< 0.05'."""
-    higher = METRIC_HIGHER_IS_BETTER.get(metric, True)
-    rounded = round(percentile_value, 4)
-    return f">= {rounded}" if higher else f"<= {rounded}"
+def _seed_criteria_yaml(asset_class: str, path: Path) -> None:
+    """Write the hand-curated defaults for `asset_class` to `path`.
 
-
-def _build_criteria_yaml(
-    asset_class: str,
-    metrics: dict[str, dict[str, float]],
-) -> dict[str, Any]:
-    """Build the section-6.1 YAML dict from per-metric quantiles.
-
-    Strategy:
-    - backtest_to_paper.required_all: median (p50) of each available
-      gate metric (sharpe, mc_pvalue, dsr, pbo when present).
-    - required_any (alt-paths): 25th percentile relaxations on sharpe/trades
-      or profit_factor/win_rate (if those exist).
-    - hard_blockers: max_drawdown if present, plus calmar as a fallback signal.
-    - paper_to_live: conservative defaults; these are not derived from
-      backtest stats — they live as editable defaults the user tunes after
-      observing real paper trading drift.
-
-    Metrics absent from the runs (e.g. DSR / PBO when fwbg has not started
-    emitting them) are simply omitted; the YAML stays schema-compatible.
+    Adds a `_meta.note` so the user understands at a glance that the file
+    came from defaults (not from data) and is safe to edit.
     """
-
-    def gate_p50(metric: str) -> str | None:
-        if metric not in metrics:
-            return None
-        return _threshold_op(metric, metrics[metric]["p50"])
-
-    def gate_p25(metric: str) -> str | None:
-        if metric not in metrics:
-            return None
-        higher = METRIC_HIGHER_IS_BETTER.get(metric, True)
-        pct = metrics[metric]["p25"] if higher else metrics[metric]["p75"]
-        return _threshold_op(metric, pct)
-
-    required_all: list[dict[str, str]] = []
-    for metric in ("dsr", "pbo", "mc_pvalue"):
-        op = gate_p50(metric)
-        if op is not None:
-            required_all.append({metric: op})
-
-    required_any: list[dict[str, Any]] = []
-    sharpe_op = gate_p25("sharpe")
-    trades_n = metrics.get("trades", {}).get("p25")
-    if sharpe_op is not None and trades_n is not None:
-        required_any.append({"sharpe": sharpe_op, "min_trades": int(round(trades_n))})
-    pf_op = gate_p25("profit_factor")
-    wr_op = gate_p25("win_rate")
-    if pf_op is not None and wr_op is not None:
-        required_any.append({"profit_factor": pf_op, "win_rate": wr_op})
-    elif wr_op is not None and sharpe_op is None:
-        required_any.append({"win_rate": wr_op})
-
-    hard_blockers: list[dict[str, str]] = []
-    if "max_drawdown" in metrics:
-        # p75 of observed drawdowns becomes the upper bound (still tolerates 3/4 of survivors).
-        hard_blockers.append({"max_drawdown": _threshold_op("max_drawdown", metrics["max_drawdown"]["p75"])})
-    if "calmar" in metrics:
-        hard_blockers.append({"calmar": _threshold_op("calmar", metrics["calmar"]["p25"])})
-
-    return {
+    template = default_criteria(asset_class)
+    if template is None:
+        return
+    payload: dict[str, Any] = {
         "_meta": {
             "asset_class": asset_class,
-            "calibrated_at": datetime.now(UTC).isoformat(),
-            "metrics_available": sorted(metrics.keys()),
+            "seeded_at": datetime.now(UTC).isoformat(),
+            "source": "criteria_defaults.py (hand-curated, not data-derived)",
             "note": (
-                "Auto-generated by Calibrator. Edit thresholds in the dashboard; "
-                "rerun /calibrate to refresh from fresh fwbg runs."
+                "Conservative starting thresholds. Tune in the dashboard once you "
+                "have realized performance data per asset class. The "
+                "_calibration_baseline.json sidecar shows what your historical "
+                "fwbg runs actually look like."
             ),
         },
-        "backtest_to_paper": {
-            "required_all": required_all,
-            "required_any": required_any,
-            "hard_blockers": hard_blockers,
-        },
-        "paper_to_live": {
-            "realized_vs_backtest": {
-                "sharpe_deviation_max": 0.40,
-                "drawdown_breach_factor": 1.5,
-                "win_rate_deviation_max": 0.10,
-            },
-            "minimum_sample": {"trades": 30, "days_running": 60},
-            "regime_check": {"require_no_distribution_shift": True},
-        },
+        **template,
     }
+    path.write_text(yaml.safe_dump(payload, sort_keys=False, allow_unicode=True))
 
 
 def calibrate(
     test_results_dir: Path | None = None,
     criteria_dir: Path | None = None,
 ) -> CalibrationResult:
-    """Run a full calibration pass and persist criteria + baseline."""
+    """Run one calibration pass.
+
+    Effects:
+    - Always refreshes `<criteria_dir>/_calibration_baseline.json` from the
+      latest fwbg test_results.
+    - Seeds `<criteria_dir>/<asset_class>.yaml` from hand-curated defaults
+      for every known class that does NOT already have a YAML.
+    - Never overwrites existing YAMLs (preserves user edits).
+    """
     from fwbg_agents.config import settings
 
     test_results_dir = test_results_dir or settings.fwbg_test_results_dir
     criteria_dir = criteria_dir or settings.criteria_dir
     criteria_dir.mkdir(parents=True, exist_ok=True)
 
-    quantiles_by_class, runs_scanned, runs_with_elite, elite_counts = _build_quantiles_by_class(
+    quantiles_by_class, runs_scanned, runs_with_elite, elite_counts = _build_baseline(
         test_results_dir
     )
 
     ran_at = datetime.now(UTC)
-    criteria_files: list[Path] = []
-    for asset_class, metrics in sorted(quantiles_by_class.items()):
-        if not metrics:
-            continue
-        yaml_dict = _build_criteria_yaml(asset_class, metrics)
+    seeded: list[Path] = []
+    preserved: list[Path] = []
+
+    for asset_class in DEFAULT_CRITERIA_BY_CLASS:
         out_path = criteria_dir / f"{asset_class}.yaml"
-        out_path.write_text(yaml.safe_dump(yaml_dict, sort_keys=False, allow_unicode=True))
-        criteria_files.append(out_path)
-        log.info("calibrator: wrote %s (%d metrics)", out_path, len(metrics))
+        if out_path.is_file():
+            preserved.append(out_path)
+            continue
+        _seed_criteria_yaml(asset_class, out_path)
+        seeded.append(out_path)
+        log.info("calibrator: seeded %s from defaults", out_path)
 
     baseline_path = criteria_dir / "_calibration_baseline.json"
     baseline_payload = {
@@ -380,5 +297,6 @@ def calibrate(
         runs_with_elite=runs_with_elite,
         asset_classes=elite_counts,
         baseline_path=baseline_path,
-        criteria_files=criteria_files,
+        seeded_criteria_files=seeded,
+        preserved_criteria_files=preserved,
     )

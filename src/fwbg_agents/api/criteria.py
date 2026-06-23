@@ -187,7 +187,8 @@ async def trigger_calibration() -> dict[str, Any]:
         "runs_with_elite": result.runs_with_elite,
         "asset_classes_processed": dict(result.asset_classes),
         "baseline_path": str(result.baseline_path),
-        "criteria_files": [str(p) for p in result.criteria_files],
+        "seeded_criteria_files": [str(p) for p in result.seeded_criteria_files],
+        "preserved_criteria_files": [str(p) for p in result.preserved_criteria_files],
     }
 
 

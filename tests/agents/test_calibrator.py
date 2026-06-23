@@ -1,11 +1,12 @@
-"""Calibrator unit tests.
+"""Calibrator tests.
 
-Drives the Calibrator against a fake test_results directory and checks that:
-- runs are discovered and elite candidates grouped by asset class
-- per-asset YAML is written in the section 6.1 shape
-- _calibration_baseline.json captures the raw quantiles
-- unknown symbols fall back to FOREX (matches AssetRegistry.get behavior)
-- absent metrics are simply not emitted (forward-compatible)
+Calibrator behavior under M1-final:
+- baseline JSON ALWAYS refreshed from scanned fwbg test_results
+- per-class criteria YAML SEEDED from hand-curated defaults on first run
+- existing YAMLs NEVER overwritten (preserves user edits in the dashboard)
+- unknown symbols classify as FOREX (matches fwbg AssetRegistry default)
+- merging picks up max_drawdown / profit_factor from
+  grid_details/<symbol>/unified_metrics.json (where fwbg actually writes them)
 """
 
 from __future__ import annotations
@@ -17,10 +18,16 @@ import pytest
 import yaml
 
 from fwbg_agents.agents.calibrator import (
+    SYMBOL_ASSET_CLASS,
     calibrate,
     classify_symbol,
-    _build_criteria_yaml,
+    _extract_metrics,
     _quantiles,
+)
+from fwbg_agents.agents.criteria_defaults import (
+    DEFAULT_CRITERIA_BY_CLASS,
+    default_criteria,
+    known_asset_classes,
 )
 
 
@@ -30,9 +37,7 @@ def _write_run(
     elite_results: list[dict],
     unified_metrics_by_symbol: dict[str, dict] | None = None,
 ) -> None:
-    """Write a fake fwbg run. Optionally also writes per-symbol unified_metrics.json
-    files into grid_details/<symbol>/ — that file is where fwbg actually keeps
-    max_drawdown and profit_factor, so the Calibrator must reach into it."""
+    """Write a fake fwbg run with optional per-symbol unified_metrics.json."""
     run_dir = test_results_dir / name
     run_dir.mkdir(parents=True, exist_ok=True)
     (run_dir / "results.json").write_text(
@@ -55,79 +60,46 @@ def _write_run(
 
 @pytest.fixture
 def fake_test_results(tmp_path: Path) -> Path:
-    """Three runs across FOREX + INDEX, one run with empty elite_results."""
+    """Three runs across FOREX + INDEX, one with empty elite_results."""
     root = tmp_path / "test_results"
     root.mkdir()
     _write_run(
         root,
         "20260301_run_a",
         [
-            {
-                "symbol": "EURUSD",
-                "sharpe": 1.2,
-                "win_rate": 0.55,
-                "calmar": 2.0,
-                "trades": 320,
-                "rrr": 2,
-                "fold_stability": 0.8,
-                "monte_carlo": {"p_value": 0.03, "is_significant": True},
-            },
+            {"symbol": "EURUSD", "sharpe": 1.2, "win_rate": 0.55, "trades": 320,
+             "monte_carlo": {"p_value": 0.03}},
         ],
+        {"EURUSD": {"max_drawdown": 0.15, "profit_factor": 1.55, "annual_return": 0.08}},
     )
     _write_run(
         root,
         "20260302_run_b",
         [
-            {
-                "symbol": "EURUSD",
-                "sharpe": 0.9,
-                "win_rate": 0.48,
-                "calmar": 1.4,
-                "trades": 180,
-                "rrr": 2,
-                "fold_stability": 0.65,
-                "monte_carlo": {"p_value": 0.07, "is_significant": False},
-            },
-            {
-                "symbol": "GBPUSD",
-                "sharpe": 1.5,
-                "win_rate": 0.58,
-                "calmar": 2.8,
-                "trades": 410,
-                "rrr": 3,
-                "fold_stability": 0.72,
-                "monte_carlo": {"p_value": 0.02, "is_significant": True},
-            },
+            {"symbol": "EURUSD", "sharpe": 0.9, "win_rate": 0.48, "trades": 180,
+             "monte_carlo": {"p_value": 0.07}},
+            {"symbol": "GBPUSD", "sharpe": 1.5, "win_rate": 0.58, "trades": 410,
+             "monte_carlo": {"p_value": 0.02}},
         ],
+        {
+            "EURUSD": {"max_drawdown": 0.21, "profit_factor": 1.20, "annual_return": 0.04},
+            "GBPUSD": {"max_drawdown": 0.12, "profit_factor": 1.80, "annual_return": 0.10},
+        },
     )
     _write_run(
         root,
         "20260303_run_c",
         [
-            {
-                "symbol": "NAS100",
-                "sharpe": 0.6,
-                "win_rate": 0.27,
-                "calmar": 3.8,
-                "trades": 750,
-                "rrr": 3,
-                "fold_stability": 0.62,
-                "monte_carlo": {"p_value": 0.04, "is_significant": True},
-            },
-            {
-                "symbol": "DAX",
-                "sharpe": 1.1,
-                "win_rate": 0.51,
-                "calmar": 1.9,
-                "trades": 220,
-                "rrr": 2,
-                "fold_stability": 0.7,
-                "monte_carlo": {"p_value": 0.08, "is_significant": False},
-            },
+            {"symbol": "NAS100", "sharpe": 0.6, "win_rate": 0.27, "trades": 750,
+             "monte_carlo": {"p_value": 0.04}},
         ],
+        {"NAS100": {"max_drawdown": 0.22, "profit_factor": 1.25, "annual_return": 0.06}},
     )
     _write_run(root, "20260304_empty", [])
     return root
+
+
+# ----- helpers / pure functions ----------------------------------------------
 
 
 def test_classify_symbol_known_and_unknown() -> None:
@@ -137,15 +109,7 @@ def test_classify_symbol_known_and_unknown() -> None:
     assert classify_symbol("XAUUSD") == "COMMODITY"
     # Unknown symbol falls back to FOREX (matches AssetRegistry.get default).
     assert classify_symbol("WIBBLE") == "FOREX"
-    # Case-insensitive match.
     assert classify_symbol("eurusd") == "FOREX"
-
-
-def test_quantiles_single_value() -> None:
-    q = _quantiles([0.5])
-    assert q is not None
-    assert q["min"] == 0.5 == q["max"]
-    assert q["n"] == 1
 
 
 def test_quantiles_distribution() -> None:
@@ -156,155 +120,180 @@ def test_quantiles_distribution() -> None:
     assert q["p50"] == pytest.approx(2.5)
 
 
-def test_calibrate_writes_yaml_and_baseline(fake_test_results: Path, tmp_path: Path) -> None:
+def test_known_asset_classes_match_symbol_table() -> None:
+    """Every asset class that appears in the symbol table must have defaults,
+    and vice versa — otherwise the seeding silently skips classes."""
+    classes_in_symbols = set(SYMBOL_ASSET_CLASS.values())
+    classes_in_defaults = set(known_asset_classes())
+    assert classes_in_symbols == classes_in_defaults, (
+        f"mismatch: symbols={classes_in_symbols} defaults={classes_in_defaults}"
+    )
+
+
+# ----- defaults shape --------------------------------------------------------
+
+
+def test_defaults_have_section_6_1_shape() -> None:
+    for asset_class in known_asset_classes():
+        c = default_criteria(asset_class)
+        assert c is not None
+        assert "backtest_to_paper" in c
+        assert "paper_to_live" in c
+        btp = c["backtest_to_paper"]
+        assert isinstance(btp["required_all"], list)
+        assert isinstance(btp["hard_blockers"], list)
+        # Validated gate set: mc_pvalue / sharpe / profit_factor / min_trades
+        flat_all = {k for entry in btp["required_all"] for k in entry}
+        assert {"mc_pvalue", "sharpe", "profit_factor", "min_trades"} <= flat_all
+        # Hard blocker on max_drawdown
+        flat_blockers = {k for entry in btp["hard_blockers"] for k in entry}
+        assert "max_drawdown" in flat_blockers
+
+
+def test_defaults_max_drawdown_differs_per_class() -> None:
+    """Risk profile differs: FOREX/INDEX strict, CRYPTO loose."""
+    def md(asset_class: str) -> str:
+        c = default_criteria(asset_class)
+        assert c is not None
+        entry = next(e for e in c["backtest_to_paper"]["hard_blockers"] if "max_drawdown" in e)
+        return entry["max_drawdown"]
+    assert md("FOREX") == "<= 0.25"
+    assert md("INDEX") == "<= 0.25"
+    assert md("COMMODITY") == "<= 0.3"
+    assert md("CRYPTO") == "<= 0.4"
+
+
+def test_default_criteria_returns_independent_copies() -> None:
+    """Two calls must not share nested lists — otherwise edits leak across calls."""
+    a = default_criteria("FOREX")
+    b = default_criteria("FOREX")
+    assert a == b
+    assert a is not b
+    a["backtest_to_paper"]["required_all"].append({"poisoned": "yes"})
+    assert b is not None
+    assert all("poisoned" not in entry for entry in b["backtest_to_paper"]["required_all"])
+
+
+# ----- end-to-end calibrate behavior ----------------------------------------
+
+
+def test_calibrate_seeds_all_known_classes_on_first_run(
+    fake_test_results: Path, tmp_path: Path
+) -> None:
     criteria_dir = tmp_path / "criteria"
     result = calibrate(test_results_dir=fake_test_results, criteria_dir=criteria_dir)
 
-    assert result.runs_scanned == 4
-    assert result.runs_with_elite == 3
-    assert result.asset_classes == {"FOREX": 3, "INDEX": 2}
+    seeded_names = {p.stem for p in result.seeded_criteria_files}
+    assert seeded_names == set(known_asset_classes())
+    assert result.preserved_criteria_files == []
 
-    forex_path = criteria_dir / "FOREX.yaml"
-    index_path = criteria_dir / "INDEX.yaml"
-    assert forex_path.is_file()
-    assert index_path.is_file()
-    assert forex_path in result.criteria_files
-    assert index_path in result.criteria_files
-
-    forex = yaml.safe_load(forex_path.read_text())
-    # Section 6.1 shape
-    assert "backtest_to_paper" in forex
-    assert "paper_to_live" in forex
-    btp = forex["backtest_to_paper"]
-    for k in ("required_all", "required_any", "hard_blockers"):
-        assert isinstance(btp[k], list)
-    # mc_pvalue should be a gate (we have it on every elite).
-    flat_required_all = {k for entry in btp["required_all"] for k in entry}
-    assert "mc_pvalue" in flat_required_all
-    # calmar is a hard blocker fallback (we have it on every elite).
-    flat_blockers = {k for entry in btp["hard_blockers"] for k in entry}
-    assert "calmar" in flat_blockers
-
-    # Threshold expression style: "OP value"
-    for entry in btp["required_all"]:
-        for value in entry.values():
-            assert isinstance(value, str)
-            assert value.split()[0] in {">=", "<=", ">", "<"}
-
-    meta = forex["_meta"]
-    assert meta["asset_class"] == "FOREX"
-    assert "mc_pvalue" in meta["metrics_available"]
-
-    baseline_path = criteria_dir / "_calibration_baseline.json"
-    assert baseline_path.is_file()
-    baseline = json.loads(baseline_path.read_text())
-    assert baseline["runs_scanned"] == 4
-    assert baseline["asset_class_counts"] == {"FOREX": 3, "INDEX": 2}
-    # Per-class per-metric quantiles preserved for comparison later.
-    assert "FOREX" in baseline["quantiles"]
-    assert "sharpe" in baseline["quantiles"]["FOREX"]
-    assert baseline["quantiles"]["FOREX"]["sharpe"]["n"] == 3.0
+    # YAML on disk is the defaults template (NOT data-derived).
+    forex = yaml.safe_load((criteria_dir / "FOREX.yaml").read_text())
+    assert forex["_meta"]["source"].startswith("criteria_defaults.py")
+    md_entry = next(
+        e for e in forex["backtest_to_paper"]["hard_blockers"] if "max_drawdown" in e
+    )
+    assert md_entry["max_drawdown"] == "<= 0.25"
 
 
-def test_missing_metrics_are_omitted(tmp_path: Path) -> None:
-    """When DSR/PBO/max_drawdown aren't present, they should not appear in the YAML."""
+def test_calibrate_preserves_existing_yaml(tmp_path: Path) -> None:
+    """User edits in the dashboard must survive recalibration."""
+    criteria_dir = tmp_path / "criteria"
+    criteria_dir.mkdir()
+    user_edit = "backtest_to_paper:\n  required_all: [{sharpe: '>= 9.99'}]\npaper_to_live: {}\n"
+    (criteria_dir / "FOREX.yaml").write_text(user_edit)
     test_results = tmp_path / "test_results"
     test_results.mkdir()
-    _write_run(
-        test_results,
-        "minimal",
-        [
-            {"symbol": "EURUSD", "sharpe": 1.0, "win_rate": 0.5, "trades": 100,
-             "monte_carlo": {"p_value": 0.04}},
-        ],
-    )
-    criteria_dir = tmp_path / "criteria"
-    calibrate(test_results_dir=test_results, criteria_dir=criteria_dir)
+
+    result = calibrate(test_results_dir=test_results, criteria_dir=criteria_dir)
+
     forex = yaml.safe_load((criteria_dir / "FOREX.yaml").read_text())
+    sharpe_entry = next(
+        e for e in forex["backtest_to_paper"]["required_all"] if "sharpe" in e
+    )
+    assert sharpe_entry["sharpe"] == ">= 9.99"  # untouched
+    forex_path = criteria_dir / "FOREX.yaml"
+    assert forex_path in result.preserved_criteria_files
+    assert forex_path not in result.seeded_criteria_files
 
-    blockers = {k for entry in forex["backtest_to_paper"]["hard_blockers"] for k in entry}
-    assert "max_drawdown" not in blockers  # absent from fixture
-    required_all = {k for entry in forex["backtest_to_paper"]["required_all"] for k in entry}
-    assert "dsr" not in required_all
-    assert "pbo" not in required_all
-    assert "mc_pvalue" in required_all
+
+def test_calibrate_always_refreshes_baseline(fake_test_results: Path, tmp_path: Path) -> None:
+    criteria_dir = tmp_path / "criteria"
+
+    # Pre-seed all YAMLs so nothing new gets written there, only baseline must refresh.
+    criteria_dir.mkdir()
+    for ac in known_asset_classes():
+        (criteria_dir / f"{ac}.yaml").write_text("backtest_to_paper: {}\npaper_to_live: {}\n")
+
+    result = calibrate(test_results_dir=fake_test_results, criteria_dir=criteria_dir)
+    assert result.seeded_criteria_files == []
+    assert len(result.preserved_criteria_files) == len(known_asset_classes())
+
+    baseline = json.loads((criteria_dir / "_calibration_baseline.json").read_text())
+    assert baseline["runs_scanned"] == 4
+    assert baseline["runs_with_elite"] == 3
+    assert baseline["asset_class_counts"] == {"FOREX": 3, "INDEX": 1}
+    # Real-data metrics (from unified_metrics merge) show up in baseline.
+    assert "max_drawdown" in baseline["quantiles"]["FOREX"]
+    assert "profit_factor" in baseline["quantiles"]["FOREX"]
 
 
-def test_missing_test_results_dir_is_noop(tmp_path: Path) -> None:
-    """Calibrator must not crash when fwbg's results dir is missing."""
+def test_calibrate_handles_missing_test_results_dir(tmp_path: Path) -> None:
     criteria_dir = tmp_path / "criteria"
     result = calibrate(
         test_results_dir=tmp_path / "does-not-exist",
         criteria_dir=criteria_dir,
     )
     assert result.runs_scanned == 0
-    assert result.asset_classes == {}
-    assert result.criteria_files == []
-    # Baseline is still written even if empty, so the dashboard has a stable read target.
-    baseline_path = criteria_dir / "_calibration_baseline.json"
-    assert baseline_path.is_file()
-    baseline = json.loads(baseline_path.read_text())
+    # Seeding still happens — defaults are independent of historical data.
+    assert {p.stem for p in result.seeded_criteria_files} == set(known_asset_classes())
+    # Baseline is still written (empty stats, but present so the dashboard has
+    # a stable read target).
+    baseline = json.loads((criteria_dir / "_calibration_baseline.json").read_text())
     assert baseline["runs_scanned"] == 0
 
 
-def test_unified_metrics_merged_into_calibration(tmp_path: Path) -> None:
-    """max_drawdown and profit_factor live in grid_details/<sym>/unified_metrics.json,
-    not in elite_results. Calibrator must pick them up from there."""
+def test_unified_metrics_merge(tmp_path: Path) -> None:
+    """max_drawdown + profit_factor live in grid_details/<sym>/unified_metrics.json."""
     test_results = tmp_path / "test_results"
     test_results.mkdir()
     _write_run(
         test_results,
-        "with_unified",
+        "merge_check",
         elite_results=[
-            {
-                "symbol": "EURUSD",
-                "sharpe": 1.1,
-                "win_rate": 0.52,
-                "trades": 240,
-                "monte_carlo": {"p_value": 0.03},
-            },
-            {
-                "symbol": "GBPUSD",
-                "sharpe": 0.9,
-                "win_rate": 0.48,
-                "trades": 180,
-                "monte_carlo": {"p_value": 0.05},
-            },
+            {"symbol": "EURUSD", "sharpe": 1.1, "trades": 240,
+             "monte_carlo": {"p_value": 0.03}},
         ],
         unified_metrics_by_symbol={
-            "EURUSD": {
-                "max_drawdown": 0.15,
-                "profit_factor": 1.45,
-                "annual_return": 0.08,
-            },
-            "GBPUSD": {
-                "max_drawdown": 0.22,
-                "profit_factor": 1.20,
-                "annual_return": 0.05,
-            },
+            "EURUSD": {"max_drawdown": 0.15, "profit_factor": 1.45, "annual_return": 0.08},
         },
     )
     criteria_dir = tmp_path / "criteria"
     calibrate(test_results_dir=test_results, criteria_dir=criteria_dir)
-
-    forex = yaml.safe_load((criteria_dir / "FOREX.yaml").read_text())
-    blockers = {k for entry in forex["backtest_to_paper"]["hard_blockers"] for k in entry}
-    assert "max_drawdown" in blockers
-    # max_drawdown gate uses the p75 of observed drawdowns as the upper bound.
-    md_entry = next(e for e in forex["backtest_to_paper"]["hard_blockers"] if "max_drawdown" in e)
-    assert md_entry["max_drawdown"].startswith("<= ")
-
     baseline = json.loads((criteria_dir / "_calibration_baseline.json").read_text())
     forex_metrics = baseline["quantiles"]["FOREX"]
     assert "max_drawdown" in forex_metrics
     assert "profit_factor" in forex_metrics
-    assert "annual_return" in forex_metrics
-    assert forex_metrics["max_drawdown"]["n"] == 2.0
+    assert forex_metrics["max_drawdown"]["n"] == 1.0
 
 
-def test_missing_unified_metrics_file_falls_back_cleanly(tmp_path: Path) -> None:
-    """If grid_details/<sym>/unified_metrics.json is missing, Calibrator must still
-    work with whatever is in elite_results — no crash, no fabricated values."""
+def test_extract_metrics_unified_takes_precedence_over_elite(tmp_path: Path) -> None:
+    """If elite_results has a metric AND unified_metrics has it, unified wins."""
+    run_dir = tmp_path
+    sym_dir = run_dir / "grid_details" / "EURUSD"
+    sym_dir.mkdir(parents=True)
+    (sym_dir / "unified_metrics.json").write_text(
+        json.dumps({"profit_factor": 1.7, "max_drawdown": 0.12})
+    )
+    elite = {"symbol": "EURUSD", "profit_factor": 9.99, "sharpe": 1.0}
+    m = _extract_metrics(elite, run_dir=run_dir)
+    assert m["profit_factor"] == 1.7  # unified wins
+    assert m["max_drawdown"] == 0.12  # from unified
+    assert m["sharpe"] == 1.0  # from elite (unified didn't have it)
+
+
+def test_missing_unified_metrics_file_does_not_break(tmp_path: Path) -> None:
+    """Older fwbg runs without grid_details/ should still produce a baseline."""
     test_results = tmp_path / "test_results"
     test_results.mkdir()
     _write_run(
@@ -316,23 +305,6 @@ def test_missing_unified_metrics_file_falls_back_cleanly(tmp_path: Path) -> None
     criteria_dir = tmp_path / "criteria"
     result = calibrate(test_results_dir=test_results, criteria_dir=criteria_dir)
     assert result.runs_with_elite == 1
-    forex = yaml.safe_load((criteria_dir / "FOREX.yaml").read_text())
-    blockers = {k for entry in forex["backtest_to_paper"]["hard_blockers"] for k in entry}
-    assert "max_drawdown" not in blockers
-
-
-def test_build_criteria_yaml_uses_higher_is_better_polarity() -> None:
-    """Sharpe wants >=, mc_pvalue wants <=. Verify the comparator direction."""
-    metrics = {
-        "sharpe": {"min": 0.5, "p25": 0.8, "p50": 1.1, "p75": 1.4, "max": 1.6, "mean": 1.1, "stdev": 0.3, "n": 5.0},
-        "mc_pvalue": {"min": 0.01, "p25": 0.02, "p50": 0.04, "p75": 0.07, "max": 0.09, "mean": 0.05, "stdev": 0.02, "n": 5.0},
-        "trades": {"min": 50, "p25": 100, "p50": 200, "p75": 350, "max": 500, "mean": 240, "stdev": 130, "n": 5.0},
-    }
-    yaml_dict = _build_criteria_yaml("FOREX", metrics)
-    required_all = yaml_dict["backtest_to_paper"]["required_all"]
-    mc_entry = next(e for e in required_all if "mc_pvalue" in e)
-    assert mc_entry["mc_pvalue"].startswith("<=")  # smaller is better
-    required_any = yaml_dict["backtest_to_paper"]["required_any"]
-    sharpe_entry = next(e for e in required_any if "sharpe" in e)
-    assert sharpe_entry["sharpe"].startswith(">=")
-    assert isinstance(sharpe_entry["min_trades"], int)
+    baseline = json.loads((criteria_dir / "_calibration_baseline.json").read_text())
+    assert "sharpe" in baseline["quantiles"]["FOREX"]
+    assert "max_drawdown" not in baseline["quantiles"]["FOREX"]
