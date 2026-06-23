@@ -1,19 +1,25 @@
-"""Read-only strategy endpoints.
+"""Strategy endpoints.
 
-M2 surfaces strategies and their transition history. No create/update/delete:
-strategies are produced by the Runner (M3) and the Researcher (M4), never by
-direct user input. The dashboard reads from these endpoints; the orchestrator
-calls `transition_strategy` directly.
+M2 added read-only listing + transition history. M3 adds a single creation
+path — POST /strategies — used by the manual smoke flow and (later) by the
+Researcher agent. Updates / deletes never exist; all post-creation changes
+go through the lifecycle module's transition functions.
 """
 
 from __future__ import annotations
 
+import json
+import re
+from datetime import UTC, datetime
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException
+from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import asc, desc, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from fwbg_agents.orchestrator.lifecycle import strategy_dir
 from fwbg_agents.persistence.database import get_session
 from fwbg_agents.persistence.models import (
     EntityType,
@@ -24,6 +30,26 @@ from fwbg_agents.persistence.models import (
 )
 
 router = APIRouter(tags=["strategies"])
+
+
+_SLUG_RE = re.compile(r"^[a-z0-9][a-z0-9_]{1,126}[a-z0-9]$")
+
+
+class StrategyCreate(BaseModel):
+    slug: str = Field(min_length=3, max_length=128)
+    asset_class: str = Field(min_length=1, max_length=32)
+    strategy_family: str = Field(min_length=1, max_length=64)
+    strategy_json: dict[str, Any]
+    tags: list[str] = Field(default_factory=list)
+
+    @field_validator("slug")
+    @classmethod
+    def _validate_slug(cls, v: str) -> str:
+        if not _SLUG_RE.match(v):
+            raise ValueError(
+                "slug must match [a-z0-9][a-z0-9_]*[a-z0-9] (3..128 chars)"
+            )
+        return v
 
 
 def _serialize_strategy(s: Strategy, tags: list[str] | None = None) -> dict[str, Any]:
@@ -55,6 +81,59 @@ def _serialize_transition(t: Transition) -> dict[str, Any]:
         "payload": t.payload,
         "created_by": t.created_by,
         "created_at": t.created_at.isoformat() if t.created_at else None,
+    }
+
+
+@router.post("/strategies", status_code=201)
+async def create_strategy(
+    body: StrategyCreate, session: AsyncSession = Depends(get_session)
+) -> dict[str, Any]:
+    """Create a new strategy in PROPOSED. Writes iteration_001/strategy.json.
+
+    Idempotent against the same slug only insofar as duplicates are rejected
+    with 409 — we never overwrite. No transition row is emitted; creation is
+    not a state change.
+    """
+    exists = (
+        await session.execute(select(Strategy).where(Strategy.slug == body.slug))
+    ).scalar_one_or_none()
+    if exists is not None:
+        raise HTTPException(status_code=409, detail=f"strategy with slug {body.slug!r} exists")
+
+    now = datetime.now(UTC)
+    s = Strategy(
+        slug=body.slug,
+        current_state=StrategyState.PROPOSED.value,
+        iteration_count=0,
+        asset_class=body.asset_class,
+        strategy_family=body.strategy_family,
+        created_at=now,
+        updated_at=now,
+    )
+    session.add(s)
+    try:
+        await session.flush()  # need s.id for tag rows
+    except IntegrityError as exc:
+        await session.rollback()
+        raise HTTPException(status_code=409, detail=f"slug conflict: {body.slug}") from exc
+
+    for tag in dict.fromkeys(body.tags):  # dedupe, preserve order
+        session.add(StrategyTag(strategy_id=s.id, tag=tag))
+
+    iteration_dir = strategy_dir(body.slug) / "iteration_001"
+    iteration_dir.mkdir(parents=True, exist_ok=True)
+    (iteration_dir / "strategy.json").write_text(
+        json.dumps(body.strategy_json, indent=2, sort_keys=True)
+    )
+
+    await session.commit()
+    await session.refresh(s)
+
+    return {
+        "id": s.id,
+        "slug": s.slug,
+        "current_state": s.current_state,
+        "iteration_dir": str(iteration_dir),
     }
 
 
