@@ -1,0 +1,50 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+.venv/
+venv/
+env/
+*.egg-info/
+*.egg
+dist/
+build/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Runtime state
+data/state.db
+data/state.db-journal
+data/state.db-wal
+data/state.db-shm
+data/strategies/
+data/plugins/
+data/transcripts/
+data/criteria/_calibration_baseline.json
+
+# Logs
+*.log
+logs/
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+.mypy_cache/
+.ruff_cache/
+
+# Secrets
+.env
+.env.local
+
+# Graphify
+graphify-out/
+
+# uv
+.uv/
