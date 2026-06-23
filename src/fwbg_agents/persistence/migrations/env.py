@@ -11,6 +11,7 @@ from alembic import context
 
 from fwbg_agents.config import settings
 from fwbg_agents.persistence.database import Base
+from fwbg_agents.persistence import models  # noqa: F401  ensure tables register on Base.metadata
 
 config = context.config
 config.set_main_option("sqlalchemy.url", settings.db_url)

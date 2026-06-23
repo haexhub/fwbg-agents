@@ -29,6 +29,10 @@ class Settings(BaseSettings):
 
     # fwbg
     fwbg_api_url: str = Field(default="http://localhost:8420")
+    fwbg_test_results_dir: Path = Field(
+        default=Path.home() / "fwbg" / "test_results",
+        description="Where fwbg writes per-run output directories. Scanned by Calibrator.",
+    )
 
     # Service
     api_port: int = 8421
@@ -36,6 +40,10 @@ class Settings(BaseSettings):
 
     # Paths
     data_dir: Path = Path("data")
+
+    @property
+    def criteria_dir(self) -> Path:
+        return self.data_dir / "criteria"
 
     @property
     def db_url(self) -> str:

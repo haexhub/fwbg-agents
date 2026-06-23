@@ -27,6 +27,7 @@ data/strategies/
 data/plugins/
 data/transcripts/
 data/criteria/_calibration_baseline.json
+data/criteria/*.yaml
 
 # Logs
 *.log
