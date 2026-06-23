@@ -21,6 +21,7 @@ from fwbg_agents.agents.calibrator import (
     SYMBOL_ASSET_CLASS,
     calibrate,
     classify_symbol,
+    _compute_sortino,
     _extract_metrics,
     _quantiles,
 )
@@ -36,8 +37,9 @@ def _write_run(
     name: str,
     elite_results: list[dict],
     unified_metrics_by_symbol: dict[str, dict] | None = None,
+    tr_trace_by_symbol: dict[str, list[float]] | None = None,
 ) -> None:
-    """Write a fake fwbg run with optional per-symbol unified_metrics.json."""
+    """Write a fake fwbg run with optional per-symbol unified_metrics.json + trades.json."""
     run_dir = test_results_dir / name
     run_dir.mkdir(parents=True, exist_ok=True)
     (run_dir / "results.json").write_text(
@@ -56,6 +58,12 @@ def _write_run(
         sym_dir = run_dir / "grid_details" / symbol
         sym_dir.mkdir(parents=True, exist_ok=True)
         (sym_dir / "unified_metrics.json").write_text(json.dumps(unified))
+    for symbol, trace in (tr_trace_by_symbol or {}).items():
+        sym_dir = run_dir / "grid_details" / symbol
+        sym_dir.mkdir(parents=True, exist_ok=True)
+        (sym_dir / "trades.json").write_text(
+            json.dumps({"tr_trace": trace, "trades_detailed": []})
+        )
 
 
 @pytest.fixture
@@ -308,3 +316,96 @@ def test_missing_unified_metrics_file_does_not_break(tmp_path: Path) -> None:
     baseline = json.loads((criteria_dir / "_calibration_baseline.json").read_text())
     assert "sharpe" in baseline["quantiles"]["FOREX"]
     assert "max_drawdown" not in baseline["quantiles"]["FOREX"]
+
+
+# ----- sortino ---------------------------------------------------------------
+
+
+def test_compute_sortino_math_known_series() -> None:
+    """Sortino math sanity-check with a hand-computable series.
+
+    pnls = [10, 10, 10, -5, -5]
+      mean              = 4.0
+      negative pnls     = [-5, -5]
+      sum of sq(neg)    = 50
+      downside_var      = 50 / 5 = 10
+      downside_dev      = sqrt(10) ≈ 3.1623
+      per_trade_sortino = 4 / 3.1623 ≈ 1.2649
+      with trades_per_year = 100 (annualization √100 = 10)
+      annualized        ≈ 12.649
+    """
+    s = _compute_sortino([10.0, 10.0, 10.0, -5.0, -5.0], trades_per_year=100.0)
+    assert s is not None
+    assert s == pytest.approx(12.649110640673518, rel=1e-6)
+
+
+def test_compute_sortino_no_losing_trades_returns_none() -> None:
+    """No negative trades → downside_dev is 0 → sortino is undefined."""
+    assert _compute_sortino([1.0, 2.0, 3.0], trades_per_year=100.0) is None
+
+
+def test_compute_sortino_missing_annualization_returns_none() -> None:
+    """We refuse to emit a per-trade sortino — would mix incompatible units."""
+    assert _compute_sortino([1.0, -1.0, 1.0, -1.0], trades_per_year=None) is None
+    assert _compute_sortino([1.0, -1.0, 1.0, -1.0], trades_per_year=0.0) is None
+
+
+def test_compute_sortino_too_few_trades() -> None:
+    """One trade isn't a statistic."""
+    assert _compute_sortino([5.0], trades_per_year=100.0) is None
+
+
+def test_sortino_lands_in_baseline_quantiles(tmp_path: Path) -> None:
+    """End-to-end: trades.json + unified_metrics.json → sortino in baseline."""
+    test_results = tmp_path / "test_results"
+    test_results.mkdir()
+    _write_run(
+        test_results,
+        "with_trades",
+        elite_results=[
+            {"symbol": "EURUSD", "sharpe": 1.0, "trades": 100,
+             "monte_carlo": {"p_value": 0.03}},
+        ],
+        unified_metrics_by_symbol={
+            "EURUSD": {
+                "trades": 100,
+                "test_period_years": 1.0,  # → trades_per_year = 100
+                "max_drawdown": 0.10,
+                "profit_factor": 1.6,
+            },
+        },
+        tr_trace_by_symbol={"EURUSD": [10.0, 10.0, 10.0, -5.0, -5.0]},
+    )
+    criteria_dir = tmp_path / "criteria"
+    calibrate(test_results_dir=test_results, criteria_dir=criteria_dir)
+    baseline = json.loads((criteria_dir / "_calibration_baseline.json").read_text())
+    forex_metrics = baseline["quantiles"]["FOREX"]
+    assert "sortino" in forex_metrics
+    # Same series + annualization as test_compute_sortino_math_known_series.
+    assert forex_metrics["sortino"]["p50"] == pytest.approx(12.649110640673518, rel=1e-6)
+
+
+def test_sortino_skipped_when_no_test_period_years(tmp_path: Path) -> None:
+    """Annualization requires test_period_years — if absent, sortino is dropped."""
+    test_results = tmp_path / "test_results"
+    test_results.mkdir()
+    _write_run(
+        test_results,
+        "no_years",
+        elite_results=[
+            {"symbol": "EURUSD", "sharpe": 1.0, "trades": 100,
+             "monte_carlo": {"p_value": 0.03}},
+        ],
+        unified_metrics_by_symbol={
+            "EURUSD": {"trades": 100, "max_drawdown": 0.10, "profit_factor": 1.6},
+        },
+        tr_trace_by_symbol={"EURUSD": [10.0, -5.0, 10.0, -5.0]},
+    )
+    criteria_dir = tmp_path / "criteria"
+    calibrate(test_results_dir=test_results, criteria_dir=criteria_dir)
+    baseline = json.loads((criteria_dir / "_calibration_baseline.json").read_text())
+    forex_metrics = baseline["quantiles"]["FOREX"]
+    assert "sortino" not in forex_metrics
+    # But the other metrics still come through.
+    assert "max_drawdown" in forex_metrics
+    assert "profit_factor" in forex_metrics

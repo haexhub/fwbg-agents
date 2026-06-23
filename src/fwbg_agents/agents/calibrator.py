@@ -105,14 +105,81 @@ def _load_unified_metrics(run_dir: Path, symbol: str) -> dict[str, Any]:
         return {}
 
 
+def _load_tr_trace(run_dir: Path, symbol: str) -> list[float]:
+    """Read per-trade pnls from `grid_details/<symbol>/trades.json -> tr_trace`."""
+    path = run_dir / "grid_details" / symbol / "trades.json"
+    if not path.is_file():
+        return []
+    try:
+        data = json.loads(path.read_text())
+    except (OSError, json.JSONDecodeError) as exc:
+        log.warning("calibrator: skipping %s — bad trades.json (%s)", path, exc)
+        return []
+    trace = data.get("tr_trace") if isinstance(data, dict) else None
+    if not isinstance(trace, list):
+        return []
+    cleaned: list[float] = []
+    for v in trace:
+        f = _safe_float(v)
+        if f is not None:
+            cleaned.append(f)
+    return cleaned
+
+
+def _compute_sortino(
+    trade_pnls: list[float],
+    trades_per_year: float | None,
+) -> float | None:
+    """Annualized Sortino ratio from a per-trade pnl series.
+
+    sortino = mean(pnls) / sqrt(mean(min(pnl, 0)**2)) * sqrt(trades_per_year)
+
+    Returns None if undefined (no negative trades → no downside dev, or
+    fewer than 2 trades, or annualization factor unknown).
+    """
+    if not trade_pnls or len(trade_pnls) < 2:
+        return None
+    mean = sum(trade_pnls) / len(trade_pnls)
+    # Downside deviation: only negative pnls contribute; positives count as 0.
+    sq_neg = [p * p for p in trade_pnls if p < 0]
+    if not sq_neg:
+        # Strategy with zero losing trades — sortino is technically +inf.
+        # We don't emit anything (caller filters None out of the baseline).
+        return None
+    downside_var = sum(sq_neg) / len(trade_pnls)
+    if downside_var <= 0:
+        return None
+    downside_dev = downside_var ** 0.5
+    per_trade = mean / downside_dev
+    if trades_per_year is None or trades_per_year <= 0:
+        return None
+    return per_trade * (trades_per_year ** 0.5)
+
+
+def _trades_per_year(unified: dict[str, Any]) -> float | None:
+    trades = _safe_float(unified.get("trades"))
+    years = _safe_float(unified.get("test_period_years"))
+    if trades is None or years is None or years <= 0:
+        return None
+    return trades / years
+
+
 def _extract_metrics(elite: dict[str, Any], run_dir: Path | None = None) -> dict[str, float]:
     """Pull observed metric values out of one elite_results entry, merging in
-    the richer unified_metrics.json when present."""
+    the richer unified_metrics.json when present.
+
+    Sortino is computed here too (from grid_details/<sym>/trades.json) because
+    fwbg does not emit it. Annualized using trades / test_period_years from
+    unified_metrics.json. Tracked in the baseline only — not gated yet, the
+    user picks a threshold once real values are visible.
+    """
     merged: dict[str, Any] = dict(elite)
+    unified: dict[str, Any] = {}
     if run_dir is not None:
         symbol = elite.get("symbol")
         if isinstance(symbol, str):
-            merged.update(_load_unified_metrics(run_dir, symbol))
+            unified = _load_unified_metrics(run_dir, symbol)
+            merged.update(unified)
 
     mc = merged.get("monte_carlo") or {}
     metrics_raw: dict[str, Any] = {
@@ -127,6 +194,15 @@ def _extract_metrics(elite: dict[str, Any], run_dir: Path | None = None) -> dict
         "fold_stability": merged.get("fold_stability"),
         "mc_pvalue": mc.get("p_value") if isinstance(mc, dict) else None,
     }
+
+    if run_dir is not None:
+        symbol = elite.get("symbol")
+        if isinstance(symbol, str):
+            pnls = _load_tr_trace(run_dir, symbol)
+            sortino = _compute_sortino(pnls, _trades_per_year(unified))
+            if sortino is not None:
+                metrics_raw["sortino"] = sortino
+
     return {k: v for k, v in ((k, _safe_float(v)) for k, v in metrics_raw.items()) if v is not None}
 
 
