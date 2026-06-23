@@ -18,6 +18,7 @@ from sqlalchemy import (
     DateTime,
     ForeignKey,
     Integer,
+    Numeric,
     String,
     Text,
 )
@@ -63,6 +64,13 @@ class PluginKind(str, enum.Enum):
 class EntityType(str, enum.Enum):
     STRATEGY = "strategy"
     PLUGIN = "plugin"
+
+
+class AgentRunStatus(str, enum.Enum):
+    PENDING = "pending"
+    RUNNING = "running"
+    DONE = "done"
+    FAILED = "failed"
 
 
 # Terminal states cannot be left.
@@ -164,3 +172,53 @@ class Transition(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, index=True
     )
+
+
+class AgentRun(Base):
+    """One invocation of an agent (Runner, Analyst, Researcher, ...).
+
+    Append-only: row inserted at start in `running`, updated to `done`/`failed`
+    on completion. status is the only mutated column other than ended_at /
+    output_artifact_path / error.
+    """
+
+    __tablename__ = "agent_run"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    agent_name: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    status: Mapped[str] = mapped_column(
+        String(16), nullable=False, default=AgentRunStatus.PENDING.value, index=True
+    )
+    strategy_id: Mapped[int | None] = mapped_column(
+        Integer, ForeignKey("strategy.id"), nullable=True, index=True
+    )
+    plugin_id: Mapped[int | None] = mapped_column(
+        Integer, ForeignKey("plugin.id"), nullable=True, index=True
+    )
+    input_artifact_path: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    output_artifact_path: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    ended_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class LlmCall(Base):
+    """One LLM round-trip inside an agent run.
+
+    Cost is nullable because the haex-claude-proxy uses subscription pricing —
+    M3 records tokens, future infra plugs in a USD estimator.
+    """
+
+    __tablename__ = "llm_call"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    agent_run_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("agent_run.id"), nullable=False, index=True
+    )
+    model: Mapped[str] = mapped_column(String(128), nullable=False)
+    input_tokens: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    output_tokens: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    cost_usd: Mapped[float | None] = mapped_column(Numeric(10, 6), nullable=True)
+    latency_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
