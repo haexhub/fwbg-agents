@@ -73,11 +73,19 @@ async def get_criteria(asset_class: str) -> dict[str, Any]:
     path = _criteria_path(asset_class)
     if not path.is_file():
         raise HTTPException(status_code=404, detail=f"no criteria for {asset_class}")
+    yaml_text = path.read_text()
     try:
-        data = yaml.safe_load(path.read_text())
+        data = yaml.safe_load(yaml_text)
     except yaml.YAMLError as exc:
         raise HTTPException(status_code=500, detail=f"corrupt YAML: {exc}") from exc
-    return {"asset_class": asset_class, "criteria": data, "path": str(path)}
+    # Both shapes: parsed dict for programmatic clients, raw yaml_text for the
+    # editor (lets the dashboard avoid carrying a YAML serializer in the bundle).
+    return {
+        "asset_class": asset_class,
+        "criteria": data,
+        "yaml_text": yaml_text,
+        "path": str(path),
+    }
 
 
 class CriteriaUpdate(BaseModel):

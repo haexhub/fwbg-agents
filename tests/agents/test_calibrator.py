@@ -24,7 +24,15 @@ from fwbg_agents.agents.calibrator import (
 )
 
 
-def _write_run(test_results_dir: Path, name: str, elite_results: list[dict]) -> None:
+def _write_run(
+    test_results_dir: Path,
+    name: str,
+    elite_results: list[dict],
+    unified_metrics_by_symbol: dict[str, dict] | None = None,
+) -> None:
+    """Write a fake fwbg run. Optionally also writes per-symbol unified_metrics.json
+    files into grid_details/<symbol>/ — that file is where fwbg actually keeps
+    max_drawdown and profit_factor, so the Calibrator must reach into it."""
     run_dir = test_results_dir / name
     run_dir.mkdir(parents=True, exist_ok=True)
     (run_dir / "results.json").write_text(
@@ -39,6 +47,10 @@ def _write_run(test_results_dir: Path, name: str, elite_results: list[dict]) -> 
             }
         )
     )
+    for symbol, unified in (unified_metrics_by_symbol or {}).items():
+        sym_dir = run_dir / "grid_details" / symbol
+        sym_dir.mkdir(parents=True, exist_ok=True)
+        (sym_dir / "unified_metrics.json").write_text(json.dumps(unified))
 
 
 @pytest.fixture
@@ -233,6 +245,80 @@ def test_missing_test_results_dir_is_noop(tmp_path: Path) -> None:
     assert baseline_path.is_file()
     baseline = json.loads(baseline_path.read_text())
     assert baseline["runs_scanned"] == 0
+
+
+def test_unified_metrics_merged_into_calibration(tmp_path: Path) -> None:
+    """max_drawdown and profit_factor live in grid_details/<sym>/unified_metrics.json,
+    not in elite_results. Calibrator must pick them up from there."""
+    test_results = tmp_path / "test_results"
+    test_results.mkdir()
+    _write_run(
+        test_results,
+        "with_unified",
+        elite_results=[
+            {
+                "symbol": "EURUSD",
+                "sharpe": 1.1,
+                "win_rate": 0.52,
+                "trades": 240,
+                "monte_carlo": {"p_value": 0.03},
+            },
+            {
+                "symbol": "GBPUSD",
+                "sharpe": 0.9,
+                "win_rate": 0.48,
+                "trades": 180,
+                "monte_carlo": {"p_value": 0.05},
+            },
+        ],
+        unified_metrics_by_symbol={
+            "EURUSD": {
+                "max_drawdown": 0.15,
+                "profit_factor": 1.45,
+                "annual_return": 0.08,
+            },
+            "GBPUSD": {
+                "max_drawdown": 0.22,
+                "profit_factor": 1.20,
+                "annual_return": 0.05,
+            },
+        },
+    )
+    criteria_dir = tmp_path / "criteria"
+    calibrate(test_results_dir=test_results, criteria_dir=criteria_dir)
+
+    forex = yaml.safe_load((criteria_dir / "FOREX.yaml").read_text())
+    blockers = {k for entry in forex["backtest_to_paper"]["hard_blockers"] for k in entry}
+    assert "max_drawdown" in blockers
+    # max_drawdown gate uses the p75 of observed drawdowns as the upper bound.
+    md_entry = next(e for e in forex["backtest_to_paper"]["hard_blockers"] if "max_drawdown" in e)
+    assert md_entry["max_drawdown"].startswith("<= ")
+
+    baseline = json.loads((criteria_dir / "_calibration_baseline.json").read_text())
+    forex_metrics = baseline["quantiles"]["FOREX"]
+    assert "max_drawdown" in forex_metrics
+    assert "profit_factor" in forex_metrics
+    assert "annual_return" in forex_metrics
+    assert forex_metrics["max_drawdown"]["n"] == 2.0
+
+
+def test_missing_unified_metrics_file_falls_back_cleanly(tmp_path: Path) -> None:
+    """If grid_details/<sym>/unified_metrics.json is missing, Calibrator must still
+    work with whatever is in elite_results — no crash, no fabricated values."""
+    test_results = tmp_path / "test_results"
+    test_results.mkdir()
+    _write_run(
+        test_results,
+        "no_unified",
+        [{"symbol": "EURUSD", "sharpe": 1.0, "trades": 100, "monte_carlo": {"p_value": 0.04}}],
+        unified_metrics_by_symbol=None,
+    )
+    criteria_dir = tmp_path / "criteria"
+    result = calibrate(test_results_dir=test_results, criteria_dir=criteria_dir)
+    assert result.runs_with_elite == 1
+    forex = yaml.safe_load((criteria_dir / "FOREX.yaml").read_text())
+    blockers = {k for entry in forex["backtest_to_paper"]["hard_blockers"] for k in entry}
+    assert "max_drawdown" not in blockers
 
 
 def test_build_criteria_yaml_uses_higher_is_better_polarity() -> None:

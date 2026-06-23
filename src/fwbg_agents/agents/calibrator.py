@@ -59,6 +59,7 @@ METRIC_HIGHER_IS_BETTER: dict[str, bool] = {
     "profit_factor": True,
     "rrr": True,
     "fold_stability": True,
+    "annual_return": True,
     "dsr": True,
     "max_drawdown": False,
     "pbo": False,
@@ -96,20 +97,56 @@ def _safe_float(value: Any) -> float | None:
     return f
 
 
-def _extract_metrics(elite: dict[str, Any]) -> dict[str, float]:
-    """Pull the success metrics we care about out of one elite_results entry."""
-    mc = elite.get("monte_carlo") or {}
+def _load_unified_metrics(run_dir: Path, symbol: str) -> dict[str, Any]:
+    """Read `grid_details/<symbol>/unified_metrics.json` if present.
+
+    fwbg writes the richer per-symbol metrics (max_drawdown, profit_factor,
+    annual_return, n_wins, n_losses, ...) into this nested file rather than
+    duplicating them into elite_results. Calibrator merges them in so the
+    YAML can use max_drawdown as a hard_blocker.
+    """
+    path = run_dir / "grid_details" / symbol / "unified_metrics.json"
+    if not path.is_file():
+        return {}
+    try:
+        return json.loads(path.read_text())
+    except (OSError, json.JSONDecodeError) as exc:
+        log.warning("calibrator: skipping %s — bad unified_metrics.json (%s)", path, exc)
+        return {}
+
+
+def _extract_metrics(elite: dict[str, Any], run_dir: Path | None = None) -> dict[str, float]:
+    """Pull the success metrics we care about out of one elite_results entry.
+
+    elite_results carries a compact summary; the full per-symbol numbers
+    (max_drawdown, profit_factor, ...) live in
+    `<run>/grid_details/<symbol>/unified_metrics.json`. If `run_dir` is
+    provided we merge those in — overriding any duplicate keys, since the
+    unified_metrics file is the source of truth for those fields.
+    """
+    merged: dict[str, Any] = dict(elite)
+    if run_dir is not None:
+        symbol = elite.get("symbol")
+        if isinstance(symbol, str):
+            merged.update(_load_unified_metrics(run_dir, symbol))
+
+    mc = merged.get("monte_carlo") or {}
     metrics_raw: dict[str, Any] = {
-        "sharpe": elite.get("sharpe"),
-        "win_rate": elite.get("win_rate"),
-        "trades": elite.get("trades"),
-        "calmar": elite.get("calmar"),
-        "profit_factor": elite.get("profit_factor"),
-        "rrr": elite.get("rrr"),
-        "fold_stability": elite.get("fold_stability"),
-        "dsr": elite.get("dsr"),
-        "max_drawdown": elite.get("max_drawdown"),
-        "pbo": elite.get("pbo"),
+        "sharpe": merged.get("sharpe"),
+        "win_rate": merged.get("win_rate"),
+        "trades": merged.get("trades"),
+        "calmar": merged.get("calmar"),
+        "profit_factor": merged.get("profit_factor"),
+        "rrr": merged.get("rrr"),
+        "fold_stability": merged.get("fold_stability"),
+        "annual_return": merged.get("annual_return"),
+        "dsr": merged.get("dsr"),
+        # DSR and PBO are not yet emitted by fwbg (per-iteration multiple-testing
+        # corrections are an agent-level concept — they belong to the Analyst, not
+        # to a single backtest). Kept here so when fwbg eventually emits them, no
+        # Calibrator change is needed.
+        "max_drawdown": merged.get("max_drawdown"),
+        "pbo": merged.get("pbo"),
         "mc_pvalue": mc.get("p_value") if isinstance(mc, dict) else None,
     }
     return {k: v for k, v in ((k, _safe_float(v)) for k, v in metrics_raw.items()) if v is not None}
@@ -160,6 +197,11 @@ def _scan_run(run_dir: Path) -> list[dict[str, Any]]:
     return [e for e in elite if isinstance(e, dict) and e.get("symbol")]
 
 
+def _extract_metrics_for_elite(elite: dict[str, Any], run_dir: Path) -> dict[str, float]:
+    """Convenience: forwards to _extract_metrics with the run_dir attached."""
+    return _extract_metrics(elite, run_dir=run_dir)
+
+
 def _build_quantiles_by_class(
     test_results_dir: Path,
 ) -> tuple[dict[str, dict[str, dict[str, float]]], int, int, dict[str, int]]:
@@ -187,7 +229,7 @@ def _build_quantiles_by_class(
                 continue
             asset_class = classify_symbol(symbol)
             elite_counts[asset_class] = elite_counts.get(asset_class, 0) + 1
-            metrics = _extract_metrics(elite)
+            metrics = _extract_metrics(elite, run_dir=run_dir)
             bucket = per_class_metric_values.setdefault(asset_class, {})
             for metric, value in metrics.items():
                 bucket.setdefault(metric, []).append(value)
