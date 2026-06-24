@@ -207,3 +207,36 @@ def test_continue_observation_keeps_stale_false_when_within_target():
     )
     assert isinstance(out, ContinueObservation)
     assert out.stale is False
+
+
+# ---------------------------------------------------------------------------
+# Behaviour 6: Abandon keeps explicit post_mortem_path when LLM provides one
+# ---------------------------------------------------------------------------
+
+
+def test_abandon_keeps_explicit_post_mortem_path_when_llm_provides_one(tmp_path):
+    explicit_path = "/the/explicit/path.md"
+    model = _stub_model(
+        "final_result_AbandonPaper",
+        {
+            "decision": "abandon_paper",
+            "rationale": "LLM picked a custom post-mortem location",
+            "post_mortem_path": explicit_path,
+        },
+    )
+    analyst = PaperAnalyst(model=model)
+    out = analyst.analyze_sync(
+        summary=_make_summary(slug="beta_v3"),
+        positions=_make_positions(slug="beta_v3"),
+        paper_criteria=_make_criteria(),
+        paper_phase_target_days=90,
+        paper_criteria_eval=CriteriaEvalResult(passed=False, failures=["x"]),
+        strategy_slug="beta_v3",
+        data_dir=tmp_path,
+    )
+    assert isinstance(out, AbandonPaper)
+    # Validator must NOT overwrite an explicitly-provided path
+    assert out.post_mortem_path == explicit_path
+    # Sanity: the default would have been under tmp_path; confirm we didn't get that
+    default_would_be = str(tmp_path / "strategies" / "beta_v3" / "paper_post_mortem.md")
+    assert out.post_mortem_path != default_would_be

@@ -21,6 +21,8 @@ recommendation. The orchestrator (M6b Task 5) handles persistence.
 
 from __future__ import annotations
 
+import json
+from dataclasses import asdict
 from pathlib import Path
 from typing import Annotated, Literal
 
@@ -69,17 +71,17 @@ class PaperAnalystValidationError(Exception):
 
 
 _PROMPT_PATH = Path(__file__).parent / "prompts" / "paper_analyst.md"
-_PROMPT = _PROMPT_PATH.read_text()
 
 
 class PaperAnalyst:
-    def __init__(self, *, model: Model | None = None):
+    def __init__(
+        self,
+        *,
+        model: Model | None = None,
+        prompt_path: Path | None = None,
+    ):
         self.model = model if model is not None else default_model()
-        self.agent = Agent(
-            self.model,
-            output_type=PaperAnalystOutput,
-            system_prompt=_PROMPT,
-        )
+        self.prompt_path = prompt_path if prompt_path is not None else _PROMPT_PATH
 
     def analyze_sync(
         self,
@@ -92,17 +94,20 @@ class PaperAnalyst:
         strategy_slug: str,
         data_dir: Path | None = None,
     ) -> PromotePaperToLive | AbandonPaper | ContinueObservation:
+        system_prompt = self.prompt_path.read_text()
+        agent = Agent(
+            self.model,
+            output_type=PaperAnalystOutput,
+            system_prompt=system_prompt,
+        )
         user_payload = {
             "summary": summary.model_dump(mode="json"),
             "positions": positions.model_dump(mode="json"),
             "paper_criteria": paper_criteria,
             "paper_phase_target_days": paper_phase_target_days,
-            "paper_criteria_eval": {
-                "passed": paper_criteria_eval.passed,
-                "failures": paper_criteria_eval.failures,
-            },
+            "paper_criteria_eval": asdict(paper_criteria_eval),
         }
-        result = self.agent.run_sync(str(user_payload))
+        result = agent.run_sync(json.dumps(user_payload, indent=2, default=str))
         return self._validate(
             result.output,
             summary=summary,
