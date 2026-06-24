@@ -196,7 +196,7 @@ async def test_post_paper_analyze_returns_202_and_agent_run_envelope(
     r = await client.post(f"/strategies/{s.id}/paper-analyze", json={})
     assert r.status_code == 202, r.text
     body = r.json()
-    assert body["status"] == "running"
+    assert body["status"] == "scheduled"
     assert "agent_run_id" in body
     ar_id = body["agent_run_id"]
 

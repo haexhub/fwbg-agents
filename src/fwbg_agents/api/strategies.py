@@ -295,9 +295,9 @@ async def _run_paper_analyze_background(strategy_id: int, agent_run_id: int) -> 
             log.exception(
                 "paper-analyze background task failed (agent_run %s)", agent_run_id
             )
-            # paper_analyze marks ar FAILED on its own except path, but if it
-            # raised before reaching that block (e.g. PaperFlowError during
-            # pre-flight) we still need to update the row.
+            # Defensive: paper_analyze's own except block already marks FAILED + commits before re-raising.
+            # This handler covers TOCTOU windows (e.g. state changed between endpoint check and BG-task start)
+            # where the row could end up in an inconsistent state.
             await session.refresh(ar)
             if ar.status != AgentRunStatus.FAILED.value:
                 ar.status = AgentRunStatus.FAILED.value
@@ -351,4 +351,4 @@ async def post_strategy_paper_analyze(
     await session.refresh(ar)
 
     background_tasks.add_task(_run_paper_analyze_background, s.id, ar.id)
-    return PaperAnalyzeResponse(agent_run_id=ar.id, status="running")
+    return PaperAnalyzeResponse(agent_run_id=ar.id, status="scheduled")
