@@ -29,6 +29,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from fwbg_agents.orchestrator.hypotheses import generate_slug
 from fwbg_agents.orchestrator.lifecycle import strategy_dir
+from fwbg_agents.orchestrator.plugin_catalog import load_catalog
 from fwbg_agents.orchestrator.strategy_validator import (
     KNOWN_DATASOURCES,
     KNOWN_FILTERS,
@@ -374,6 +375,230 @@ class Translator:
             ar.status = AgentRunStatus.DONE.value
             ar.ended_at = datetime.now(UTC)
             ar.output_artifact_path = str(child_dir / "strategy.json")
+            await self.session.commit()
+            await self.session.refresh(child)
+            return child
+        except Exception as exc:
+            ar.status = AgentRunStatus.FAILED.value
+            ar.ended_at = datetime.now(UTC)
+            ar.error = str(exc)
+            await self.session.commit()
+            raise
+
+    async def run_reiterate_with_plugin(
+        self,
+        parent: Strategy,
+        plugin_slug: str,
+        sidecar: dict,
+    ) -> Strategy:
+        """Splice a VERIFIED plugin slug into a child Strategy (deterministic).
+
+        Mirrors `run_reiterate` for `add_indicator` recommendations: maps the
+        sidecar `phase` to one of the four M5c plugin-slot list-fields and
+        appends the slug. Plugin VERIFIED check is the caller's job — we
+        validate via `validate_strategy_json(..., catalog=load_catalog())`,
+        which rejects any slug not visible in the catalog.
+
+        Parent stays in BACKTESTED; child is a fresh PROPOSED row with
+        `parent_strategy_id=parent.id`. Phase-to-field mapping:
+            "indicator"          -> indicators
+            "feature_selection"  -> feature_selection
+            "preprocessing"      -> preprocessing
+            "filter"             -> extra_filters
+        """
+        _PHASE_TO_FIELD: dict[str, str] = {
+            "indicator": "indicators",
+            "feature_selection": "feature_selection",
+            "preprocessing": "preprocessing",
+            "filter": "extra_filters",
+        }
+
+        now = datetime.now(UTC)
+        ar = AgentRun(
+            agent_name="translator",
+            status=AgentRunStatus.RUNNING.value,
+            strategy_id=parent.id,
+            started_at=now,
+            created_at=now,
+        )
+        self.session.add(ar)
+        await self.session.commit()
+        await self.session.refresh(ar)
+
+        try:
+            if parent.current_state != StrategyState.BACKTESTED.value:
+                raise TranslatorFailed(
+                    f"reiterate_with_plugin requires parent in BACKTESTED, "
+                    f"got {parent.current_state}"
+                )
+
+            phase = sidecar.get("phase")
+            if phase not in _PHASE_TO_FIELD:
+                raise TranslatorFailed(
+                    f"unknown phase: {phase!r} (must be one of: "
+                    "indicator, feature_selection, preprocessing, filter)"
+                )
+            list_field = _PHASE_TO_FIELD[phase]
+
+            parent_dir = strategy_dir(parent.slug) / "iteration_001"
+            parent_strategy_path = parent_dir / "strategy.json"
+            parent_hypothesis_path = parent_dir / "hypothesis.json"
+            sidecar_input_path = parent_dir / "add_indicator_request.json"
+
+            if not parent_strategy_path.is_file():
+                raise TranslatorFailed(
+                    f"parent missing strategy.json at {parent_strategy_path}"
+                )
+            ar.input_artifact_path = str(sidecar_input_path)
+
+            parent_payload = json.loads(parent_strategy_path.read_text())
+            child_payload = json.loads(json.dumps(parent_payload))  # deep copy
+            child_payload.setdefault(list_field, []).append(plugin_slug)
+
+            child_slug = await generate_slug(
+                self.session, parent.strategy_family, parent.asset_class
+            )
+            child_payload["name"] = child_slug
+
+            catalog = await load_catalog(self.session)
+            try:
+                validate_strategy_json(child_payload, catalog=catalog)
+            except StrategyValidationError as exc:
+                raise TranslatorFailed(str(exc)) from exc
+
+            now2 = datetime.now(UTC)
+            child = Strategy(
+                slug=child_slug,
+                current_state=StrategyState.PROPOSED.value,
+                iteration_count=1,
+                parent_strategy_id=parent.id,
+                asset_class=parent.asset_class,
+                strategy_family=parent.strategy_family,
+                created_at=now2,
+                updated_at=now2,
+            )
+            self.session.add(child)
+            await self.session.flush()
+
+            parent_tags = parent_payload.get("tags") or []
+            for tag in parent_tags:
+                self.session.add(StrategyTag(strategy_id=child.id, tag=tag))
+
+            child_dir = strategy_dir(child.slug) / "iteration_001"
+            child_dir.mkdir(parents=True, exist_ok=True)
+            strategy_path = child_dir / "strategy.json"
+            strategy_path.write_text(json.dumps(child_payload, indent=2, sort_keys=True))
+
+            # Hypothesis inheritance + iteration annotation (M5c Decision C1).
+            capability = sidecar.get("capability", "")
+            child_hypothesis: dict
+            if parent_hypothesis_path.is_file():
+                parent_hypothesis_raw = json.loads(parent_hypothesis_path.read_text())
+                if isinstance(parent_hypothesis_raw, dict):
+                    child_hypothesis = json.loads(json.dumps(parent_hypothesis_raw))
+                    existing = child_hypothesis.get("iterations")
+                    if isinstance(existing, list):
+                        iter_num = len(existing) + 1
+                        existing.append(
+                            {
+                                "iteration": iter_num,
+                                "action": "add_indicator",
+                                "plugin_slug": plugin_slug,
+                                "phase": phase,
+                                "capability": capability,
+                                "rationale": (
+                                    f"Iteration {iter_num}: added {plugin_slug} at "
+                                    f"{phase} per analyst recommendation: {capability}"
+                                ),
+                            }
+                        )
+                    else:
+                        child_hypothesis["iterations"] = [
+                            {
+                                "iteration": 1,
+                                "action": "add_indicator",
+                                "plugin_slug": plugin_slug,
+                                "phase": phase,
+                                "capability": capability,
+                                "rationale": (
+                                    f"Iteration 1: added {plugin_slug} at {phase} "
+                                    f"per analyst recommendation: {capability}"
+                                ),
+                            }
+                        ]
+                else:
+                    # Legacy: parent hypothesis stored as a bare string.
+                    child_hypothesis = {
+                        "inherited_text": str(parent_hypothesis_raw),
+                        "iterations": [
+                            {
+                                "iteration": 1,
+                                "action": "add_indicator",
+                                "plugin_slug": plugin_slug,
+                                "phase": phase,
+                                "capability": capability,
+                                "rationale": (
+                                    f"Iteration 1: added {plugin_slug} at {phase} "
+                                    f"per analyst recommendation: {capability}"
+                                ),
+                            }
+                        ],
+                    }
+            else:
+                child_hypothesis = {
+                    "inherited_from": parent.slug,
+                    "iterations": [
+                        {
+                            "iteration": 1,
+                            "action": "add_indicator",
+                            "plugin_slug": plugin_slug,
+                            "phase": phase,
+                            "capability": capability,
+                            "rationale": (
+                                f"Iteration 1: added {plugin_slug} at {phase} "
+                                f"per analyst recommendation: {capability}"
+                            ),
+                        }
+                    ],
+                }
+
+            hypothesis_path = child_dir / "hypothesis.json"
+            hypothesis_path.write_text(
+                json.dumps(child_hypothesis, indent=2, sort_keys=False)
+            )
+            child.hypothesis_path = str(hypothesis_path)
+
+            spec_path = child_dir / "spec.md"
+            _write_spec_md(
+                spec_path,
+                strategy_slug=child.slug,
+                hypothesis=child_hypothesis,
+                strategy_json=child_payload,
+            )
+            child.spec_path = str(spec_path)
+            child.updated_at = datetime.now(UTC)
+
+            self.session.add(
+                Transition(
+                    entity_type="strategy",
+                    entity_id=child.id,
+                    from_state=None,
+                    to_state=StrategyState.PROPOSED.value,
+                    reason="translator: reiterate_with_plugin",
+                    payload={
+                        "parent_strategy_id": parent.id,
+                        "plugin_slug": plugin_slug,
+                        "sidecar": sidecar,
+                    },
+                    created_by="translator",
+                    created_at=now2,
+                )
+            )
+
+            ar.strategy_id = child.id
+            ar.status = AgentRunStatus.DONE.value
+            ar.ended_at = datetime.now(UTC)
+            ar.output_artifact_path = str(strategy_path)
             await self.session.commit()
             await self.session.refresh(child)
             return child
