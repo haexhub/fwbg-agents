@@ -37,6 +37,10 @@ class Settings(BaseSettings):
         default=Path.home() / "fwbg" / "strategies" / "configs",
         description="fwbg's strategies dir; Runner copies strategy.json here as <slug>__itNNN.json.",
     )
+    fwbg_repo_root: Path = Field(
+        default=Path.home() / "Projekte" / "fwbg",
+        description="Root of the fwbg source tree; scanned for plugin manifests by PluginCatalog.",
+    )
 
     # Runner
     runner_poll_interval_seconds: float = 5.0
