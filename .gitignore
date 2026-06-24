@@ -26,6 +26,7 @@ data/state.db-shm
 data/strategies/
 data/plugins/
 data/transcripts/
+data/smoke/
 data/criteria/_calibration_baseline.json
 data/criteria/*.yaml
 
