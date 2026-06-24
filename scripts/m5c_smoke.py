@@ -25,7 +25,6 @@ import shutil
 import sys
 import time
 from datetime import UTC, datetime
-from pathlib import Path
 
 from httpx import ASGITransport, AsyncClient
 from pydantic_ai.messages import ModelResponse, ToolCallPart
@@ -151,6 +150,8 @@ def _patch_author_to_use_stub() -> None:
         author = pa.PluginAuthor(session, model=_stub_author_model())
         return await author.run_fresh(sidecar_path=sidecar, parent_strategy=strategy)
 
+    # Double-patch: api.plugins binds the function at import time (line ~34),
+    # so patching only orchestrator.plugin_flow would not reach the call site.
     plugins_api.author_plugin_from_strategy = fake_author_from_strategy
     pf.author_plugin_from_strategy = fake_author_from_strategy
 
