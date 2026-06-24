@@ -134,6 +134,15 @@ class Strategy(Base):
     hypothesis_path: Mapped[str | None] = mapped_column(String(512), nullable=True)
     spec_path: Mapped[str | None] = mapped_column(String(512), nullable=True)
     post_mortem_path: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    # M6a: per-strategy paper-trading wiring. paper_account_id is a free-form
+    # slug pointing at a fwbg-side accounts/<slug>.yaml — agents never reads
+    # that file, only stores the pointer. paper_phase_target_days is the
+    # dashboard-configurable target duration of the paper phase (M6b's Analyst
+    # will compare elapsed days against it; unused in M6a code).
+    paper_account_id: Mapped[str | None] = mapped_column(String(128), nullable=True, default=None)
+    paper_phase_target_days: Mapped[int] = mapped_column(
+        Integer, nullable=False, server_default="90"
+    )
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
