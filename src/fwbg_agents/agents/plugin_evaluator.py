@@ -1,0 +1,297 @@
+"""PluginEvaluator — deterministic verification of an agent-authored plugin.
+
+Locked decisions from M5a:
+- Deterministic only. No LLM in M5b — the evaluator is pure Python.
+- Hand-curated, np-seeded scenarios under
+  `data/plugins/<slug>/v1/test_scenarios/` — see scenario_generators.
+- Failed verification keeps the plugin in AUTHORED. Manual retry only;
+  no auto-abandon counter in M5b.
+- Structured JSON error log so the dashboard can parse it later.
+"""
+
+from __future__ import annotations
+
+import importlib.util
+import json
+import logging
+import traceback
+from datetime import UTC, datetime
+from pathlib import Path
+from typing import Any
+
+import pandas as pd
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from fwbg_agents.orchestrator.lifecycle import plugin_dir, transition_plugin
+from fwbg_agents.orchestrator.plugin_contract import (
+    PluginContract,
+    PluginContractScenario,
+    load_contract,
+)
+from fwbg_agents.orchestrator.scenario_generators import (
+    SCENARIO_GENERATORS,
+    generate_scenario,
+)
+from fwbg_agents.persistence.models import (
+    Plugin,
+    PluginState,
+    VerificationRun,
+)
+
+log = logging.getLogger(__name__)
+
+
+class PluginEvaluator:
+    def __init__(self, session: AsyncSession):
+        self.session = session
+
+    async def run(self, plugin: Plugin) -> int:
+        """Verify a plugin against its contract. Returns verification_run.id."""
+        now = datetime.now(UTC)
+        vr = VerificationRun(
+            plugin_id=plugin.id,
+            status="running",
+            scenarios_run=0,
+            scenarios_passed=0,
+            started_at=now,
+            created_at=now,
+        )
+        self.session.add(vr)
+        await self.session.flush()  # need vr.id for the error_log payload
+
+        target_dir = plugin_dir(plugin.slug) / "v1"
+        scenarios_dir = target_dir / "test_scenarios"
+        scenarios_dir.mkdir(parents=True, exist_ok=True)
+        error_log_path = target_dir / "error_log.json"
+
+        errors: list[dict[str, Any]] = []
+
+        try:
+            contract = load_contract(Path(plugin.contract_path))
+        except Exception as exc:  # noqa: BLE001 — surface any contract issue
+            errors.append(
+                {
+                    "scenario_name": "",
+                    "invariant_violated": "contract_load_failed",
+                    "traceback": "".join(traceback.format_exception(exc)),
+                    "ts": datetime.now(UTC).isoformat(),
+                }
+            )
+            return await self._finalise_failed(vr, errors, error_log_path)
+
+        if not contract.test_scenarios:
+            errors.append(
+                {
+                    "scenario_name": "",
+                    "invariant_violated": "no_scenarios_declared",
+                    "traceback": None,
+                    "ts": datetime.now(UTC).isoformat(),
+                }
+            )
+            return await self._finalise_failed(vr, errors, error_log_path)
+
+        # Pre-flight: refuse the whole run if any declared scenario name has
+        # no generator. A contract bug is not a plugin bug — staying strict
+        # avoids partial-success ambiguity.
+        for scenario in contract.test_scenarios:
+            if scenario.name not in SCENARIO_GENERATORS:
+                errors.append(
+                    {
+                        "scenario_name": scenario.name,
+                        "invariant_violated": "unknown_scenario",
+                        "traceback": None,
+                        "ts": datetime.now(UTC).isoformat(),
+                    }
+                )
+                return await self._finalise_failed(vr, errors, error_log_path)
+
+        # Load compute() callable from the on-disk plugin.py
+        try:
+            compute = _load_compute(target_dir / "plugin.py")
+        except _PluginLoadError as exc:
+            errors.append(
+                {
+                    "scenario_name": "",
+                    "invariant_violated": exc.reason,
+                    "traceback": exc.tb,
+                    "ts": datetime.now(UTC).isoformat(),
+                }
+            )
+            return await self._finalise_failed(vr, errors, error_log_path)
+
+        # Build the param-defaults dict once.
+        param_defaults = {p.name: p.default for p in contract.params}
+
+        # Run each scenario.
+        for scenario in contract.test_scenarios:
+            df = generate_scenario(scenario.name)
+            (scenarios_dir / f"{scenario.name}.parquet").write_bytes(b"")  # placeholder
+            df.to_parquet(scenarios_dir / f"{scenario.name}.parquet")
+
+            vr.scenarios_run += 1
+            scenario_errors = _evaluate_scenario(
+                compute, df, contract=contract, scenario=scenario, params=param_defaults
+            )
+            if scenario_errors:
+                errors.extend(scenario_errors)
+            else:
+                vr.scenarios_passed += 1
+
+        if vr.scenarios_passed == vr.scenarios_run and vr.scenarios_run > 0:
+            vr.status = "passed"
+            vr.ended_at = datetime.now(UTC)
+            await self.session.flush()
+
+            await transition_plugin(
+                self.session,
+                plugin,
+                PluginState.VERIFIED,
+                reason="plugin_evaluator",
+                payload={
+                    "verification_run_id": vr.id,
+                    "scenarios_passed": vr.scenarios_passed,
+                },
+                created_by="plugin_evaluator",
+            )
+            await self.session.commit()
+            await self.session.refresh(vr)
+            # Clear any stale error log from a previous failed run.
+            if error_log_path.exists():
+                error_log_path.unlink()
+            return vr.id
+
+        # else — failed.
+        return await self._finalise_failed(vr, errors, error_log_path)
+
+    async def _finalise_failed(
+        self,
+        vr: VerificationRun,
+        errors: list[dict[str, Any]],
+        error_log_path: Path,
+    ) -> int:
+        vr.status = "failed"
+        vr.ended_at = datetime.now(UTC)
+        error_log_path.parent.mkdir(parents=True, exist_ok=True)
+        error_log_path.write_text(
+            json.dumps(
+                {"verification_run_id": vr.id, "errors": errors},
+                indent=2,
+                default=str,
+            )
+        )
+        vr.error_log_path = str(error_log_path)
+        await self.session.commit()
+        await self.session.refresh(vr)
+        return vr.id
+
+
+# ---------------------------------------------------------------------------
+# Plugin loading + invariant checks (module-private helpers)
+# ---------------------------------------------------------------------------
+
+
+class _PluginLoadError(Exception):
+    def __init__(self, reason: str, tb: str | None = None):
+        super().__init__(reason)
+        self.reason = reason
+        self.tb = tb
+
+
+def _load_compute(plugin_py: Path):
+    if not plugin_py.is_file():
+        raise _PluginLoadError("plugin_py_missing")
+    try:
+        spec = importlib.util.spec_from_file_location(
+            f"_plugin_under_test_{plugin_py.parent.parent.name}", plugin_py
+        )
+        if spec is None or spec.loader is None:
+            raise _PluginLoadError("plugin_spec_failed")
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+    except Exception as exc:  # noqa: BLE001
+        raise _PluginLoadError(
+            "plugin_import_failed", tb="".join(traceback.format_exception(exc))
+        ) from exc
+    compute = getattr(mod, "compute", None)
+    if not callable(compute):
+        raise _PluginLoadError("compute_callable_missing")
+    return compute
+
+
+def _evaluate_scenario(
+    compute,
+    df: pd.DataFrame,
+    *,
+    contract: PluginContract,
+    scenario: PluginContractScenario,
+    params: dict[str, Any],
+) -> list[dict[str, Any]]:
+    """Run compute() and check the contract's three hard-coded invariants.
+
+    Returns a list of error dicts; empty list means the scenario passed.
+    """
+    ts = lambda: datetime.now(UTC).isoformat()  # noqa: E731
+
+    try:
+        result = compute(df, **params)
+    except Exception as exc:  # noqa: BLE001
+        return [
+            {
+                "scenario_name": scenario.name,
+                "invariant_violated": "compute_raised",
+                "traceback": "".join(traceback.format_exception(exc)),
+                "ts": ts(),
+            }
+        ]
+
+    errors: list[dict[str, Any]] = []
+
+    # Invariant 1: length parity for outputs marked same_as_input.
+    output_lengths = _output_lengths(result, contract)
+    expected_len = len(df)
+    for declared in contract.outputs:
+        length = output_lengths[declared.name]
+        if declared.length_invariant == "same_as_input" and length != expected_len:
+            errors.append(
+                {
+                    "scenario_name": scenario.name,
+                    "invariant_violated": "length_mismatch",
+                    "traceback": (
+                        f"output {declared.name!r}: got len={length}, "
+                        f"expected len={expected_len}"
+                    ),
+                    "ts": ts(),
+                }
+            )
+
+    return errors
+
+
+def _output_lengths(result: Any, contract: PluginContract) -> dict[str, int]:
+    """Map each declared output name to the length we observed."""
+    out: dict[str, int] = {}
+    declared = contract.outputs
+
+    # Single-output convention: result is a Series / 1-D array / scalar.
+    if len(declared) == 1:
+        out[declared[0].name] = _length_of(result)
+        return out
+
+    # Multi-output convention: result must be a dict keyed by output.name.
+    if isinstance(result, dict):
+        for o in declared:
+            out[o.name] = _length_of(result.get(o.name))
+    else:
+        for o in declared:
+            out[o.name] = -1  # signals mismatch
+    return out
+
+
+def _length_of(value: Any) -> int:
+    if value is None:
+        return -1
+    try:
+        return len(value)
+    except TypeError:
+        # Scalar (0-D): length-0 reported as 1 for our purposes
+        return 1
