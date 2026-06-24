@@ -29,6 +29,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from fwbg_agents.config import settings
 from fwbg_agents.orchestrator.lifecycle import strategy_dir
+from fwbg_agents.orchestrator.plugin_catalog import PluginCatalog, load_catalog
 from fwbg_agents.persistence.models import (
     AgentRun,
     AgentRunStatus,
@@ -83,8 +84,39 @@ class ChangeExit(BaseModel):
     recommendations from M4 onward."""
 
 
+class AddIndicator(BaseModel):
+    """Request a brand-new plugin via PluginAuthor (M5b).
+
+    The Analyst emits this ONLY when no entry in the catalog snapshot covers
+    what the strategy needs. The orchestrator does NOT transition the strategy
+    — it persists a sidecar JSON that the M5b PluginAuthor agent picks up to
+    write a fresh plugin.
+    """
+
+    kind: Literal["add_indicator"] = "add_indicator"
+    confidence: float = Field(ge=0.0, le=1.0)
+    reasoning: str
+    phase: Literal["feature_selection", "indicators", "preprocessing", "filters"]
+    capability: str = Field(
+        description=(
+            "Free-text description of the missing capability. Must NOT be a "
+            "slug that already exists in the catalog snapshot."
+        )
+    )
+    category: Literal[
+        "indicator",
+        "model",
+        "exit_strategy",
+        "risk_management",
+        "entry_modifier",
+        "preprocessing",
+        "feature_selection",
+        "data_loading",
+    ]
+
+
 AnalystRecommendation = Annotated[
-    Promote | Abandon | TuneParams | ChangeExit, Discriminator("kind")
+    Promote | Abandon | TuneParams | ChangeExit | AddIndicator, Discriminator("kind")
 ]
 
 
@@ -113,8 +145,9 @@ def _render_prompt(
     strategy_json: dict,
     metrics: dict,
     criteria_yaml: str,
+    catalog_snapshot: str,
 ) -> str:
-    """Tiny mustache-style replacer — we don't need Jinja for four variables."""
+    """Tiny mustache-style replacer — we don't need Jinja for five variables."""
     out = template
     out = out.replace("{{ strategy.slug }}", strategy.slug)
     out = out.replace("{{ strategy.asset_class }}", strategy.asset_class)
@@ -123,7 +156,21 @@ def _render_prompt(
     out = out.replace("{{ strategy_json }}", json.dumps(strategy_json, indent=2))
     out = out.replace("{{ metrics }}", json.dumps(metrics, indent=2))
     out = out.replace("{{ criteria_yaml }}", criteria_yaml or "(no criteria YAML present)")
+    out = out.replace("{{ catalog_snapshot }}", catalog_snapshot)
     return out
+
+
+def _render_catalog_snapshot(catalog: PluginCatalog) -> str:
+    """One line per (category, slug). Empty categories are skipped."""
+    lines: list[str] = []
+    for category in sorted(catalog.by_category):
+        slugs = catalog.all_slugs_for(category)
+        if not slugs:
+            continue
+        lines.append(f"- {category}: {', '.join(slugs)}")
+    if not lines:
+        return "(catalog empty — only suggest add_indicator if you genuinely have no other option)"
+    return "\n".join(lines)
 
 
 class Analyst:
@@ -167,6 +214,9 @@ class Analyst:
             criteria_path = settings.criteria_dir / f"{strategy.asset_class}.yaml"
             criteria_yaml = criteria_path.read_text() if criteria_path.is_file() else ""
 
+            catalog = await load_catalog(self.session)
+            catalog_snapshot = _render_catalog_snapshot(catalog)
+
             template = self.prompt_path.read_text()
             system_prompt = _render_prompt(
                 template,
@@ -175,6 +225,7 @@ class Analyst:
                 strategy_json=strategy_json,
                 metrics=metrics,
                 criteria_yaml=criteria_yaml,
+                catalog_snapshot=catalog_snapshot,
             )
 
             agent = Agent(self.model, output_type=AnalystRecommendation, system_prompt=system_prompt)

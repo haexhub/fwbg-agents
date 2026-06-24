@@ -28,6 +28,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from fwbg_agents.agents.analyst import (
     Abandon,
+    AddIndicator,
     AnalystRecommendation,
     ChangeExit,
     Promote,
@@ -118,6 +119,32 @@ async def validate_and_apply(
         sidecar.write_text(json.dumps(_rec_to_dict(rec), indent=2))
         log.info(
             "validate_and_apply: record-only rec for %s (%s)", strategy.slug, rec.kind
+        )
+        return None
+
+    # AddIndicator — record-only. M5b PluginAuthor picks up the sidecar and
+    # writes a fresh plugin. No state change here; the strategy stays in
+    # BACKTESTED until the plugin verifies and a new iteration can be authored.
+    if isinstance(rec, AddIndicator):
+        iteration_dir = strategy_dir(strategy.slug) / "iteration_001"
+        iteration_dir.mkdir(parents=True, exist_ok=True)
+        sidecar = iteration_dir / "add_indicator_request.json"
+        sidecar.write_text(
+            json.dumps(
+                {
+                    **_rec_to_dict(rec),
+                    "strategy_id": strategy.id,
+                    "strategy_slug": strategy.slug,
+                    "requested_at": datetime.now(UTC).isoformat(),
+                },
+                indent=2,
+            )
+        )
+        log.info(
+            "validate_and_apply: add_indicator request for %s (capability=%r, category=%s)",
+            strategy.slug,
+            rec.capability,
+            rec.category,
         )
         return None
 

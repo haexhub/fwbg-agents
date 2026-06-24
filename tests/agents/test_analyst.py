@@ -27,10 +27,17 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from fwbg_agents.agents.analyst import (
     Abandon,
+    AddIndicator,
     Analyst,
     ChangeExit,
     Promote,
     TuneParams,
+    _render_catalog_snapshot,
+)
+from fwbg_agents.orchestrator.plugin_catalog import (
+    PluginCatalog,
+    PluginManifest,
+    _load_fwbg_cached,
 )
 
 
@@ -193,6 +200,60 @@ async def test_analyst_returns_change_exit(db_and_backtested):
     assert isinstance(rec, ChangeExit)
     assert rec.from_exit == "static_sl"
     assert rec.to_exit == "atr_trailing_sl"
+
+
+async def test_analyst_returns_add_indicator(db_and_backtested, monkeypatch, tmp_path):
+    SessionMaker, strategy_id, _ = db_and_backtested
+    # Point catalog at an empty fwbg root so the rendered prompt's snapshot is
+    # empty-ish — keeps the test independent of the host's fwbg checkout.
+    _load_fwbg_cached.cache_clear()
+    from fwbg_agents.config import settings as _settings
+    monkeypatch.setattr(_settings, "fwbg_repo_root", tmp_path / "no-fwbg")
+
+    test_model = _stub_model(
+        "final_result_AddIndicator",
+        {
+            "kind": "add_indicator",
+            "confidence": 0.7,
+            "reasoning": "no zone-pivot plugin in catalog; strategy needs support/resistance bands",
+            "phase": "indicators",
+            "capability": "support/resistance zones from pivot points",
+            "category": "indicator",
+        },
+    )
+    async with SessionMaker() as session:
+        s = (await session.execute(select(Strategy).where(Strategy.id == strategy_id))).scalar_one()
+        rec = await Analyst(session, model=test_model).analyze(s)
+
+    assert isinstance(rec, AddIndicator)
+    assert rec.phase == "indicators"
+    assert rec.category == "indicator"
+    assert "pivot" in rec.capability
+
+
+def test_render_catalog_snapshot_lists_categories_and_slugs():
+    cat = PluginCatalog(by_category={
+        "indicators": {
+            slug: PluginManifest(
+                name=slug, category="indicators", provenance="fwbg-core",
+                version="1.0.0", source_path=Path("/tmp/x"),
+            ) for slug in ["ema", "sma"]
+        },
+        "exit_strategies": {
+            "fixed": PluginManifest(
+                name="fixed", category="exit_strategies", provenance="fwbg-core",
+                version="1.0.0", source_path=Path("/tmp/x"),
+            ),
+        },
+    })
+    snap = _render_catalog_snapshot(cat)
+    assert "indicators: ema, sma" in snap
+    assert "exit_strategies: fixed" in snap
+
+
+def test_render_catalog_snapshot_empty():
+    snap = _render_catalog_snapshot(PluginCatalog(by_category={}))
+    assert "catalog empty" in snap.lower()
 
 
 async def test_analyst_missing_results_marks_agent_run_failed(db_and_backtested):

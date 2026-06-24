@@ -17,7 +17,13 @@ import yaml
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
-from fwbg_agents.agents.analyst import Abandon, ChangeExit, Promote, TuneParams
+from fwbg_agents.agents.analyst import (
+    Abandon,
+    AddIndicator,
+    ChangeExit,
+    Promote,
+    TuneParams,
+)
 from fwbg_agents.orchestrator.lifecycle import InvalidTransition
 from fwbg_agents.orchestrator.recommendations import validate_and_apply
 from fwbg_agents.persistence.database import Base
@@ -204,3 +210,40 @@ async def test_change_exit_records_sidecar_no_transition(db_and_backtested):
     rec_persisted = json.loads(sidecar.read_text())
     assert rec_persisted["kind"] == "change_exit"
     assert rec_persisted["to_exit"] == "atr_trailing_sl"
+
+
+async def test_add_indicator_writes_sidecar_no_transition(db_and_backtested):
+    SessionMaker, sid, tmp_path, _criteria = db_and_backtested
+    async with SessionMaker() as session:
+        s = (await session.execute(select(Strategy).where(Strategy.id == sid))).scalar_one()
+        rec = AddIndicator(
+            confidence=0.7,
+            reasoning="no pivot-based plugin in catalog",
+            phase="indicators",
+            capability="support/resistance zones from pivot points",
+            category="indicator",
+        )
+        tr = await validate_and_apply(session, s, rec, metrics=_BAD_METRICS)
+        assert tr is None
+
+    sidecar = (
+        tmp_path
+        / "data"
+        / "strategies"
+        / "demo_v1"
+        / "iteration_001"
+        / "add_indicator_request.json"
+    )
+    assert sidecar.is_file()
+    payload = json.loads(sidecar.read_text())
+    assert payload["kind"] == "add_indicator"
+    assert payload["category"] == "indicator"
+    assert payload["phase"] == "indicators"
+    assert payload["strategy_id"] == sid
+    assert payload["strategy_slug"] == "demo_v1"
+    assert "requested_at" in payload
+
+    async with SessionMaker() as v:
+        s = (await v.execute(select(Strategy).where(Strategy.id == sid))).scalar_one()
+        assert s.current_state == StrategyState.BACKTESTED.value  # unchanged
+        assert (await v.execute(select(Transition))).scalars().all() == []

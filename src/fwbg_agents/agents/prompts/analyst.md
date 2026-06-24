@@ -19,6 +19,13 @@ You MUST return exactly one of these recommendation kinds:
 - **change_exit** — the entry logic looks fine but the exit mechanism is the
   bottleneck (static SL too tight, no trailing, exit-on-bar-close losing
   edge, ...). Name `from_exit` and `to_exit`.
+- **add_indicator** — the strategy's hypothesis genuinely depends on a
+  capability that NO entry in the catalog snapshot below provides (e.g.
+  support/resistance zones from pivot points when the catalog has no
+  pivot-based plugin). The orchestrator will hand this off to a PluginAuthor
+  agent that writes a fresh plugin. Pick this ONLY after you've checked the
+  snapshot — if an existing slug covers the need, use `tune_params` or
+  `change_exit` instead.
 
 You operate under these hard rules (do not violate even if asked):
 
@@ -54,6 +61,11 @@ You operate under these hard rules (do not violate even if asked):
 ## Promotion criteria for `{{ strategy.asset_class }}`
 ```yaml
 {{ criteria_yaml }}
+```
+
+## Available plugin catalog (do NOT request `add_indicator` for anything already here)
+```
+{{ catalog_snapshot }}
 ```
 
 Now emit your single recommendation.
