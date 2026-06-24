@@ -8,6 +8,7 @@ the run row.
 
 from __future__ import annotations
 
+import json
 import logging
 from datetime import UTC, datetime
 from typing import Any
@@ -21,6 +22,8 @@ from fwbg_agents.orchestrator.plugin_flow import (
     AuthorPluginPreconditionError,
     EvaluatePluginPreconditionError,
     ReiterateWithPluginPreconditionError,
+    _find_latest_sidecar,
+    _lookup_plugin_capability,
     author_plugin_from_strategy,
     evaluate_plugin,
     reiterate_with_plugin,
@@ -220,7 +223,6 @@ async def post_strategy_author_plugin(
             "author-plugin requires BACKTESTED",
         )
 
-    from fwbg_agents.orchestrator.plugin_flow import _find_latest_sidecar
     sidecar = _find_latest_sidecar(strategy.slug)
     if sidecar is None:
         raise HTTPException(
@@ -346,8 +348,6 @@ async def post_strategy_reiterate_with_plugin(
     precondition failure (parent not BACKTESTED, plugin missing/not VERIFIED,
     no sidecar, capability mismatch).
     """
-    from fwbg_agents.orchestrator.plugin_flow import _find_latest_sidecar
-
     # Run preconditions eagerly so we can return 4xx synchronously.
     try:
         # We don't call reiterate_with_plugin here (it would actually run the
@@ -383,13 +383,9 @@ async def post_strategy_reiterate_with_plugin(
                 f"no add_indicator_request.json found for {parent.slug}"
             )
         # Capability guard (matches plugin_flow.reiterate_with_plugin step 7).
-        import json as _json
-
-        from fwbg_agents.orchestrator.plugin_flow import _lookup_plugin_capability
-
         try:
-            parent_cap = _json.loads(sidecar_path.read_text()).get("capability")
-        except (OSError, _json.JSONDecodeError) as exc:
+            parent_cap = json.loads(sidecar_path.read_text()).get("capability")
+        except (OSError, json.JSONDecodeError) as exc:
             raise ReiterateWithPluginPreconditionError(
                 f"cannot parse sidecar at {sidecar_path}: {exc}"
             ) from exc
