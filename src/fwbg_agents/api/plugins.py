@@ -13,14 +13,17 @@ from datetime import UTC, datetime
 from typing import Any
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
+from pydantic import BaseModel
 from sqlalchemy import asc, desc, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from fwbg_agents.orchestrator.plugin_flow import (
     AuthorPluginPreconditionError,
     EvaluatePluginPreconditionError,
+    ReiterateWithPluginPreconditionError,
     author_plugin_from_strategy,
     evaluate_plugin,
+    reiterate_with_plugin,
 )
 from fwbg_agents.persistence.database import SessionLocal, get_session
 from fwbg_agents.persistence.models import (
@@ -285,6 +288,147 @@ async def post_plugin_evaluate(
         "plugin_id": plugin.id,
         "status": "scheduled",
         "message": f"evaluating {plugin.slug}; poll /agents/runs/{ar.id}",
+    }
+
+
+# ---------------------------------------------------------------------------
+# M5c: reiterate-with-plugin background flow
+# ---------------------------------------------------------------------------
+
+
+class ReiterateWithPluginRequest(BaseModel):
+    plugin_slug: str
+
+
+async def _run_reiterate_with_plugin_background(
+    strategy_id: int, plugin_slug: str, agent_run_id: int
+) -> None:
+    from fwbg_agents.orchestrator.lifecycle import strategy_dir
+
+    async with SessionLocal() as session:
+        ar = (
+            await session.execute(select(AgentRun).where(AgentRun.id == agent_run_id))
+        ).scalar_one()
+        ar.status = AgentRunStatus.RUNNING.value
+        await session.commit()
+        try:
+            child_id = await reiterate_with_plugin(session, strategy_id, plugin_slug)
+            child = (
+                await session.execute(select(Strategy).where(Strategy.id == child_id))
+            ).scalar_one()
+            ar.status = AgentRunStatus.DONE.value
+            ar.output_artifact_path = str(
+                strategy_dir(child.slug) / "iteration_001" / "strategy.json"
+            )
+            ar.ended_at = datetime.now(UTC)
+            await session.commit()
+        except Exception as exc:
+            log.exception(
+                "reiterate-with-plugin background task failed (agent_run %s)",
+                agent_run_id,
+            )
+            ar.status = AgentRunStatus.FAILED.value
+            ar.ended_at = datetime.now(UTC)
+            ar.error = str(exc)
+            await session.commit()
+
+
+@router.post("/strategies/{strategy_id}/reiterate-with-plugin", status_code=202)
+async def post_strategy_reiterate_with_plugin(
+    strategy_id: int,
+    body: ReiterateWithPluginRequest,
+    background_tasks: BackgroundTasks,
+    session: AsyncSession = Depends(get_session),
+) -> dict[str, Any]:
+    """Splice a VERIFIED plugin into a child Strategy via the Translator.
+
+    202 + AgentRun envelope. 404 if strategy is missing; 422 for any other
+    precondition failure (parent not BACKTESTED, plugin missing/not VERIFIED,
+    no sidecar, capability mismatch).
+    """
+    from fwbg_agents.orchestrator.plugin_flow import _find_latest_sidecar
+
+    # Run preconditions eagerly so we can return 4xx synchronously.
+    try:
+        # We don't call reiterate_with_plugin here (it would actually run the
+        # Translator). Re-do the cheap checks; the background task re-runs the
+        # full precondition list inside a fresh session.
+        parent = (
+            await session.execute(select(Strategy).where(Strategy.id == strategy_id))
+        ).scalar_one_or_none()
+        if parent is None:
+            raise ReiterateWithPluginPreconditionError(
+                f"strategy {strategy_id} not found"
+            )
+        if parent.current_state != StrategyState.BACKTESTED.value:
+            raise ReiterateWithPluginPreconditionError(
+                f"strategy {parent.slug} is in state {parent.current_state!r}; "
+                "reiterate-with-plugin requires BACKTESTED"
+            )
+        plugin = (
+            await session.execute(select(Plugin).where(Plugin.slug == body.plugin_slug))
+        ).scalar_one_or_none()
+        if plugin is None:
+            raise ReiterateWithPluginPreconditionError(
+                f"plugin {body.plugin_slug!r} not found"
+            )
+        if plugin.current_state != PluginState.VERIFIED.value:
+            raise ReiterateWithPluginPreconditionError(
+                f"plugin {plugin.slug} is in state {plugin.current_state!r}; "
+                "reiterate-with-plugin requires VERIFIED"
+            )
+        sidecar_path = _find_latest_sidecar(parent.slug)
+        if sidecar_path is None:
+            raise ReiterateWithPluginPreconditionError(
+                f"no add_indicator_request.json found for {parent.slug}"
+            )
+        # Capability guard (matches plugin_flow.reiterate_with_plugin step 7).
+        import json as _json
+
+        from fwbg_agents.orchestrator.plugin_flow import _lookup_plugin_capability
+
+        try:
+            parent_cap = _json.loads(sidecar_path.read_text()).get("capability")
+        except (OSError, _json.JSONDecodeError) as exc:
+            raise ReiterateWithPluginPreconditionError(
+                f"cannot parse sidecar at {sidecar_path}: {exc}"
+            ) from exc
+        plugin_cap = await _lookup_plugin_capability(session, plugin.id)
+        if plugin_cap is None or plugin_cap != parent_cap:
+            raise ReiterateWithPluginPreconditionError(
+                f"plugin {plugin.slug} capability={plugin_cap!r} does "
+                f"not match sidecar capability={parent_cap!r}"
+            )
+    except ReiterateWithPluginPreconditionError as exc:
+        msg = str(exc)
+        if msg.startswith(f"strategy {strategy_id} not found"):
+            raise HTTPException(404, msg) from exc
+        raise HTTPException(422, msg) from exc
+
+    now = datetime.now(UTC)
+    ar = AgentRun(
+        agent_name="translator_reiterate_flow",
+        status=AgentRunStatus.PENDING.value,
+        strategy_id=parent.id,
+        input_artifact_path=str(sidecar_path),
+        started_at=now,
+        created_at=now,
+    )
+    session.add(ar)
+    await session.commit()
+    await session.refresh(ar)
+
+    background_tasks.add_task(
+        _run_reiterate_with_plugin_background, parent.id, body.plugin_slug, ar.id
+    )
+    return {
+        "agent_run_id": ar.id,
+        "strategy_id": parent.id,
+        "status": "scheduled",
+        "message": (
+            f"reiterating {parent.slug} with plugin {body.plugin_slug}; "
+            f"poll /agents/runs/{ar.id}"
+        ),
     }
 
 
