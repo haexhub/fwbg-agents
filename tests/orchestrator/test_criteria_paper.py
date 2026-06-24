@@ -6,6 +6,7 @@ import pytest
 
 from fwbg_agents.orchestrator.criteria_paper import (
     CriteriaEvalResult,
+    _eval_comparator,
     evaluate_paper_criteria,
     load_paper_criteria,
 )
@@ -64,3 +65,41 @@ def test_evaluate_fails_when_hard_blocker_breached():
     )
     assert res.passed is False
     assert any("max_dd_paper" in f for f in res.failures)
+
+
+def test_evaluate_skips_underscore_prefix_keys():
+    # Mirrors M2 lifecycle.check_backtest_criteria behaviour: rule keys
+    # starting with `_` are treated as comments / metadata and skipped.
+    criteria = {
+        "required_all": [{"_note": ">= 999.0", "sharpe_paper": ">= 0.8"}],
+        "hard_blockers": [],
+    }
+    res = evaluate_paper_criteria(
+        _make_summary(sharpe_paper=1.0), criteria
+    )
+    assert res.passed is True
+    assert res.failures == []
+
+
+@pytest.mark.parametrize(
+    "expr,value,expected",
+    [
+        (">= 1.0", 1.5, True),
+        (">= 1.0", 0.5, False),
+        ("<= 1.0", 0.5, True),
+        ("<= 1.0", 1.5, False),
+        ("> 1.0", 1.5, True),
+        ("> 1.0", 1.0, False),
+        ("< 1.0", 0.5, True),
+        ("< 1.0", 1.0, False),
+        ("== 1.0", 1.0, True),
+        ("== 1.0", 1.1, False),
+        ("!= 1.0", 1.1, True),
+        ("!= 1.0", 1.0, False),
+    ],
+)
+def test_eval_comparator_supports_six_operators(expr, value, expected):
+    # Imports the private function deliberately to lock its contract
+    # (the locked-concrete-copy decision). Exception to "test public
+    # API only" — justified by duplication-of-M2-evaluator contract.
+    assert _eval_comparator("m", value, expr) is expected

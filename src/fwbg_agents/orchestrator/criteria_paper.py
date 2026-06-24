@@ -8,18 +8,36 @@ Concrete copy of the comparator from `lifecycle._eval_comparator` — see
 locked decision (N): concrete-before-generic. We do NOT extract a shared
 helper yet; a third evaluator (M7 live-trading risk gates) is the trigger
 to consolidate.
+
+Contract notes:
+  - `load_paper_criteria` raises `FileNotFoundError` for unknown
+    `asset_class` (NOT pass-through). Callers that want pass-through
+    behaviour (e.g. orchestrator/paper_flow.py in Task 5) must catch the
+    exception and treat it as "gate open".
+  - `evaluate_paper_criteria` honors `required_all` and `hard_blockers`
+    sections only. `required_any` (M2-style group-OR) is intentionally
+    NOT supported in M6b — it can be added later if a paper-criteria
+    YAML ever needs it.
+  - Missing-metric failures are reported as
+    ``"<metric>: missing from summary"`` — NOT silently passed.
+  - Paper-criteria YAMLs MUST NOT use ``_``-prefix keys at the rule
+    level: those are skipped (mirrors M2 ``check_backtest_criteria``),
+    so a typo like ``_sharpe_paper:`` would silently no-op.
 """
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+import operator
 import yaml
 
 from fwbg_agents.tools.fwbg_paper_reader import PaperTradeSummary
 
+# parents[3]: src/fwbg_agents/orchestrator/criteria_paper.py -> repo root
 _DEFAULT_DIR = Path(__file__).resolve().parents[3] / "data" / "criteria" / "paper"
 
 
@@ -49,23 +67,26 @@ def load_paper_criteria(
 # Concrete copy of lifecycle._eval_comparator — see locked decision (N):
 # concrete-before-generic. Extract to a shared module only when a 3rd
 # evaluator appears (M7 live-trading risk gates).
-_OPS = {
-    ">=": lambda a, b: a >= b,
-    "<=": lambda a, b: a <= b,
-    ">": lambda a, b: a > b,
-    "<": lambda a, b: a < b,
-    "==": lambda a, b: a == b,
-    "!=": lambda a, b: a != b,
-}
+#
+# Ordering matters: longer ops first so '>=' is matched before '>' (and
+# '<=' before '<', '==' / '!=' before '<' / '>'). Mirrors M2's
+# `_OPERATORS` shape in lifecycle.py.
+_OPERATORS: list[tuple[str, Callable[[float, float], bool]]] = [
+    (">=", operator.ge),
+    ("<=", operator.le),
+    ("==", operator.eq),
+    ("!=", operator.ne),
+    (">", operator.gt),
+    ("<", operator.lt),
+]
 
 
-def _eval(metric: str, value: float, expr: str) -> tuple[bool, str]:
+def _eval_comparator(metric: str, value: float, expr: str) -> bool:
     expr = expr.strip()
-    for op in (">=", "<=", "==", "!=", ">", "<"):
+    for op, fn in _OPERATORS:
         if expr.startswith(op):
             threshold = float(expr[len(op) :].strip())
-            ok = _OPS[op](value, threshold)
-            return ok, f"{metric}: {value} {op} {threshold} -> {'pass' if ok else 'fail'}"
+            return fn(value, threshold)
     raise ValueError(f"unparseable comparator: {expr!r}")
 
 
@@ -77,17 +98,17 @@ def evaluate_paper_criteria(
     Passes iff every `required_all` AND every `hard_blockers` rule passes.
     Missing metrics in the summary are counted as failures.
     """
-    metrics = (
-        summary.model_dump() if hasattr(summary, "model_dump") else summary.__dict__
-    )
+    metrics = summary.model_dump()
     failures: list[str] = []
     for section in ("required_all", "hard_blockers"):
         for entry in criteria.get(section, []) or []:
             for metric, expr in entry.items():
+                if metric.startswith("_"):
+                    continue
                 if metric not in metrics or metrics[metric] is None:
                     failures.append(f"{metric}: missing from summary")
                     continue
-                ok, _msg = _eval(metric, float(metrics[metric]), expr)
+                ok = _eval_comparator(metric, float(metrics[metric]), expr)
                 if not ok:
                     failures.append(f"{metric}: {metrics[metric]} fails '{expr}'")
     return CriteriaEvalResult(passed=not failures, failures=failures)
