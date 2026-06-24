@@ -59,6 +59,7 @@ async def paper_analyze(
     *,
     settings=None,
     analyst=None,
+    existing_ar: AgentRun | None = None,
 ) -> AgentRun:
     """Run PaperAnalyst against on-disk telemetry, persist sidecar + flag.
 
@@ -66,6 +67,12 @@ async def paper_analyze(
     pre-flight failures (strategy not found, wrong state, no telemetry).
     Re-raises any exception from analyst.analyze_sync after marking the
     AgentRun row as FAILED.
+
+    `existing_ar`: when supplied (M6b API endpoint path), reuse this row
+    instead of creating a new one — the endpoint pre-creates a PENDING row
+    so the HTTP client can poll immediately. Standalone callers (smoke
+    scripts, tests) leave it None to get the original create-internally
+    behaviour.
 
     Sidecar-orphan note: if the success commit fails mid-flight after the
     sidecar write but before the DB update lands, the on-disk sidecar will
@@ -101,16 +108,23 @@ async def paper_analyze(
     positions = read_paper_positions(strategy.slug, fwbg_data_dir)
 
     now = datetime.now(UTC)
-    ar = AgentRun(
-        agent_name="paper_analyst",
-        status=AgentRunStatus.RUNNING.value,
-        strategy_id=strategy.id,
-        started_at=now,
-        created_at=now,
-    )
-    session.add(ar)
-    await session.commit()
-    await session.refresh(ar)
+    if existing_ar is not None:
+        ar = existing_ar
+        ar.status = AgentRunStatus.RUNNING.value
+        ar.started_at = now
+        await session.commit()
+        await session.refresh(ar)
+    else:
+        ar = AgentRun(
+            agent_name="paper_analyst",
+            status=AgentRunStatus.RUNNING.value,
+            strategy_id=strategy.id,
+            started_at=now,
+            created_at=now,
+        )
+        session.add(ar)
+        await session.commit()
+        await session.refresh(ar)
 
     try:
         eval_res = evaluate_paper_criteria(summary, criteria)

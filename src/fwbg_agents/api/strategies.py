@@ -9,11 +9,12 @@ go through the lifecycle module's transition functions.
 from __future__ import annotations
 
 import json
+import logging
 import re
 from datetime import UTC, datetime
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import asc, desc, select
 from sqlalchemy.exc import IntegrityError
@@ -21,8 +22,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from fwbg_agents.config import settings
 from fwbg_agents.orchestrator.lifecycle import strategy_dir
-from fwbg_agents.persistence.database import get_session
+from fwbg_agents.orchestrator.paper_flow import paper_analyze
+from fwbg_agents.persistence.database import SessionLocal, get_session
 from fwbg_agents.persistence.models import (
+    AgentRun,
+    AgentRunStatus,
     EntityType,
     Strategy,
     StrategyState,
@@ -30,6 +34,8 @@ from fwbg_agents.persistence.models import (
     Transition,
 )
 from fwbg_agents.tools.fwbg_paper_reader import read_paper_positions, read_paper_summary
+
+log = logging.getLogger(__name__)
 
 router = APIRouter(tags=["strategies"])
 
@@ -259,3 +265,90 @@ async def get_paper_positions(
             detail=f"no positions snapshot on disk for strategy {s.slug}",
         )
     return positions.model_dump(mode="json")
+
+
+# ---------------------------------------------------------------------------
+# M6b: paper-analyze background flow (manual analyst trigger)
+# ---------------------------------------------------------------------------
+
+
+class PaperAnalyzeResponse(BaseModel):
+    agent_run_id: int
+    status: str
+
+
+async def _run_paper_analyze_background(strategy_id: int, agent_run_id: int) -> None:
+    """Open a fresh session, load the pre-created AgentRun, run paper_analyze.
+
+    Mirrors `_run_reiterate_with_plugin_background` from M5c — the endpoint
+    pre-creates a PENDING AgentRun so the HTTP client can poll immediately;
+    this wrapper flips it to RUNNING via paper_analyze(existing_ar=…) and
+    catches failures to mark FAILED.
+    """
+    async with SessionLocal() as session:
+        ar = (
+            await session.execute(select(AgentRun).where(AgentRun.id == agent_run_id))
+        ).scalar_one()
+        try:
+            await paper_analyze(strategy_id, session, existing_ar=ar)
+        except Exception as exc:
+            log.exception(
+                "paper-analyze background task failed (agent_run %s)", agent_run_id
+            )
+            # paper_analyze marks ar FAILED on its own except path, but if it
+            # raised before reaching that block (e.g. PaperFlowError during
+            # pre-flight) we still need to update the row.
+            await session.refresh(ar)
+            if ar.status != AgentRunStatus.FAILED.value:
+                ar.status = AgentRunStatus.FAILED.value
+                ar.ended_at = datetime.now(UTC)
+                ar.error = str(exc)
+                await session.commit()
+
+
+@router.post("/strategies/{strategy_id}/paper-analyze", status_code=202)
+async def post_strategy_paper_analyze(
+    strategy_id: int,
+    background_tasks: BackgroundTasks,
+    session: AsyncSession = Depends(get_session),
+) -> PaperAnalyzeResponse:
+    """Kick PaperAnalyst against on-disk telemetry. 202 + AgentRun envelope.
+
+    404 if the strategy is missing. 422 if it is not in PAPER_TRADING or if
+    no on-disk telemetry exists yet. Never transitions state (promote/abandon
+    edges require human approval — see lifecycle.py).
+    """
+    s = (
+        await session.execute(select(Strategy).where(Strategy.id == strategy_id))
+    ).scalar_one_or_none()
+    if s is None:
+        raise HTTPException(status_code=404, detail=f"strategy {strategy_id} not found")
+    if s.current_state != StrategyState.PAPER_TRADING.value:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                f"strategy {s.slug} is in state {s.current_state!r}; "
+                "paper-analyze requires PAPER_TRADING"
+            ),
+        )
+    summary = read_paper_summary(s.slug, settings.fwbg_data_dir)
+    if summary is None:
+        raise HTTPException(
+            status_code=422,
+            detail=f"no on-disk paper-trade data for strategy {s.slug}",
+        )
+
+    now = datetime.now(UTC)
+    ar = AgentRun(
+        agent_name="paper_analyst",
+        status=AgentRunStatus.PENDING.value,
+        strategy_id=s.id,
+        started_at=now,
+        created_at=now,
+    )
+    session.add(ar)
+    await session.commit()
+    await session.refresh(ar)
+
+    background_tasks.add_task(_run_paper_analyze_background, s.id, ar.id)
+    return PaperAnalyzeResponse(agent_run_id=ar.id, status="running")
