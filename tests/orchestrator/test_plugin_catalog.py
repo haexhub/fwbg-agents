@@ -175,6 +175,34 @@ def test_db_shadows_fwbg_same_slug():
     assert merged.by_category["indicators"]["ema"].provenance == "agent-authored"
 
 
+def test_merge_maps_singular_kind_to_plural_category():
+    """PluginAuthor writes Plugin.kind=PluginContract.PluginKindLit (singular).
+
+    The validator queries the plural bundle-manifest category. The merge must
+    remap so DB-VERIFIED plugins land in the bucket the validator queries.
+    """
+    db_plugins = [_make_plugin("rsi_v2", "indicator", PluginState.VERIFIED)]
+    merged = merge_with_db({}, db_plugins)
+    assert "rsi_v2" in merged.by_category["indicators"]
+    assert merged.by_category["indicators"]["rsi_v2"].category == "indicators"
+    assert "rsi_v2" not in merged.by_category.get("indicator", {})
+
+
+def test_merge_handles_multiword_kinds_unchanged():
+    """Multi-word categories like feature_selection don't pluralize — map to themselves."""
+    db_plugins = [_make_plugin("boruta_v2", "feature_selection", PluginState.VERIFIED)]
+    merged = merge_with_db({}, db_plugins)
+    assert "boruta_v2" in merged.by_category["feature_selection"]
+    assert merged.by_category["feature_selection"]["boruta_v2"].category == "feature_selection"
+
+
+def test_merge_unknown_kind_passes_through():
+    """Kinds with no _KIND_TO_CATEGORY entry fall back to the verbatim string."""
+    db_plugins = [_make_plugin("custom", "custom_unknown_kind", PluginState.VERIFIED)]
+    merged = merge_with_db({}, db_plugins)
+    assert "custom" in merged.by_category["custom_unknown_kind"]
+
+
 # ---------------------------------------------------------------------------
 # PluginCatalog helpers
 # ---------------------------------------------------------------------------
