@@ -27,6 +27,7 @@ from pydantic_ai import Agent
 from pydantic_ai.models import Model
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from fwbg_agents.orchestrator.hypotheses import generate_slug
 from fwbg_agents.orchestrator.lifecycle import strategy_dir
 from fwbg_agents.orchestrator.strategy_validator import (
     KNOWN_DATASOURCES,
@@ -44,6 +45,9 @@ from fwbg_agents.persistence.models import (
     AgentRunStatus,
     LlmCall,
     Strategy,
+    StrategyState,
+    StrategyTag,
+    Transition,
 )
 from fwbg_agents.tools.llm import default_model
 
@@ -215,6 +219,164 @@ class Translator:
             await self.session.commit()
 
             return strategy_path
+        except Exception as exc:
+            ar.status = AgentRunStatus.FAILED.value
+            ar.ended_at = datetime.now(UTC)
+            ar.error = str(exc)
+            await self.session.commit()
+            raise
+
+    async def run_reiterate(self, parent: Strategy) -> Strategy:
+        """Apply an Analyst recommendation sidecar deterministically and create a child Strategy.
+
+        Deterministic by design — no LLM. TuneParams replaces an entry in
+        `optimization.grid_params`; ChangeExit swaps `exit_strategies` with the
+        sidecar's `new_exit_strategy`. Parent stays in its current state; child
+        is a fresh PROPOSED row with `parent_strategy_id=parent.id`.
+
+        Sidecar JSON shape (mirroring `recommendations._rec_to_dict`):
+        - tune_params: {kind, confidence, reasoning, param, new_range}
+        - change_exit: {kind, confidence, reasoning, from_exit, to_exit, new_exit_strategy}
+        """
+        now = datetime.now(UTC)
+        ar = AgentRun(
+            agent_name="translator",
+            status=AgentRunStatus.RUNNING.value,
+            strategy_id=parent.id,
+            started_at=now,
+            created_at=now,
+        )
+        self.session.add(ar)
+        await self.session.commit()
+        await self.session.refresh(ar)
+
+        try:
+            parent_dir = strategy_dir(parent.slug) / "iteration_001"
+            sidecar_path = parent_dir / "analyst_recommendation.json"
+            parent_strategy_path = parent_dir / "strategy.json"
+            parent_hypothesis_path = parent_dir / "hypothesis.json"
+
+            if not sidecar_path.is_file():
+                raise TranslatorFailed(
+                    f"missing analyst_recommendation.json at {sidecar_path}"
+                )
+            if not parent_strategy_path.is_file():
+                raise TranslatorFailed(
+                    f"parent missing strategy.json at {parent_strategy_path}"
+                )
+            ar.input_artifact_path = str(sidecar_path)
+
+            rec = json.loads(sidecar_path.read_text())
+            parent_payload = json.loads(parent_strategy_path.read_text())
+
+            child_payload = json.loads(json.dumps(parent_payload))  # deep copy
+            kind = rec.get("kind")
+            if kind == "tune_params":
+                param = rec.get("param")
+                new_range = rec.get("new_range")
+                if not param or not isinstance(new_range, list):
+                    raise TranslatorFailed(
+                        f"tune_params sidecar missing param/new_range: {rec}"
+                    )
+                grid = child_payload.setdefault("optimization", {}).setdefault(
+                    "grid_params", {}
+                )
+                grid[param] = new_range
+            elif kind == "change_exit":
+                new_exit = rec.get("new_exit_strategy")
+                if not isinstance(new_exit, dict):
+                    raise TranslatorFailed(
+                        "change_exit sidecar missing new_exit_strategy (the Analyst must "
+                        "populate it for M4 reiterate; see ChangeExit.new_exit_strategy)"
+                    )
+                child_payload["exit_strategies"] = [new_exit]
+            else:
+                raise TranslatorFailed(
+                    f"reiterate only handles tune_params/change_exit, got kind={kind!r}"
+                )
+
+            child_slug = await generate_slug(
+                self.session, parent.strategy_family, parent.asset_class
+            )
+            child_payload["name"] = child_slug
+
+            try:
+                validate_strategy_json(child_payload)
+            except StrategyValidationError as exc:
+                raise TranslatorFailed(str(exc)) from exc
+
+            now2 = datetime.now(UTC)
+            child = Strategy(
+                slug=child_slug,
+                current_state=StrategyState.PROPOSED.value,
+                iteration_count=1,
+                parent_strategy_id=parent.id,
+                asset_class=parent.asset_class,
+                strategy_family=parent.strategy_family,
+                created_at=now2,
+                updated_at=now2,
+            )
+            self.session.add(child)
+            await self.session.flush()
+
+            # Copy parent tags onto child for lineage / prior-art discoverability.
+            parent_tags = parent_payload.get("tags") or []
+            for tag in parent_tags:
+                self.session.add(StrategyTag(strategy_id=child.id, tag=tag))
+
+            child_dir = strategy_dir(child.slug) / "iteration_001"
+            child_dir.mkdir(parents=True, exist_ok=True)
+            (child_dir / "strategy.json").write_text(
+                json.dumps(child_payload, indent=2, sort_keys=True)
+            )
+
+            if parent_hypothesis_path.is_file():
+                hypothesis_data = json.loads(parent_hypothesis_path.read_text())
+                (child_dir / "hypothesis.json").write_text(
+                    json.dumps(hypothesis_data, indent=2)
+                )
+                child.hypothesis_path = str(child_dir / "hypothesis.json")
+            else:
+                hypothesis_data = {
+                    "title": f"Re-iteration of {parent.slug}",
+                    "asset_class": parent.asset_class,
+                    "strategy_family": parent.strategy_family,
+                    "hypothesis": "(inherited)",
+                }
+
+            spec_path = child_dir / "spec.md"
+            _write_spec_md(
+                spec_path,
+                strategy_slug=child.slug,
+                hypothesis=hypothesis_data,
+                strategy_json=child_payload,
+            )
+            child.spec_path = str(spec_path)
+
+            self.session.add(
+                Transition(
+                    entity_type="strategy",
+                    entity_id=child.id,
+                    from_state=None,
+                    to_state=StrategyState.PROPOSED.value,
+                    reason=f"translator: re-iterate from {parent.slug} ({kind})",
+                    payload={
+                        "parent_strategy_id": parent.id,
+                        "recommendation_kind": kind,
+                        "recommendation": rec,
+                    },
+                    created_by="translator",
+                    created_at=now2,
+                )
+            )
+
+            ar.strategy_id = child.id
+            ar.status = AgentRunStatus.DONE.value
+            ar.ended_at = datetime.now(UTC)
+            ar.output_artifact_path = str(child_dir / "strategy.json")
+            await self.session.commit()
+            await self.session.refresh(child)
+            return child
         except Exception as exc:
             ar.status = AgentRunStatus.FAILED.value
             ar.ended_at = datetime.now(UTC)

@@ -74,6 +74,13 @@ class ChangeExit(BaseModel):
     reasoning: str
     from_exit: str
     to_exit: str
+    new_exit_strategy: dict | None = None
+    """Optional concrete replacement (name, params, ct, ...).
+
+    If set, the Translator (M4 reiterate-mode) swaps the parent's
+    exit_strategies wholesale. If not set, reiterate-mode raises — the
+    LLM-driven Analyst is expected to fill this in for ChangeExit
+    recommendations from M4 onward."""
 
 
 AnalystRecommendation = Annotated[
