@@ -231,3 +231,80 @@ async def test_promote_live_records_audit_transition_with_human_approval_payload
     assert t.payload.get("human_approval") is True
     assert t.payload.get("operator_note") == "approved by ops"
     assert t.created_by == "operator"
+
+
+async def test_promote_live_happy_path_accepts_omitted_operator_note(client_with_db):
+    """Omitted operator_note → stored as None (not empty string).
+
+    Also asserts Fix C side-effects on metadata_json: the stale recommendation
+    flag is cleared and promoted_live_at is stamped with an ISO timestamp.
+    """
+    client, session = client_with_db
+    s = await _seed_strategy(
+        session,
+        slug="omit_note",
+        state=StrategyState.PAPER_TRADING.value,
+        promote_recommended=True,
+    )
+
+    r = await client.post(
+        f"/strategies/{s.id}/promote-live",
+        json={"human_approval": True},
+    )
+    assert r.status_code == 200, r.text
+    assert r.json()["new_state"] == StrategyState.LIVE_TRADING.value
+
+    rows = (
+        await session.execute(
+            select(Transition)
+            .where(
+                (Transition.entity_type == EntityType.STRATEGY.value)
+                & (Transition.entity_id == s.id)
+            )
+            .order_by(Transition.id.desc())
+        )
+    ).scalars().all()
+    assert rows, "no Transition row was written"
+    t = rows[0]
+    # The endpoint sets operator_note from a normalized `note` var; omitted in
+    # body means None, NOT empty string.
+    assert "operator_note" in t.payload
+    assert t.payload["operator_note"] is None
+
+    # Fix C: metadata flag cleared + promoted_live_at stamped.
+    await session.refresh(s)
+    meta = s.metadata_json or {}
+    assert meta.get("paper_analyst_promote_recommended") is False
+    promoted_at = meta.get("promoted_live_at")
+    assert isinstance(promoted_at, str) and promoted_at  # non-empty ISO string
+
+
+async def test_promote_live_empty_operator_note_normalizes_to_none(client_with_db):
+    """Empty-string / whitespace-only operator_note → stored as None."""
+    client, session = client_with_db
+    s = await _seed_strategy(
+        session,
+        slug="empty_note",
+        state=StrategyState.PAPER_TRADING.value,
+        promote_recommended=True,
+    )
+
+    r = await client.post(
+        f"/strategies/{s.id}/promote-live",
+        json={"human_approval": True, "operator_note": "   "},
+    )
+    assert r.status_code == 200, r.text
+
+    rows = (
+        await session.execute(
+            select(Transition)
+            .where(
+                (Transition.entity_type == EntityType.STRATEGY.value)
+                & (Transition.entity_id == s.id)
+            )
+            .order_by(Transition.id.desc())
+        )
+    ).scalars().all()
+    assert rows
+    t = rows[0]
+    assert t.payload.get("operator_note") is None

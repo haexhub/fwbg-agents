@@ -424,15 +424,14 @@ async def post_strategy_promote_live(
             ),
         )
 
-    # M2 guard re-validates payload["human_approval"]; deferred-defence by design.
-    await transition_strategy(
-        session,
-        s,
-        StrategyState.LIVE_TRADING,
-        payload={"human_approval": True, "operator_note": body.operator_note},
-        created_by="operator",
-    )
+    # Normalize operator_note: empty / whitespace-only → None so downstream
+    # consumers can rely on a single sentinel instead of checking both.
+    note = (body.operator_note or "").strip() or None
 
+    # Stage the AgentRun BEFORE transition_strategy so both rows flush in the
+    # same transaction (transition_strategy's internal commit covers them).
+    # If transition_strategy fails for any reason (guard, IO, …), the AgentRun
+    # is rolled back as part of the same SQLAlchemy session — no orphan audit.
     now = datetime.now(UTC)
     ar = AgentRun(
         agent_name="promote_live",
@@ -443,8 +442,27 @@ async def post_strategy_promote_live(
         created_at=now,
     )
     session.add(ar)
-    await session.commit()
+
+    # M2 guard re-validates payload["human_approval"]; deferred-defence by design.
+    await transition_strategy(
+        session,
+        s,
+        StrategyState.LIVE_TRADING,
+        payload={"human_approval": True, "operator_note": note},
+        created_by="operator",
+    )
     await session.refresh(ar)
+
+    # Clear the stale paper-analyst flag and stamp promoted_live_at for dashboard
+    # hygiene. This is a SECOND commit — if it fails, the audit trail (Transition
+    # row) is still correct because transition_strategy already committed.
+    now_iso = datetime.now(UTC).isoformat()
+    meta = dict(s.metadata_json or {})
+    meta["paper_analyst_promote_recommended"] = False
+    meta["promoted_live_at"] = now_iso
+    s.metadata_json = meta
+    await session.commit()
+    await session.refresh(s)
 
     return PromoteLiveResponse(
         strategy_id=s.id,
