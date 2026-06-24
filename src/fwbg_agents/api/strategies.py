@@ -21,7 +21,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from fwbg_agents.config import settings
-from fwbg_agents.orchestrator.lifecycle import strategy_dir
+from fwbg_agents.orchestrator.lifecycle import strategy_dir, transition_strategy
 from fwbg_agents.orchestrator.paper_flow import paper_analyze
 from fwbg_agents.persistence.database import SessionLocal, get_session
 from fwbg_agents.persistence.models import (
@@ -352,3 +352,102 @@ async def post_strategy_paper_analyze(
 
     background_tasks.add_task(_run_paper_analyze_background, s.id, ar.id)
     return PaperAnalyzeResponse(agent_run_id=ar.id, status="scheduled")
+
+
+# ---------------------------------------------------------------------------
+# M6b: human-gated promote-live (operator-driven transition to LIVE_TRADING)
+# ---------------------------------------------------------------------------
+
+
+class PromoteLiveBody(BaseModel):
+    human_approval: bool
+    operator_note: str | None = None
+
+
+class PromoteLiveResponse(BaseModel):
+    strategy_id: int
+    new_state: str
+    agent_run_id: int
+
+
+@router.post(
+    "/strategies/{strategy_id}/promote-live",
+    response_model=PromoteLiveResponse,
+    status_code=200,
+)
+async def post_strategy_promote_live(
+    strategy_id: int,
+    body: PromoteLiveBody,
+    session: AsyncSession = Depends(get_session),
+) -> PromoteLiveResponse:
+    """Triple-gated promotion from PAPER_TRADING to LIVE_TRADING.
+
+    Gates (all three must pass):
+      1. body.human_approval is True              (operator pressed the button)
+      2. metadata.paper_analyst_promote_recommended is True  (analyst signed off)
+      3. strategy.current_state == PAPER_TRADING  (state-machine edge exists)
+
+    The M2 lifecycle guard `_guard_strategy_paper_to_live` re-checks gate 1's
+    payload["human_approval"]==True; the LLM cannot bypass it because the LLM
+    is never the HTTP caller for this endpoint — only an operator is.
+
+    No LLM is invoked. The AgentRun row is purely an audit trace.
+    """
+    s = (
+        await session.execute(select(Strategy).where(Strategy.id == strategy_id))
+    ).scalar_one_or_none()
+    if s is None:
+        raise HTTPException(status_code=404, detail=f"strategy {strategy_id} not found")
+
+    if not body.human_approval:
+        raise HTTPException(
+            status_code=422,
+            detail="human_approval must be true to promote to LIVE_TRADING",
+        )
+
+    meta = s.metadata_json or {}
+    if not meta.get("paper_analyst_promote_recommended"):
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                "strategy does not have paper_analyst_promote_recommended=True; "
+                "run POST /strategies/{id}/paper-analyze first"
+            ),
+        )
+
+    if s.current_state != StrategyState.PAPER_TRADING.value:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                f"strategy {s.slug} is in state {s.current_state!r}; "
+                "promote-live requires PAPER_TRADING"
+            ),
+        )
+
+    # M2 guard re-validates payload["human_approval"]; deferred-defence by design.
+    await transition_strategy(
+        session,
+        s,
+        StrategyState.LIVE_TRADING,
+        payload={"human_approval": True, "operator_note": body.operator_note},
+        created_by="operator",
+    )
+
+    now = datetime.now(UTC)
+    ar = AgentRun(
+        agent_name="promote_live",
+        status=AgentRunStatus.DONE.value,
+        strategy_id=s.id,
+        started_at=now,
+        ended_at=now,
+        created_at=now,
+    )
+    session.add(ar)
+    await session.commit()
+    await session.refresh(ar)
+
+    return PromoteLiveResponse(
+        strategy_id=s.id,
+        new_state=StrategyState.LIVE_TRADING.value,
+        agent_run_id=ar.id,
+    )
