@@ -212,3 +212,105 @@ def test_catalog_empty_falls_back_to_frozenset():
     # `signal_orb_v1` is in the frozenset, so validation must pass even with
     # an empty `models` catalog category.
     validate_strategy_json(VALID_FIXTURE, catalog=cat)
+
+
+# ---------------------------------------------------------------------------
+# M5c: plugin-slot list-fields (indicators / feature_selection /
+# preprocessing / extra_filters)
+# ---------------------------------------------------------------------------
+
+
+def test_strategy_with_no_list_fields_is_valid():
+    """Regression guard: M4-shape strategy.json (no list-fields) still validates."""
+    validate_strategy_json(VALID_FIXTURE)
+    # Same payload with explicit empty lists must also pass.
+    payload = dict(VALID_FIXTURE)
+    payload["indicators"] = []
+    payload["feature_selection"] = []
+    payload["preprocessing"] = []
+    payload["extra_filters"] = []
+    validate_strategy_json(payload)
+
+
+def test_indicators_list_must_be_list_of_str():
+    # String instead of list
+    payload = dict(VALID_FIXTURE)
+    payload["indicators"] = "adx"
+    with pytest.raises(StrategyValidationError) as exc:
+        validate_strategy_json(payload)
+    assert "indicators" in str(exc.value)
+
+    # Dict inside list
+    payload = dict(VALID_FIXTURE)
+    payload["indicators"] = [{"x": 1}]
+    with pytest.raises(StrategyValidationError) as exc:
+        validate_strategy_json(payload)
+    assert "indicators" in str(exc.value)
+
+    # None inside list
+    payload = dict(VALID_FIXTURE)
+    payload["indicators"] = [None]
+    with pytest.raises(StrategyValidationError) as exc:
+        validate_strategy_json(payload)
+    assert "indicators" in str(exc.value)
+
+
+def test_indicators_empty_list_is_valid():
+    payload = dict(VALID_FIXTURE)
+    payload["indicators"] = []
+    validate_strategy_json(payload)
+
+
+def test_indicators_slug_must_be_in_catalog_when_catalog_present():
+    cat = _catalog({"indicators": ["adx-trend-strength", "ema-cross"]})
+
+    payload = dict(VALID_FIXTURE)
+    payload["indicators"] = ["adx-trend-strength"]
+    validate_strategy_json(payload, catalog=cat)
+
+    # Unknown slug → error mentioning the offending slug.
+    payload_bad = dict(VALID_FIXTURE)
+    payload_bad["indicators"] = ["made-up"]
+    with pytest.raises(StrategyValidationError) as exc:
+        validate_strategy_json(payload_bad, catalog=cat)
+    assert "made-up" in str(exc.value)
+
+    # Close typo → did-you-mean hint surfaces the real slug.
+    payload_typo = dict(VALID_FIXTURE)
+    payload_typo["indicators"] = ["adx-trend-strenght"]  # typo
+    with pytest.raises(StrategyValidationError) as exc:
+        validate_strategy_json(payload_typo, catalog=cat)
+    msg = str(exc.value)
+    assert "adx-trend-strenght" in msg
+    assert "adx-trend-strength" in msg  # did-you-mean
+
+
+def test_extra_filters_routes_to_catalog_filters_category():
+    # Catalog has the slug only under "filters" category; the
+    # `extra_filters` field must route to "filters" (not "extra_filters").
+    cat = _catalog({"filters": ["custom-filter-x"]})
+
+    payload = dict(VALID_FIXTURE)
+    payload["extra_filters"] = ["custom-filter-x"]
+    validate_strategy_json(payload, catalog=cat)
+
+    # An unknown slug against the "filters" category must be rejected and
+    # the error must mention the "filters" category — proving routing.
+    payload_bad = dict(VALID_FIXTURE)
+    payload_bad["extra_filters"] = ["custom-filter-y"]
+    with pytest.raises(StrategyValidationError) as exc:
+        validate_strategy_json(payload_bad, catalog=cat)
+    msg = str(exc.value)
+    assert "custom-filter-y" in msg
+    assert "filters" in msg
+    assert "extra_filters" not in msg.split("category")[1]  # category was 'filters', not 'extra_filters'
+
+
+def test_no_catalog_means_lax_membership_for_list_fields():
+    """Without catalog kwarg, arbitrary slugs in list-fields pass (M4-compat)."""
+    payload = dict(VALID_FIXTURE)
+    payload["indicators"] = ["anything-goes"]
+    payload["feature_selection"] = ["another"]
+    payload["preprocessing"] = ["whatever"]
+    payload["extra_filters"] = ["nope"]
+    validate_strategy_json(payload)

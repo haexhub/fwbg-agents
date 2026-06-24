@@ -105,6 +105,49 @@ def _check_field_with_catalog(
         )
 
 
+# M5c: plugin-slot list-fields. Unlike `model`, these have NO frozen fallback —
+# they're 100% plugin-authored. When no catalog is passed or the catalog category
+# is empty, membership is unchecked (lax, M4-compatible).
+# Field-name → catalog-category mapping (note: `extra_filters` routes to `filters`).
+_PLUGIN_LIST_FIELDS: tuple[tuple[str, str], ...] = (
+    ("indicators", "indicators"),
+    ("feature_selection", "feature_selection"),
+    ("preprocessing", "preprocessing"),
+    ("extra_filters", "filters"),
+)
+
+
+def _check_plugin_list_field(
+    field: str, value: Any, *, catalog: PluginCatalog | None, catalog_category: str
+) -> None:
+    """Validate one optional plugin-slot list-field.
+
+    Shape rules apply unconditionally:
+      - must be a list
+      - each entry must be a non-empty str
+    Catalog membership is checked only when the catalog has entries for
+    `catalog_category` — otherwise lax.
+    """
+    if not isinstance(value, list):
+        raise StrategyValidationError(f"{field} must be a list of strings")
+    for i, entry in enumerate(value):
+        if not isinstance(entry, str) or not entry:
+            raise StrategyValidationError(
+                f"{field}[{i}] must be a non-empty string"
+            )
+    if catalog is None:
+        return
+    allowed = catalog.all_slugs_for(catalog_category)
+    if not allowed:
+        return
+    for entry in value:
+        if entry not in allowed:
+            raise StrategyValidationError(
+                f"{field} slug {entry!r} is not in the catalog category "
+                f"{catalog_category!r}.{_suggest(entry, allowed)}"
+            )
+
+
 def _check_exit_strategies(items: Any, *, catalog: PluginCatalog | None) -> None:
     if not isinstance(items, list) or not items:
         raise StrategyValidationError("exit_strategies must be a non-empty list")
@@ -166,6 +209,13 @@ def validate_strategy_json(
     )
     _check_exit_strategies(data["exit_strategies"], catalog=catalog)
     _check_tags(data["tags"])
+
+    # M5c: optional plugin-slot list-fields. Omitted == empty == valid.
+    for field, category in _PLUGIN_LIST_FIELDS:
+        if field in data:
+            _check_plugin_list_field(
+                field, data[field], catalog=catalog, catalog_category=category,
+            )
 
     if not isinstance(data["name"], str) or not data["name"]:
         raise StrategyValidationError("name must be a non-empty string")
