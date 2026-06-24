@@ -143,6 +143,9 @@ class Strategy(Base):
     paper_phase_target_days: Mapped[int] = mapped_column(
         Integer, nullable=False, server_default="90"
     )
+    metadata_json: Mapped[dict] = mapped_column(
+        "metadata_json", JSON, nullable=False, server_default="{}", default=dict
+    )
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
