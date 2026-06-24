@@ -50,6 +50,25 @@ async def isolated_smoke_env(tmp_path, monkeypatch):
         await conn.run_sync(Base.metadata.create_all)
     TestSession = async_sessionmaker(engine, expire_on_commit=False)
 
+    # Seed a VERIFIED 'xgboost' model so the catalog merges it into the
+    # "models" category; the smoke's parent strategy.json uses that slug.
+    # Without this seed, catalog["models"] is empty and the validator falls
+    # back to KNOWN_MODELS frozenset which does not include 'xgboost'.
+    now = datetime.now(UTC)
+    async with TestSession() as session:
+        session.add(
+            Plugin(
+                slug="xgboost",
+                current_state=PluginState.VERIFIED.value,
+                kind="model",
+                spec_path="data/plugins/xgboost/v1/spec.md",
+                contract_path="data/plugins/xgboost/v1/contract.yaml",
+                created_at=now,
+                updated_at=now,
+            )
+        )
+        await session.commit()
+
     # Patch SessionLocal in every module that imported the symbol directly.
     import scripts.m5c_smoke as m5c_smoke
 

@@ -88,7 +88,7 @@ _PARENT_STRATEGY_JSON: dict = {
     "expected_outcome": "sharpe > 1.0",
     "datasource": "forexsb",
     "pipeline": "orb_simple_v1",
-    "model": "signal_orb_v1",
+    "model": "xgboost",
     "filters": "orb_scalping_v1",
     "validation": "walk_forward_intraday_v1",
     "resources": "standard_v1",
