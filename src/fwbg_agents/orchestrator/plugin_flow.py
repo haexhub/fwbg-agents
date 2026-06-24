@@ -21,7 +21,7 @@ from fwbg_agents.agents.plugin_author import PluginAuthor
 from fwbg_agents.agents.plugin_evaluator import PluginEvaluator
 from fwbg_agents.agents.translator import Translator
 from fwbg_agents.orchestrator.lifecycle import strategy_dir
-from fwbg_agents.orchestrator.plugin_catalog import _load_fwbg_cached
+from fwbg_agents.orchestrator.plugin_catalog import reset_fwbg_cache
 from fwbg_agents.persistence.models import (
     AgentRun,
     AgentRunStatus,
@@ -182,7 +182,7 @@ async def reiterate_with_plugin(
         ) from exc
 
     parent_capability = sidecar.get("capability")
-    plugin_capability = await _lookup_plugin_capability(session, plugin.id)
+    plugin_capability = await lookup_plugin_capability(session, plugin.id)
     if plugin_capability is None or plugin_capability != parent_capability:
         raise ReiterateWithPluginPreconditionError(
             f"plugin {plugin.slug} capability={plugin_capability!r} does "
@@ -191,14 +191,14 @@ async def reiterate_with_plugin(
 
     # Decision E: clear the fwbg-catalog process-lifetime cache so a
     # freshly-VERIFIED plugin shows up immediately for the catalog merge.
-    _load_fwbg_cached.cache_clear()
+    reset_fwbg_cache()
 
     translator = Translator(session)
     child = await translator.run_reiterate_with_plugin(parent, plugin_slug, sidecar)
     return child.id
 
 
-async def _lookup_plugin_capability(
+async def lookup_plugin_capability(
     session: AsyncSession, plugin_id: int
 ) -> str | None:
     """Read the originating sidecar's `capability` from the PluginAuthor
@@ -209,6 +209,8 @@ async def _lookup_plugin_capability(
     DONE row to handle re-runs (cf. M5b uniqueness guard at slug-level).
     Returns None when the row or sidecar is missing/unreadable — caller
     treats that as a precondition failure.
+
+    Public: also used by the API layer's eager-precondition path.
     """
     ar = (
         await session.execute(
@@ -238,5 +240,6 @@ __all__ = [
     "ReiterateWithPluginPreconditionError",
     "author_plugin_from_strategy",
     "evaluate_plugin",
+    "lookup_plugin_capability",
     "reiterate_with_plugin",
 ]

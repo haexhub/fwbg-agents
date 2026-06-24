@@ -23,9 +23,9 @@ from fwbg_agents.orchestrator.plugin_flow import (
     EvaluatePluginPreconditionError,
     ReiterateWithPluginPreconditionError,
     _find_latest_sidecar,
-    _lookup_plugin_capability,
     author_plugin_from_strategy,
     evaluate_plugin,
+    lookup_plugin_capability,
     reiterate_with_plugin,
 )
 from fwbg_agents.persistence.database import SessionLocal, get_session
@@ -389,7 +389,7 @@ async def post_strategy_reiterate_with_plugin(
             raise ReiterateWithPluginPreconditionError(
                 f"cannot parse sidecar at {sidecar_path}: {exc}"
             ) from exc
-        plugin_cap = await _lookup_plugin_capability(session, plugin.id)
+        plugin_cap = await lookup_plugin_capability(session, plugin.id)
         if plugin_cap is None or plugin_cap != parent_cap:
             raise ReiterateWithPluginPreconditionError(
                 f"plugin {plugin.slug} capability={plugin_cap!r} does "
@@ -406,6 +406,7 @@ async def post_strategy_reiterate_with_plugin(
         agent_name="translator_reiterate_flow",
         status=AgentRunStatus.PENDING.value,
         strategy_id=parent.id,
+        plugin_id=plugin.id,
         input_artifact_path=str(sidecar_path),
         started_at=now,
         created_at=now,

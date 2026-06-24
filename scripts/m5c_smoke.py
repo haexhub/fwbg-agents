@@ -226,26 +226,58 @@ async def _seed_parent_strategy() -> int:
     return strategy_id
 
 
-def _cleanup_previous_run() -> None:
-    """Idempotent: remove the plugin dir from any prior smoke so the slug is free."""
+async def _cleanup_previous_run() -> None:
+    """Stage-0 idempotency: auto-clean Strategy artefacts so re-runs work.
+
+    Plugin DB rows are intentionally NOT auto-removed — they are traceable
+    artifacts of a prior smoke run. `main()` checks separately and aborts
+    with a helpful message if a prior plugin row exists.
+
+    Removes (best-effort, no-op when absent):
+      - DB Strategy rows with SMOKE_STRATEGY_SLUG (parent) AND its children
+        (the smoke creates a child Strategy via reiterate-with-plugin)
+      - data/strategies/<strategy_slug>/ (parent + any child dirs)
+      - data/plugins/<plugin_slug>/ (file-system cleanup is fine; the DB row
+        is what's preserved for traceability)
+    """
+    child_slugs: list[str] = []
+    async with SessionLocal() as session:
+        prior_parent = (
+            await session.execute(
+                select(Strategy).where(Strategy.slug == SMOKE_STRATEGY_SLUG)
+            )
+        ).scalar_one_or_none()
+        if prior_parent is not None:
+            children = (
+                await session.execute(
+                    select(Strategy).where(
+                        Strategy.parent_strategy_id == prior_parent.id
+                    )
+                )
+            ).scalars().all()
+            for ch in children:
+                child_slugs.append(ch.slug)
+                await session.delete(ch)
+            await session.delete(prior_parent)
+        await session.commit()
+
     p_dir = settings.data_dir / "plugins" / SMOKE_PLUGIN_SLUG
     if p_dir.exists():
         shutil.rmtree(p_dir)
+    s_dir = settings.data_dir / "strategies" / SMOKE_STRATEGY_SLUG
+    if s_dir.exists():
+        shutil.rmtree(s_dir)
+    for slug in child_slugs:
+        cdir = settings.data_dir / "strategies" / slug
+        if cdir.exists():
+            shutil.rmtree(cdir)
 
 
 async def main() -> int:
     print(f"[m5c_smoke] data_dir={settings.data_dir}")
-    _cleanup_previous_run()
-    _patch_author_to_use_stub()
-
-    print("[m5c_smoke] [1/4] seeding parent strategy + add_indicator_request.json sidecar")
-    strategy_id = await _seed_parent_strategy()
-    print(f"       → strategy_id={strategy_id} slug={SMOKE_STRATEGY_SLUG}")
+    await _cleanup_previous_run()
 
     async with SessionLocal() as session:
-        # Refuse to proceed when a stale plugin row with our slug exists. The
-        # smoke leaves rows behind on purpose (traceable artifact) — re-runs
-        # require manual cleanup of the plugin row OR a different slug.
         existing = (
             await session.execute(
                 select(Plugin).where(Plugin.slug == SMOKE_PLUGIN_SLUG)
@@ -258,6 +290,12 @@ async def main() -> int:
                 "manually delete the plugin row or pick a different slug."
             )
             return 1
+
+    _patch_author_to_use_stub()
+
+    print("[m5c_smoke] [1/4] seeding parent strategy + add_indicator_request.json sidecar")
+    strategy_id = await _seed_parent_strategy()
+    print(f"       → strategy_id={strategy_id} slug={SMOKE_STRATEGY_SLUG}")
 
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://t") as client:

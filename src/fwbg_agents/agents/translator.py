@@ -56,6 +56,16 @@ log = logging.getLogger(__name__)
 
 _PROMPT_PATH = Path(__file__).parent / "prompts" / "translator.md"
 
+# Maps Analyst AddIndicator.phase strings → strategy.json list-field names.
+# Used by `run_reiterate_with_plugin` when splicing a VERIFIED plugin slug
+# into a child Strategy. Module-scope so tests/callers can reference it.
+_PHASE_TO_FIELD: dict[str, str] = {
+    "indicator": "indicators",
+    "feature_selection": "feature_selection",
+    "preprocessing": "preprocessing",
+    "filter": "extra_filters",
+}
+
 
 class TranslatorFailed(RuntimeError):
     """Raised when the Translator output fails structural validation."""
@@ -406,13 +416,6 @@ class Translator:
             "preprocessing"      -> preprocessing
             "filter"             -> extra_filters
         """
-        _PHASE_TO_FIELD: dict[str, str] = {
-            "indicator": "indicators",
-            "feature_selection": "feature_selection",
-            "preprocessing": "preprocessing",
-            "filter": "extra_filters",
-        }
-
         now = datetime.now(UTC)
         ar = AgentRun(
             agent_name="translator",

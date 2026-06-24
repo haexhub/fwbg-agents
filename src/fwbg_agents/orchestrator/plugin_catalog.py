@@ -125,6 +125,16 @@ def _load_fwbg_cached(fwbg_root_str: str) -> dict[str, dict[str, PluginManifest]
     return discover_fwbg_plugins(Path(fwbg_root_str))
 
 
+def reset_fwbg_cache() -> None:
+    """Public bust-the-cache helper for callers that need fresh discovery.
+
+    Used after promoting a plugin to VERIFIED so a subsequent ``load_catalog``
+    re-scans the fwbg tree (cf. Decision E in the M5c plan). Prefer this over
+    poking ``_load_fwbg_cached.cache_clear()`` directly.
+    """
+    _load_fwbg_cached.cache_clear()
+
+
 _VISIBLE_PLUGIN_STATES: frozenset[str] = frozenset(
     {PluginState.VERIFIED.value, PluginState.ADOPTED_IN_FWBG.value}
 )
