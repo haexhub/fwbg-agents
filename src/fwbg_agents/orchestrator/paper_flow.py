@@ -26,7 +26,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from fwbg_agents.agents.paper_analyst import (
     AbandonPaper,
-    ContinueObservation,
     PaperAnalyst,
     PromotePaperToLive,
 )
@@ -67,6 +66,13 @@ async def paper_analyze(
     pre-flight failures (strategy not found, wrong state, no telemetry).
     Re-raises any exception from analyst.analyze_sync after marking the
     AgentRun row as FAILED.
+
+    Sidecar-orphan note: if the success commit fails mid-flight after the
+    sidecar write but before the DB update lands, the on-disk sidecar will
+    exist while its AgentRun row stays RUNNING (then gets marked FAILED by
+    the except block). Consumers reading sidecars by
+    AgentRun.output_artifact_path should tolerate finding a sidecar whose
+    AgentRun.status is not DONE.
     """
     settings = settings if settings is not None else default_settings
     analyst = analyst if analyst is not None else PaperAnalyst()
@@ -124,15 +130,16 @@ async def paper_analyze(
 
         # Reassign — don't mutate in place. SQLA JSON change-tracking on
         # a mutable dict is fragile; a fresh dict is the safe path.
-        meta = dict(strategy.metadata_json or {})
         if isinstance(out, PromotePaperToLive):
+            meta = dict(strategy.metadata_json or {})
             meta["paper_analyst_promote_recommended"] = True
+            strategy.metadata_json = meta
         elif isinstance(out, AbandonPaper):
+            meta = dict(strategy.metadata_json or {})
             meta["paper_analyst_abandon_recommended"] = True
             meta["paper_analyst_post_mortem_path"] = out.post_mortem_path
-        # ContinueObservation: leave metadata untouched (sidecar only).
-        if isinstance(out, (PromotePaperToLive, AbandonPaper)):
             strategy.metadata_json = meta
+        # ContinueObservation: no metadata write — sidecar only.
 
         ar.status = AgentRunStatus.DONE.value
         ar.output_artifact_path = str(sidecar_path)
@@ -147,9 +154,12 @@ async def paper_analyze(
         )
         return ar
     except Exception as exc:
+        log.exception("paper_analyze: slug=%s FAILED", strategy.slug)
         ar.status = AgentRunStatus.FAILED.value
         ar.error = str(exc)
         ar.ended_at = datetime.now(UTC)
-        await session.commit()
-        log.exception("paper_analyze: slug=%s FAILED", strategy.slug)
+        try:
+            await session.commit()
+        except Exception:
+            log.exception("paper_analyze: also failed to persist FAILED status")
         raise
