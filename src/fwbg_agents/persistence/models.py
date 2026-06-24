@@ -57,8 +57,21 @@ class PluginState(str, enum.Enum):
 
 
 class PluginKind(str, enum.Enum):
+    """fwbg plugin category — matches `PluginContract.kind` Literal 1:1.
+
+    Migration 0004 (M5b) replaced the M3 placeholder set `{INDICATOR, EXIT}`
+    with the full fwbg taxonomy and rewrites any legacy `kind='exit'` plugin
+    rows to `kind='exit_strategy'`.
+    """
+
     INDICATOR = "indicator"
-    EXIT = "exit"
+    MODEL = "model"
+    EXIT_STRATEGY = "exit_strategy"
+    RISK_MANAGEMENT = "risk_management"
+    ENTRY_MODIFIER = "entry_modifier"
+    PREPROCESSING = "preprocessing"
+    FEATURE_SELECTION = "feature_selection"
+    DATA_LOADING = "data_loading"
 
 
 class EntityType(str, enum.Enum):
@@ -201,6 +214,33 @@ class AgentRun(Base):
     started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     ended_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class VerificationRun(Base):
+    """One PluginEvaluator pass over a plugin's contract.
+
+    Inserted at start with `status='running'`; the evaluator updates status,
+    counts, ended_at, and error_log_path on completion. The structured
+    per-scenario error log lives on disk at `error_log_path` (overwritten by
+    subsequent runs — only the latest snapshot is kept; the row itself stays
+    as the historical index).
+    """
+
+    __tablename__ = "verification_run"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    plugin_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("plugin.id"), nullable=False, index=True
+    )
+    status: Mapped[str] = mapped_column(String(16), nullable=False)
+    scenarios_run: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    scenarios_passed: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    error_log_path: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    ended_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, index=True
+    )
 
 
 class LlmCall(Base):

@@ -7,9 +7,10 @@ invariants against synthetic test_scenarios before letting the plugin
 transition AUTHORED → VERIFIED.
 
 `kind` mirrors the fwbg plugin category names (indicators, models, ...) so
-catalog lookups and contract.kind line up 1:1. The Literal is duplicated
-between this module and M5b's PluginKind enum extension — keeping it as a
-Literal here avoids a hard dependency on M5b's Migration 0004.
+catalog lookups and contract.kind line up 1:1. `PluginKindLit` is the
+canonical type — `persistence.models.PluginKind` mirrors it via Migration
+0004 (M5b) and the alignment is pinned by
+`tests/persistence/test_verification_run.py::test_plugin_kind_enum_values_match_plugin_contract_literal`.
 """
 
 from __future__ import annotations
