@@ -19,6 +19,7 @@ from sqlalchemy import asc, desc, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from fwbg_agents.config import settings
 from fwbg_agents.orchestrator.lifecycle import strategy_dir
 from fwbg_agents.persistence.database import get_session
 from fwbg_agents.persistence.models import (
@@ -28,6 +29,7 @@ from fwbg_agents.persistence.models import (
     StrategyTag,
     Transition,
 )
+from fwbg_agents.tools.fwbg_paper_reader import read_paper_summary
 
 router = APIRouter(tags=["strategies"])
 
@@ -200,3 +202,40 @@ async def list_strategy_transitions(
         )
     ).scalars().all()
     return {"transitions": [_serialize_transition(t) for t in rows]}
+
+
+def _require_paper_or_live_trading(strategy: Strategy) -> None:
+    """Guard for endpoints that only make sense in PAPER_TRADING / LIVE_TRADING.
+
+    Raises 409 with the actual state for debuggability. Extracted so the
+    upcoming /paper-positions endpoint (Task 6) can reuse it verbatim.
+    """
+    allowed = {StrategyState.PAPER_TRADING.value, StrategyState.LIVE_TRADING.value}
+    if strategy.current_state not in allowed:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"strategy not in PAPER_TRADING or LIVE_TRADING state, "
+                f"got {strategy.current_state}"
+            ),
+        )
+
+
+@router.get("/strategies/{strategy_id}/paper-summary")
+async def get_paper_summary(
+    strategy_id: int, session: AsyncSession = Depends(get_session)
+) -> dict[str, Any]:
+    """Return on-disk paper-trade telemetry. Polled by the dashboard. No LLM."""
+    s = (
+        await session.execute(select(Strategy).where(Strategy.id == strategy_id))
+    ).scalar_one_or_none()
+    if s is None:
+        raise HTTPException(status_code=404, detail=f"strategy {strategy_id} not found")
+    _require_paper_or_live_trading(s)
+    summary = read_paper_summary(s.slug, settings.fwbg_data_dir)
+    if summary is None:
+        raise HTTPException(
+            status_code=404,
+            detail=f"no paper-trade data on disk for strategy {s.slug}",
+        )
+    return summary.model_dump(mode="json")

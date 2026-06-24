@@ -41,6 +41,13 @@ class Settings(BaseSettings):
         default=Path.home() / "Projekte" / "fwbg",
         description="Root of the fwbg source tree; scanned for plugin manifests by PluginCatalog.",
     )
+    fwbg_data_dir: Path = Field(
+        default=Path.home() / "Projekte" / "fwbg" / "data",
+        description=(
+            "Root of fwbg's runtime data tree. Paper-trading telemetry lives "
+            "under <fwbg_data_dir>/account-trades/<slug>/{trades.jsonl,status.json,positions.json}."
+        ),
+    )
 
     # Runner
     runner_poll_interval_seconds: float = 5.0
