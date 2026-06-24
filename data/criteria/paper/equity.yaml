@@ -1,0 +1,7 @@
+# hand-curated paper-trading promotion criteria for equity — see docs/plans/2026-06-24-fwbg-agents-m6b.md
+required_all:
+  - sharpe_paper: ">= 0.8"
+  - win_rate: ">= 0.40"
+  - trades_total: ">= 30"
+hard_blockers:
+  - max_dd_paper: "<= 0.25"

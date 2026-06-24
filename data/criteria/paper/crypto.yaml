@@ -1,0 +1,7 @@
+# hand-curated paper-trading promotion criteria for crypto — see docs/plans/2026-06-24-fwbg-agents-m6b.md
+required_all:
+  - sharpe_paper: ">= 0.6"
+  - win_rate: ">= 0.35"
+  - trades_total: ">= 20"
+hard_blockers:
+  - max_dd_paper: "<= 0.30"

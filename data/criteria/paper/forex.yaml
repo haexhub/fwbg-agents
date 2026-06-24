@@ -1,0 +1,7 @@
+# hand-curated paper-trading promotion criteria for forex — see docs/plans/2026-06-24-fwbg-agents-m6b.md
+required_all:
+  - sharpe_paper: ">= 1.0"
+  - win_rate: ">= 0.45"
+  - trades_total: ">= 30"
+hard_blockers:
+  - max_dd_paper: "<= 0.15"
