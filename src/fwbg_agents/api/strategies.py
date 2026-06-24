@@ -29,7 +29,7 @@ from fwbg_agents.persistence.models import (
     StrategyTag,
     Transition,
 )
-from fwbg_agents.tools.fwbg_paper_reader import read_paper_summary
+from fwbg_agents.tools.fwbg_paper_reader import read_paper_positions, read_paper_summary
 
 router = APIRouter(tags=["strategies"])
 
@@ -239,3 +239,23 @@ async def get_paper_summary(
             detail=f"no paper-trade data on disk for strategy {s.slug}",
         )
     return summary.model_dump(mode="json")
+
+
+@router.get("/strategies/{strategy_id}/paper-positions")
+async def get_paper_positions(
+    strategy_id: int, session: AsyncSession = Depends(get_session)
+) -> dict[str, Any]:
+    """Return currently-open positions (with SL/TP) for dashboard live-view. No LLM."""
+    s = (
+        await session.execute(select(Strategy).where(Strategy.id == strategy_id))
+    ).scalar_one_or_none()
+    if s is None:
+        raise HTTPException(status_code=404, detail=f"strategy {strategy_id} not found")
+    _require_paper_or_live_trading(s)
+    positions = read_paper_positions(s.slug, settings.fwbg_data_dir)
+    if positions is None:
+        raise HTTPException(
+            status_code=404,
+            detail=f"no positions snapshot on disk for strategy {s.slug}",
+        )
+    return positions.model_dump(mode="json")
