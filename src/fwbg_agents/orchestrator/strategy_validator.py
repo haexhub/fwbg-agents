@@ -1,4 +1,4 @@
-"""Lightweight structural validator for fwbg strategy.json (M4).
+"""Lightweight structural validator for fwbg strategy.json.
 
 The Translator emits strategy.json; this validator catches obvious LLM
 mistakes BEFORE we hand the file to fwbg. The full source of truth is
@@ -6,15 +6,22 @@ mistakes BEFORE we hand the file to fwbg. The full source of truth is
 runtime dependency of this repo would be heavy — the Runner remains the
 ultimate validator when fwbg starts the backtest.
 
-The plugin-slug catalog is intentionally small in M4. M5's PluginAuthor
-will expand it; Translator-fresh that needs a plugin not listed here must
-keep the strategy in PROPOSED and emit a `needs_plugin: <slug>` note in
-spec.md instead of fabricating a slug.
+M5a refactor: `validate_strategy_json` accepts an optional `catalog`
+(PluginCatalog) kwarg. When provided AND the relevant catalog category has
+at least one entry, the `model` field and each `exit_strategies[i].name`
+are looked up in the catalog. Otherwise the M4 frozenset fallback applies —
+existing call sites and tests work unchanged. M5b's PluginAuthor extends
+the catalog without touching this file.
 """
 
 from __future__ import annotations
 
-from typing import Any
+from difflib import get_close_matches
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from fwbg_agents.orchestrator.plugin_catalog import PluginCatalog
+
 
 KNOWN_PIPELINES: frozenset[str] = frozenset({"orb_simple_v1"})
 KNOWN_MODELS: frozenset[str] = frozenset({"signal_orb_v1"})
@@ -40,10 +47,11 @@ REQUIRED_TOP_LEVEL: tuple[str, ...] = (
     "hypothesis",
 )
 
-_FIELD_CATALOGS: tuple[tuple[str, frozenset[str]], ...] = (
+# Fields that stay frozenset-only — they're fwbg-internal identifiers, not
+# plugin slugs.
+_FROZEN_FIELD_CATALOGS: tuple[tuple[str, frozenset[str]], ...] = (
     ("datasource", KNOWN_DATASOURCES),
     ("pipeline", KNOWN_PIPELINES),
-    ("model", KNOWN_MODELS),
     ("filters", KNOWN_FILTERS),
     ("validation", KNOWN_VALIDATIONS),
     ("resources", KNOWN_RESOURCES),
@@ -55,7 +63,49 @@ class StrategyValidationError(ValueError):
     """Raised when a strategy.json payload fails structural validation."""
 
 
-def _check_exit_strategies(items: Any) -> None:
+def _suggest(value: str, allowed: list[str]) -> str:
+    """Render a 'did you mean ...' hint for the error message, or empty."""
+    if not allowed:
+        return ""
+    matches = get_close_matches(value, allowed, n=3, cutoff=0.4)
+    if not matches:
+        matches = [s for s in allowed if value.lower() in s.lower()][:3]
+    if not matches:
+        return ""
+    return f" did you mean: {matches}?"
+
+
+def _check_field_with_catalog(
+    field: str,
+    value: str,
+    *,
+    catalog: PluginCatalog | None,
+    catalog_category: str,
+    frozen_fallback: frozenset[str],
+) -> None:
+    """Catalog-first, frozenset-fallback membership check.
+
+    Catalog wins when it has at least one slug for `catalog_category`; otherwise
+    fall back to the M4 frozenset so existing call sites without a catalog (and
+    tests) keep working unchanged.
+    """
+    if catalog is not None and catalog.all_slugs_for(catalog_category):
+        allowed = catalog.all_slugs_for(catalog_category)
+        if value not in allowed:
+            raise StrategyValidationError(
+                f"{field}={value!r} is not in the catalog category "
+                f"{catalog_category!r}.{_suggest(value, allowed)}"
+            )
+        return
+    if value not in frozen_fallback:
+        raise StrategyValidationError(
+            f"{field}={value!r} is not in the known catalog "
+            f"({sorted(frozen_fallback)}). The Translator must keep the strategy in "
+            "PROPOSED and emit a 'needs_plugin' note instead of inventing slugs."
+        )
+
+
+def _check_exit_strategies(items: Any, *, catalog: PluginCatalog | None) -> None:
     if not isinstance(items, list) or not items:
         raise StrategyValidationError("exit_strategies must be a non-empty list")
     for i, item in enumerate(items):
@@ -65,6 +115,15 @@ def _check_exit_strategies(items: Any) -> None:
             raise StrategyValidationError(f"exit_strategies[{i}].name is required (str)")
         if "params" not in item or not isinstance(item["params"], dict):
             raise StrategyValidationError(f"exit_strategies[{i}].params is required (object)")
+        # Catalog check only kicks in when the catalog has entries — keeps M4
+        # shape lax for the no-catalog path.
+        if catalog is not None and catalog.all_slugs_for("exit_strategies"):
+            allowed = catalog.all_slugs_for("exit_strategies")
+            if item["name"] not in allowed:
+                raise StrategyValidationError(
+                    f"exit_strategies[{i}].name={item['name']!r} is not in the "
+                    f"catalog.{_suggest(item['name'], allowed)}"
+                )
 
 
 def _check_tags(tags: Any) -> None:
@@ -75,8 +134,12 @@ def _check_tags(tags: Any) -> None:
             raise StrategyValidationError("tags entries must be strings")
 
 
-def validate_strategy_json(data: dict) -> None:
-    """Raise StrategyValidationError if `data` is not a structurally valid strategy.json."""
+def validate_strategy_json(
+    data: dict, *, catalog: PluginCatalog | None = None
+) -> None:
+    """Structural validation. Pass `catalog` to route model/exit lookups through
+    the runtime PluginCatalog; without it the M4 frozenset fallback applies.
+    """
     if not isinstance(data, dict):
         raise StrategyValidationError("payload must be a JSON object")
 
@@ -84,18 +147,24 @@ def validate_strategy_json(data: dict) -> None:
     if missing:
         raise StrategyValidationError(f"missing required keys: {missing}")
 
-    for field, catalog in _FIELD_CATALOGS:
-        value = data[field]
-        if not isinstance(value, str):
+    for field in ("datasource", "pipeline", "model", "filters", "validation",
+                  "resources", "timeframe"):
+        if not isinstance(data[field], str):
             raise StrategyValidationError(f"{field} must be a string")
-        if value not in catalog:
+
+    for field, frozen in _FROZEN_FIELD_CATALOGS:
+        if data[field] not in frozen:
             raise StrategyValidationError(
-                f"{field}={value!r} is not in the known catalog "
-                f"({sorted(catalog)}). The Translator must keep the strategy in "
+                f"{field}={data[field]!r} is not in the known catalog "
+                f"({sorted(frozen)}). The Translator must keep the strategy in "
                 "PROPOSED and emit a 'needs_plugin' note instead of inventing slugs."
             )
 
-    _check_exit_strategies(data["exit_strategies"])
+    _check_field_with_catalog(
+        "model", data["model"],
+        catalog=catalog, catalog_category="models", frozen_fallback=KNOWN_MODELS,
+    )
+    _check_exit_strategies(data["exit_strategies"], catalog=catalog)
     _check_tags(data["tags"])
 
     if not isinstance(data["name"], str) or not data["name"]:

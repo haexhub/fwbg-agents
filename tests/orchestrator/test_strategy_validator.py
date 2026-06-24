@@ -1,4 +1,4 @@
-"""Lightweight strategy.json structural validator (M4)."""
+"""Lightweight strategy.json structural validator (M4 → M5a catalog-aware)."""
 
 from __future__ import annotations
 
@@ -7,6 +7,7 @@ from pathlib import Path
 
 import pytest
 
+from fwbg_agents.orchestrator.plugin_catalog import PluginCatalog, PluginManifest
 from fwbg_agents.orchestrator.strategy_validator import (
     KNOWN_DATASOURCES,
     KNOWN_FILTERS,
@@ -18,6 +19,20 @@ from fwbg_agents.orchestrator.strategy_validator import (
     StrategyValidationError,
     validate_strategy_json,
 )
+
+
+def _manifest(slug: str, category: str) -> PluginManifest:
+    return PluginManifest(
+        name=slug, category=category, provenance="fwbg-core",
+        version="1.0.0", source_path=Path("/tmp/x"),
+    )
+
+
+def _catalog(by_category: dict[str, list[str]]) -> PluginCatalog:
+    return PluginCatalog(by_category={
+        cat: {s: _manifest(s, cat) for s in slugs}
+        for cat, slugs in by_category.items()
+    })
 
 
 VALID_FIXTURE = {
@@ -143,3 +158,57 @@ def test_known_constants_are_non_empty():
     assert KNOWN_RESOURCES
     assert KNOWN_DATASOURCES
     assert KNOWN_TIMEFRAMES
+
+
+# ---------------------------------------------------------------------------
+# M5a: catalog injection
+# ---------------------------------------------------------------------------
+
+
+def test_legacy_no_catalog_call_still_passes():
+    """Calling with catalog=None must behave exactly like M4."""
+    validate_strategy_json(VALID_FIXTURE)
+    validate_strategy_json(VALID_FIXTURE, catalog=None)
+
+
+def test_catalog_extends_known_models():
+    """A model not in the legacy frozenset but present in the catalog must pass."""
+    payload = dict(VALID_FIXTURE)
+    payload["model"] = "brand_new_model_v2"
+    cat = _catalog({"models": ["brand_new_model_v2"]})
+    validate_strategy_json(payload, catalog=cat)
+
+
+def test_catalog_rejects_unknown_model_with_suggestion():
+    payload = dict(VALID_FIXTURE)
+    payload["model"] = "signal_orb_typo"
+    cat = _catalog({"models": ["signal_orb_v1", "signal_orb_v2"]})
+    with pytest.raises(StrategyValidationError) as exc:
+        validate_strategy_json(payload, catalog=cat)
+    msg = str(exc.value)
+    assert "signal_orb_typo" in msg
+    assert "signal_orb_v1" in msg  # suggestion
+
+
+def test_catalog_accepts_exit_strategies_name():
+    payload = dict(VALID_FIXTURE)
+    payload["exit_strategies"] = [{"name": "atr_based", "params": {"atr_period": 14}}]
+    cat = _catalog({"exit_strategies": ["fixed", "atr_based"]})
+    validate_strategy_json(payload, catalog=cat)
+
+
+def test_catalog_rejects_unknown_exit_strategies_name():
+    payload = dict(VALID_FIXTURE)
+    payload["exit_strategies"] = [{"name": "phantom_exit", "params": {}}]
+    cat = _catalog({"exit_strategies": ["fixed", "atr_based"]})
+    with pytest.raises(StrategyValidationError) as exc:
+        validate_strategy_json(payload, catalog=cat)
+    assert "phantom_exit" in str(exc.value)
+
+
+def test_catalog_empty_falls_back_to_frozenset():
+    """Catalog with no entries for a category → frozenset still rules that category."""
+    cat = _catalog({"indicators": ["ema"]})  # no "models", no "exit_strategies"
+    # `signal_orb_v1` is in the frozenset, so validation must pass even with
+    # an empty `models` catalog category.
+    validate_strategy_json(VALID_FIXTURE, catalog=cat)
