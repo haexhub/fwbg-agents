@@ -53,6 +53,22 @@ class Settings(BaseSettings):
     runner_poll_interval_seconds: float = 5.0
     runner_poll_timeout_seconds: float = 60 * 60 * 2  # 2h hard cap per backtest
 
+    # Plugin authoring (M5d: Planner/Implementer split)
+    plugin_planner_model: str = Field(
+        default="claude-opus-4-8",
+        description="Stronger model for the PluginPlanner agent (reasoning-heavy plan emission).",
+    )
+    plugin_implementer_model: str = Field(
+        default="claude-opus-4-7",
+        description="Weaker model for the PluginImplementer agent (mechanical code generation).",
+    )
+    plugin_impl_max_rounds: int = Field(
+        default=5,
+        ge=1,
+        le=20,
+        description="Max refinement rounds for the PluginImplementer gate-loop.",
+    )
+
     # Service
     api_port: int = 8421
     log_level: str = "INFO"
