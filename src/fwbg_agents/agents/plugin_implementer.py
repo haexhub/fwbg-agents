@@ -26,7 +26,7 @@ from pydantic_ai.models import Model
 from pydantic_ai.models.anthropic import AnthropicModel
 from pydantic_ai.providers.anthropic import AnthropicProvider
 
-from fwbg_agents.agents.plugin_author import (
+from fwbg_agents.agents.plugin_authoring_shared import (
     PluginAuthorResult,
     SyntaxCheck,
     validate_python_syntax,

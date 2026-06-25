@@ -292,7 +292,7 @@ async def test_planner_injects_examples_into_user_prompt(tmp_path: Path):
 
 def test_render_user_prompt_includes_examples_section():
     """_render_user_prompt smoke: example blocks appear when examples are non-empty."""
-    from fwbg_agents.agents.plugin_author import FwbgPluginExample
+    from fwbg_agents.agents.plugin_authoring_shared import FwbgPluginExample
 
     examples = [
         FwbgPluginExample(

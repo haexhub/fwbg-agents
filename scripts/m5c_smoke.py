@@ -49,8 +49,35 @@ POLL_INTERVAL_S = 0.5
 SMOKE_STRATEGY_SLUG = "smoke_m5c_parent"
 SMOKE_PLUGIN_SLUG = "smoke-m5c-rsi"
 
+# Smoke shim: M5d Planner+Implementer emits a BaseIndicator subclass (for the
+# contract gate), while the M5b PluginEvaluator still execs the module and
+# expects a top-level `compute`. Provide both forms so the M5c smoke survives
+# the split — fwbg_sdk import is guarded with a stub for envs without the SDK.
+# Proper cleanup (evaluator-update) belongs in a future M5e.
 _PLUGIN_CODE = (
     "import pandas as pd\n"
+    "\n"
+    "try:\n"
+    "    from fwbg_sdk.indicators import BaseIndicator\n"
+    "    from fwbg_sdk.base import PluginPhase\n"
+    "except ImportError:  # fwbg_sdk not available in the agents venv\n"
+    "    class BaseIndicator:  # type: ignore[no-redef]\n"
+    "        pass\n"
+    "    class PluginPhase:  # type: ignore[no-redef]\n"
+    "        INDICATORS = 'indicators'\n"
+    "\n"
+    "\n"
+    "class SmokeM5cRsi(BaseIndicator):\n"
+    "    name = 'smoke-m5c-rsi'\n"
+    "    phase = PluginPhase.INDICATORS\n"
+    "    version = '0.1.0'\n"
+    "\n"
+    "    def compute(self, df, *, period=14):\n"
+    "        return compute(df, period=period)\n"
+    "\n"
+    "    def get_feature_columns(self):\n"
+    "        return ['smoke_m5c_rsi']\n"
+    "\n"
     "\n"
     "def compute(df: pd.DataFrame, *, period: int = 14) -> pd.Series:\n"
     "    delta = df['close'].diff()\n"
@@ -117,7 +144,50 @@ _PARENT_HYPOTHESIS: dict = {
 }
 
 
-def _stub_author_model() -> FunctionModel:
+_PLAN_STUB: dict = {
+    "slug": SMOKE_PLUGIN_SLUG,
+    # PluginPlan slug pattern: lowercase + underscores; the smoke uses kebab-case
+    # for plugin slugs historically, so override class_name accordingly.
+    "class_name": "SmokeM5cRsi",
+    "phase": "indicators",
+    "version": "0.1.0",
+    "stateful": False,
+    "depends_on": [],
+    "params": [
+        {
+            "name": "period",
+            "type": "int",
+            "default": 14,
+            "description": "Lookback window for RSI",
+            "min": 2,
+            "max": 200,
+            "step": 1,
+            "required": True,
+        }
+    ],
+    "feature_columns": ["smoke_m5c_rsi"],
+    "algorithm_sketch": (
+        "Compute the relative-strength index over a lookback window. "
+        "Smooth gains and losses, derive RS, then RSI = 100 - 100/(1+RS). "
+        "Shift the output by 1 bar to prevent lookahead bias."
+    ),
+    "edge_cases": ["zero-loss denominator", "fewer rows than period"],
+    "expected_test_names": [
+        "test_uptrend_yields_high_rsi",
+        "test_no_lookahead_bias",
+        "test_zero_loss_no_div_by_zero",
+    ],
+}
+
+
+def _stub_planner_model() -> FunctionModel:
+    def handler(_messages, _info: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[ToolCallPart("final_result", _PLAN_STUB)])
+
+    return FunctionModel(handler)
+
+
+def _stub_implementer_model() -> FunctionModel:
     def handler(_messages, _info: AgentInfo) -> ModelResponse:
         return ModelResponse(
             parts=[
@@ -137,23 +207,15 @@ def _stub_author_model() -> FunctionModel:
 
 
 def _patch_author_to_use_stub() -> None:
-    """Monkey-patch the background helper so the smoke does not hit a real LLM."""
-    from fwbg_agents.orchestrator import plugin_flow as pf
-    from fwbg_agents.agents import plugin_author as pa
+    """Monkey-patch the M5d planner+implementer model factories so the smoke
+    drives the real Planner→Implementer flow without hitting an LLM."""
+    from fwbg_agents.agents import plugin_implementer as pi
+    from fwbg_agents.agents import plugin_planner as pp
 
-    async def fake_author_from_strategy(session, strategy_id: int, *, model=None) -> int:
-        strategy = (
-            await session.execute(select(Strategy).where(Strategy.id == strategy_id))
-        ).scalar_one()
-        sidecar = pf._find_latest_sidecar(strategy.slug)
-        assert sidecar is not None, "smoke fixture must have written the sidecar"
-        author = pa.PluginAuthor(session, model=_stub_author_model())
-        return await author.run_fresh(sidecar_path=sidecar, parent_strategy=strategy)
-
-    # Double-patch: api.plugins binds the function at import time (line ~34),
-    # so patching only orchestrator.plugin_flow would not reach the call site.
-    plugins_api.author_plugin_from_strategy = fake_author_from_strategy
-    pf.author_plugin_from_strategy = fake_author_from_strategy
+    planner_stub = _stub_planner_model()
+    implementer_stub = _stub_implementer_model()
+    pp.planner_model = lambda: planner_stub
+    pi.implementer_model = lambda: implementer_stub
 
 
 async def _wait_for_run(agent_run_id: int, deadline_s: float = DEADLINE_S) -> AgentRun:

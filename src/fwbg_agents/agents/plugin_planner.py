@@ -22,9 +22,10 @@ from pydantic_ai.models import Model
 from pydantic_ai.models.anthropic import AnthropicModel
 from pydantic_ai.providers.anthropic import AnthropicProvider
 
-from fwbg_agents.agents.plugin_author import (
+from fwbg_agents.agents.plugin_authoring_shared import (
     FwbgPluginExample,
     get_fwbg_plugin_examples,
+    render_strategy_excerpt,
 )
 from fwbg_agents.config import settings
 from fwbg_agents.orchestrator.plugin_catalog import PluginCatalog
@@ -34,13 +35,17 @@ log = logging.getLogger(__name__)
 
 _PROMPT_PATH = Path(__file__).parents[3] / "prompts" / "plugin_authoring.md"
 
-# Plural sidecar phase (from AddIndicator.phase) → fwbg_sdk.base.PluginPhase value.
-# "filters" routes to RISK_MANAGEMENT in the SDK enum.
+# Sidecar phase → fwbg_sdk.base.PluginPhase value. Tolerates both forms:
+# plural (per AddIndicator.phase Literal — "indicators"/"filters") and singular
+# (M5c Translator's _PHASE_TO_FIELD + legacy smoke fixtures — "indicator"/"filter").
+# "filter(s)" routes to RISK_MANAGEMENT in the SDK enum.
 _PHASE_MAPPING: dict[str, str] = {
     "indicators": "indicators",
+    "indicator": "indicators",
     "feature_selection": "feature_selection",
     "preprocessing": "preprocessing",
     "filters": "risk_management",
+    "filter": "risk_management",
 }
 
 PluginPhaseLit = Literal[
@@ -80,7 +85,9 @@ class ParamSpec(BaseModel):
 
 class PluginPlan(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
-    slug: str = Field(min_length=2, max_length=64, pattern=r"^[a-z][a-z0-9_]*$")
+    # Slug allows both snake_case and kebab-case (matches PluginContract.name
+    # convention; existing plugins use both forms — "adx", "fancy-ma" etc.).
+    slug: str = Field(min_length=2, max_length=64, pattern=r"^[a-z][a-z0-9_-]*$")
     class_name: str = Field(min_length=2, pattern=r"^[A-Z][A-Za-z0-9]+$")
     phase: PluginPhaseLit
     version: str = Field(default="0.1.0", min_length=1)
@@ -127,25 +134,6 @@ def planner_model() -> Model:
 
 def _slug_in_catalog(slug: str, catalog: PluginCatalog) -> bool:
     return any(slug in slugs for slugs in catalog.by_category.values())
-
-
-def _render_strategy_excerpt(parent: Strategy) -> str:
-    """Render an excerpt of the parent's strategy.json.
-
-    Duplicated from plugin_author._render_strategy_excerpt to avoid importing a
-    private symbol; will be consolidated in Task 5 (plugin_authoring_shared).
-    """
-    latest_dir = settings.data_dir / "strategies" / parent.slug / "iteration_001"
-    strategy_path = latest_dir / "strategy.json"
-    if not strategy_path.is_file():
-        return "(no strategy.json on disk)"
-    try:
-        data = json.loads(strategy_path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return "(unreadable strategy.json)"
-    excerpt_keys = ("name", "pipeline", "model", "filters", "validation", "exit_strategies")
-    excerpt = {k: data.get(k) for k in excerpt_keys if k in data}
-    return json.dumps(excerpt, indent=2)
 
 
 def _render_user_prompt(
@@ -210,7 +198,7 @@ class PluginPlanner:
                 f"prompt-doc not readable at {self.prompt_path}: {exc}"
             ) from exc
 
-        strategy_excerpt = _render_strategy_excerpt(parent_strategy)
+        strategy_excerpt = render_strategy_excerpt(parent_strategy)
         category = sidecar.get("category") or sidecar_phase
         examples = get_fwbg_plugin_examples(catalog, category=category, n=3)
         user_prompt = _render_user_prompt(

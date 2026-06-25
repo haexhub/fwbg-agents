@@ -429,37 +429,31 @@ async def reiterate_with_plugin(
 async def lookup_plugin_capability(
     session: AsyncSession, plugin_id: int
 ) -> str | None:
-    """Read the originating sidecar's `capability` for a plugin.
+    """Read the originating sidecar's `capability` from the plugin_planner AR.
 
-    M5d: the plugin_planner AR carries `input_artifact_path = str(sidecar_path)`
-    and `plugin_id = plugin.id`. Falls back to the legacy plugin_author AR
-    (still emitted by tests/scripts that monkey-patch the M5b PluginAuthor path
-    until that code is fully retired in Task 6).
+    The planner-run carries `input_artifact_path = str(sidecar_path)` and
+    `plugin_id = plugin.id`. We pick the most recent DONE row.
     """
-    # Try the new (M5d) planner row first, then the legacy plugin_author row.
-    for agent_name in ("plugin_planner", "plugin_author"):
-        ar = (
-            await session.execute(
-                select(AgentRun)
-                .where(
-                    (AgentRun.plugin_id == plugin_id)
-                    & (AgentRun.agent_name == agent_name)
-                    & (AgentRun.status == AgentRunStatus.DONE.value)
-                )
-                .order_by(desc(AgentRun.id))
-                .limit(1)
+    ar = (
+        await session.execute(
+            select(AgentRun)
+            .where(
+                (AgentRun.plugin_id == plugin_id)
+                & (AgentRun.agent_name == "plugin_planner")
+                & (AgentRun.status == AgentRunStatus.DONE.value)
             )
-        ).scalar_one_or_none()
-        if ar is None or not ar.input_artifact_path:
-            continue
-        try:
-            data = json.loads(Path(ar.input_artifact_path).read_text())
-        except (OSError, json.JSONDecodeError):
-            continue
-        cap = data.get("capability")
-        if isinstance(cap, str):
-            return cap
-    return None
+            .order_by(desc(AgentRun.id))
+            .limit(1)
+        )
+    ).scalar_one_or_none()
+    if ar is None or not ar.input_artifact_path:
+        return None
+    try:
+        data = json.loads(Path(ar.input_artifact_path).read_text())
+    except (OSError, json.JSONDecodeError):
+        return None
+    cap = data.get("capability")
+    return cap if isinstance(cap, str) else None
 
 
 __all__ = [

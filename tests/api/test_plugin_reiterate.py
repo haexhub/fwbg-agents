@@ -195,8 +195,10 @@ async def _seed_author_agent_run_for_plugin(
         )
     )
     now = datetime.now(UTC)
+    # M5d: lookup_plugin_capability now reads from the plugin_planner AR row
+    # (the planner has input_artifact_path = sidecar_path + plugin_id linked).
     ar = AgentRun(
-        agent_name="plugin_author",
+        agent_name="plugin_planner",
         status=AgentRunStatus.DONE.value,
         strategy_id=parent_strategy_id,
         plugin_id=plugin_id,
