@@ -1,9 +1,9 @@
-"""Orchestration glue for M5b plugin lifecycle endpoints.
+"""Orchestration glue for plugin lifecycle endpoints.
 
-Mirrors `research_flow.research_and_translate` / `research_flow.reiterate`:
-each entry point does precondition checks, instantiates the agent, and
-returns a single integer id (plugin_id or verification_run_id). API layer
-wraps these in BackgroundTasks + AgentRun envelopes.
+M5d split-flow: `author_plugin_from_strategy` runs PluginPlanner →
+PluginImplementer with two AgentRun rows ("plugin_planner" + "plugin_implementer")
+and N LlmCall children for the implementer's refinement-loop. API envelope
+unchanged (POST /strategies/{id}/author-plugin still returns the same shape).
 """
 
 from __future__ import annotations
@@ -11,20 +11,32 @@ from __future__ import annotations
 import json
 import logging
 import re
+from datetime import UTC, datetime
 from pathlib import Path
 
 from pydantic_ai.models import Model
 from sqlalchemy import desc, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from fwbg_agents.agents.plugin_author import PluginAuthor
 from fwbg_agents.agents.plugin_evaluator import PluginEvaluator
+from fwbg_agents.agents.plugin_implementer import (
+    PluginImplementer,
+    PluginImplementerFailed,
+)
+from fwbg_agents.agents.plugin_planner import (
+    LlmCallMeta,
+    PluginPlanner,
+    PluginPlannerFailed,
+)
 from fwbg_agents.agents.translator import Translator
-from fwbg_agents.orchestrator.lifecycle import strategy_dir
-from fwbg_agents.orchestrator.plugin_catalog import reset_fwbg_cache
+from fwbg_agents.config import settings
+from fwbg_agents.orchestrator.lifecycle import strategy_dir, transition_plugin
+from fwbg_agents.orchestrator.plugin_catalog import load_catalog, reset_fwbg_cache
+from fwbg_agents.orchestrator.plugin_contract import dump_contract
 from fwbg_agents.persistence.models import (
     AgentRun,
     AgentRunStatus,
+    LlmCall,
     Plugin,
     PluginState,
     Strategy,
@@ -36,6 +48,10 @@ log = logging.getLogger(__name__)
 
 class AuthorPluginPreconditionError(RuntimeError):
     """422 from POST /strategies/{id}/author-plugin."""
+
+
+class PluginAuthorFailed(RuntimeError):
+    """Wraps PluginPlannerFailed or PluginImplementerFailed for the API layer."""
 
 
 class EvaluatePluginPreconditionError(RuntimeError):
@@ -71,14 +87,87 @@ def _find_latest_sidecar(slug: str) -> Path | None:
     return candidates[0][1]
 
 
+def _plugin_dir(slug: str) -> Path:
+    return settings.data_dir / "plugins" / slug
+
+
+async def _start_agent_run(
+    session: AsyncSession,
+    *,
+    agent_name: str,
+    strategy_id: int,
+    input_artifact_path: str | None,
+) -> AgentRun:
+    now = datetime.now(UTC)
+    ar = AgentRun(
+        agent_name=agent_name,
+        status=AgentRunStatus.RUNNING.value,
+        strategy_id=strategy_id,
+        input_artifact_path=input_artifact_path,
+        started_at=now,
+        created_at=now,
+    )
+    session.add(ar)
+    await session.commit()
+    await session.refresh(ar)
+    return ar
+
+
+async def _finish_agent_run(
+    session: AsyncSession,
+    ar: AgentRun,
+    *,
+    status: AgentRunStatus,
+    output_artifact_path: str | None = None,
+    error: str | None = None,
+    plugin_id: int | None = None,
+) -> None:
+    ar.status = status.value
+    ar.ended_at = datetime.now(UTC)
+    if output_artifact_path is not None:
+        ar.output_artifact_path = output_artifact_path
+    if error is not None:
+        ar.error = error
+    if plugin_id is not None:
+        ar.plugin_id = plugin_id
+    await session.commit()
+
+
+async def _persist_llm_call(
+    session: AsyncSession,
+    ar: AgentRun,
+    meta: LlmCallMeta,
+) -> None:
+    session.add(
+        LlmCall(
+            agent_run_id=ar.id,
+            model=meta.model_name,
+            input_tokens=meta.input_tokens,
+            output_tokens=meta.output_tokens,
+            latency_ms=meta.latency_ms,
+            created_at=datetime.now(UTC),
+        )
+    )
+    await session.commit()
+
+
 async def author_plugin_from_strategy(
     session: AsyncSession,
     strategy_id: int,
     *,
-    model: Model | None = None,
+    planner_model: Model | None = None,
+    implementer_model: Model | None = None,
 ) -> int:
-    """Run PluginAuthor for a strategy that has an add_indicator_request.json
-    sidecar in its latest iteration. Returns the new plugin_id."""
+    """M5d: run PluginPlanner → PluginImplementer for a BACKTESTED strategy
+    whose latest iteration has an add_indicator_request.json sidecar.
+
+    Persists two AgentRun rows ("plugin_planner", "plugin_implementer") with N
+    LlmCall children under the implementer-run for the refinement loop.
+
+    Returns the new plugin.id on success; raises PluginAuthorFailed on
+    planner or implementer failure (both AgentRuns are marked FAILED with
+    appropriate error messages so the post-mortem trail is intact).
+    """
     strategy = (
         await session.execute(select(Strategy).where(Strategy.id == strategy_id))
     ).scalar_one_or_none()
@@ -91,15 +180,160 @@ async def author_plugin_from_strategy(
             "author-plugin requires BACKTESTED"
         )
 
-    sidecar = _find_latest_sidecar(strategy.slug)
-    if sidecar is None:
+    sidecar_path = _find_latest_sidecar(strategy.slug)
+    if sidecar_path is None:
         raise AuthorPluginPreconditionError(
             f"no add_indicator_request.json found under data/strategies/{strategy.slug}/"
             f"iteration_NNN/; run /strategies/{strategy_id}/analyze first"
         )
 
-    author = PluginAuthor(session, model=model)
-    return await author.run_fresh(sidecar_path=sidecar, parent_strategy=strategy)
+    try:
+        sidecar = json.loads(sidecar_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise AuthorPluginPreconditionError(
+            f"cannot parse sidecar at {sidecar_path}: {exc}"
+        ) from exc
+
+    catalog = await load_catalog(session)
+
+    # --- Phase 1: PluginPlanner -----------------------------------------------
+    planner_ar = await _start_agent_run(
+        session,
+        agent_name="plugin_planner",
+        strategy_id=strategy.id,
+        input_artifact_path=str(sidecar_path),
+    )
+    try:
+        planner = PluginPlanner(model=planner_model)
+        planner_result = await planner.run_plan(
+            parent_strategy=strategy, sidecar=sidecar, catalog=catalog
+        )
+    except PluginPlannerFailed as exc:
+        await _finish_agent_run(
+            session, planner_ar, status=AgentRunStatus.FAILED, error=str(exc)
+        )
+        raise PluginAuthorFailed(f"planner failed: {exc}") from exc
+    except Exception as exc:  # belt-and-suspenders for unexpected
+        await _finish_agent_run(
+            session, planner_ar, status=AgentRunStatus.FAILED, error=str(exc)
+        )
+        raise
+
+    await _persist_llm_call(session, planner_ar, planner_result.llm)
+    await _finish_agent_run(
+        session,
+        planner_ar,
+        status=AgentRunStatus.DONE,
+        output_artifact_path=str(planner_result.plan_path),
+    )
+    plan = planner_result.plan
+
+    # --- Phase 2: PluginImplementer ------------------------------------------
+    impl_ar = await _start_agent_run(
+        session,
+        agent_name="plugin_implementer",
+        strategy_id=strategy.id,
+        input_artifact_path=str(planner_result.plan_path),
+    )
+    try:
+        implementer = PluginImplementer(model=implementer_model)
+        impl_result = await implementer.run_implement(plan=plan)
+    except PluginImplementerFailed as exc:
+        for meta in exc.llm_calls:
+            await _persist_llm_call(session, impl_ar, meta)
+        # Stash last attempted code on disk for post-mortem.
+        last_code_path: str | None = None
+        if exc.last_code is not None:
+            dir_ = settings.data_dir / "plugin-runs" / plan.slug
+            dir_.mkdir(parents=True, exist_ok=True)
+            last_code_path = str(dir_ / "last_failed_code.py")
+            Path(last_code_path).write_text(exc.last_code, encoding="utf-8")
+        await _finish_agent_run(
+            session,
+            impl_ar,
+            status=AgentRunStatus.FAILED,
+            error=exc.last_err or str(exc),
+            output_artifact_path=last_code_path,
+        )
+        raise PluginAuthorFailed(f"implementer failed: {exc}") from exc
+    except Exception as exc:
+        await _finish_agent_run(
+            session, impl_ar, status=AgentRunStatus.FAILED, error=str(exc)
+        )
+        raise
+
+    for meta in impl_result.llm_calls:
+        await _persist_llm_call(session, impl_ar, meta)
+
+    output = impl_result.output
+
+    # --- Phase 3: belt-and-suspenders slug-collision guard at DB level --------
+    # Planner already checked the catalog, but a parallel author-session could
+    # have landed the same slug between then and now.
+    existing = (
+        await session.execute(select(Plugin).where(Plugin.slug == output.slug))
+    ).scalar_one_or_none()
+    if existing is not None:
+        await _finish_agent_run(
+            session,
+            impl_ar,
+            status=AgentRunStatus.FAILED,
+            error=f"slug {output.slug!r} already taken by plugin id={existing.id}",
+        )
+        raise PluginAuthorFailed(
+            f"slug {output.slug!r} already exists as plugin id={existing.id}"
+        )
+
+    # --- Phase 4: persist artifacts + Plugin row + Transition ----------------
+    target_dir = _plugin_dir(output.slug) / "v1"
+    target_dir.mkdir(parents=True, exist_ok=True)
+    (target_dir / "plugin.py").write_text(output.python_code, encoding="utf-8")
+    dump_contract(output.contract, target_dir / "contract.yaml")
+    (target_dir / "spec.md").write_text(output.spec_md, encoding="utf-8")
+
+    now = datetime.now(UTC)
+    plugin = Plugin(
+        slug=output.slug,
+        current_state=PluginState.SPECIFIED.value,
+        kind=output.contract.kind,
+        spec_path=str(target_dir / "spec.md"),
+        contract_path=str(target_dir / "contract.yaml"),
+        created_at=now,
+        updated_at=now,
+    )
+    session.add(plugin)
+    await session.flush()
+
+    # Link both AgentRuns to the new plugin for traceability + capability lookup.
+    planner_ar.plugin_id = plugin.id
+    impl_ar.plugin_id = plugin.id
+
+    await transition_plugin(
+        session,
+        plugin,
+        PluginState.AUTHORED,
+        reason="plugin_author",
+        payload={
+            "request_path": str(sidecar_path),
+            "request_strategy_id": strategy.id,
+            "rounds_used": impl_result.rounds_used,
+            "planner_model": planner_result.llm.model_name,
+            "implementer_model": impl_result.llm_calls[0].model_name
+            if impl_result.llm_calls
+            else "unknown",
+        },
+        created_by="plugin_author",
+    )
+
+    await _finish_agent_run(
+        session,
+        impl_ar,
+        status=AgentRunStatus.DONE,
+        output_artifact_path=str(target_dir / "contract.yaml"),
+        plugin_id=plugin.id,
+    )
+    await session.refresh(plugin)
+    return plugin.id
 
 
 async def evaluate_plugin(session: AsyncSession, plugin_id: int) -> int:
@@ -134,12 +368,8 @@ async def reiterate_with_plugin(
       4. plugin.current_state == VERIFIED.
       5. parent has a latest `add_indicator_request.json` sidecar.
       6. parent's sidecar `capability` matches the originating sidecar that
-         was used to author this plugin (looked up via the plugin_author
-         AgentRun row for `plugin_id`). Guards against splicing a plugin
-         into a strategy that asked for a different capability.
-
-    On all checks passing, clears the fwbg-catalog cache (Decision E) and
-    invokes `Translator.run_reiterate_with_plugin`. Returns child Strategy id.
+         was used to author this plugin (looked up via the plugin_planner
+         AgentRun row for `plugin_id`).
     """
     parent = (
         await session.execute(select(Strategy).where(Strategy.id == strategy_id))
@@ -189,8 +419,6 @@ async def reiterate_with_plugin(
             f"not match sidecar capability={parent_capability!r}"
         )
 
-    # Decision E: clear the fwbg-catalog process-lifetime cache so a
-    # freshly-VERIFIED plugin shows up immediately for the catalog merge.
     reset_fwbg_cache()
 
     translator = Translator(session)
@@ -201,23 +429,17 @@ async def reiterate_with_plugin(
 async def lookup_plugin_capability(
     session: AsyncSession, plugin_id: int
 ) -> str | None:
-    """Read the originating sidecar's `capability` from the PluginAuthor
-    AgentRun for this plugin.
+    """Read the originating sidecar's `capability` from the plugin_planner AR.
 
-    PluginAuthor.run_fresh sets `ar.plugin_id = plugin.id` and
-    `ar.input_artifact_path = str(sidecar_path)`. We pick the most recent
-    DONE row to handle re-runs (cf. M5b uniqueness guard at slug-level).
-    Returns None when the row or sidecar is missing/unreadable — caller
-    treats that as a precondition failure.
-
-    Public: also used by the API layer's eager-precondition path.
+    The planner-run carries `input_artifact_path = str(sidecar_path)` and
+    `plugin_id = plugin.id`. We pick the most recent DONE row.
     """
     ar = (
         await session.execute(
             select(AgentRun)
             .where(
                 (AgentRun.plugin_id == plugin_id)
-                & (AgentRun.agent_name == "plugin_author")
+                & (AgentRun.agent_name == "plugin_planner")
                 & (AgentRun.status == AgentRunStatus.DONE.value)
             )
             .order_by(desc(AgentRun.id))
@@ -237,6 +459,7 @@ async def lookup_plugin_capability(
 __all__ = [
     "AuthorPluginPreconditionError",
     "EvaluatePluginPreconditionError",
+    "PluginAuthorFailed",
     "ReiterateWithPluginPreconditionError",
     "author_plugin_from_strategy",
     "evaluate_plugin",
