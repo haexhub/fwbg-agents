@@ -25,6 +25,18 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v7
 
+      # tests/orchestrator/test_plugin_contract.py reads a canonical example
+      # from the fwbg repo's docs/specs/ - mirrors production, where
+      # FWBG_REPO_ROOT always points at a checked-out fwbg tree (see
+      # docker-compose's `.:/fwbg-src:ro` mount). Sibling path matches what
+      # local dev has when both repos are cloned next to each other.
+      - name: Checkout sibling fwbg repo (for plugin contract fixtures)
+        uses: actions/checkout@v7
+        with:
+          repository: haexhub/fwbg
+          path: ../fwbg
+          token: ${{ secrets.RELEASE_PAT }}
+
       - name: Install uv
         uses: astral-sh/setup-uv@v7
 
