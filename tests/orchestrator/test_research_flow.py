@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import itertools
 import json
 from datetime import UTC, datetime
 
@@ -12,10 +13,13 @@ from pydantic_ai.models.function import AgentInfo, FunctionModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
-from fwbg_agents.agents.researcher import ResearcherInput
+from fwbg_agents.agents.researcher import ResearcherError, ResearcherInput
+from fwbg_agents.orchestrator import research_flow
+from fwbg_agents.orchestrator.hypotheses import ResearcherHypothesis
 from fwbg_agents.orchestrator.lifecycle import strategy_dir
 from fwbg_agents.orchestrator.research_flow import (
     ReiteratePreconditionError,
+    ResearcherFanoutExhaustedError,
     reiterate,
     research_and_translate,
 )
@@ -95,9 +99,53 @@ async def db(tmp_path, monkeypatch):
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
     Session = async_sessionmaker(engine, expire_on_commit=False)
+    # _generate_valid_hypothesis opens its own SessionLocal-derived session
+    # per fan-out candidate (decision C) — point that at the same tmp_path
+    # engine the test's own `session` uses, so AgentRun rows committed by
+    # candidates are visible through both.
+    monkeypatch.setattr(research_flow, "SessionLocal", Session)
     async with Session() as session:
         yield session, tmp_path
     await engine.dispose()
+
+
+def _make_flaky_researcher_factory(n_fail: int):
+    """Class to monkeypatch onto `research_flow.Researcher`: the first
+    `n_fail` calls (by start order) raise ResearcherError, the rest succeed
+    with `_HYP_ARGS`. Used to simulate fan-out candidates being rejected by
+    `validate_hypothesis` without needing a real prior-art conflict."""
+    counter = itertools.count()
+
+    class _FlakyResearcher:
+        def __init__(self, session, *, model=None, search_client=None):
+            self.session = session
+
+        async def run(self, input):
+            idx = next(counter)
+            now = datetime.now(UTC)
+            ar = AgentRun(
+                agent_name="researcher",
+                status=AgentRunStatus.RUNNING.value,
+                started_at=now,
+                created_at=now,
+            )
+            self.session.add(ar)
+            await self.session.commit()
+            await self.session.refresh(ar)
+
+            if idx < n_fail:
+                ar.status = AgentRunStatus.FAILED.value
+                ar.ended_at = datetime.now(UTC)
+                ar.error = f"candidate {idx} rejected: simulated prior-art conflict"
+                await self.session.commit()
+                raise ResearcherError(ar.error)
+
+            ar.status = AgentRunStatus.DONE.value
+            ar.ended_at = datetime.now(UTC)
+            await self.session.commit()
+            return ResearcherHypothesis(**_HYP_ARGS)
+
+    return _FlakyResearcher
 
 
 @pytest.mark.asyncio
@@ -106,7 +154,7 @@ async def test_research_and_translate_persists_strategy_and_artifacts(db):
     model = _dispatch_model()
 
     strategy_id = await research_and_translate(
-        session, ResearcherInput(asset_class="FOREX"), model=model, tavily=None
+        session, ResearcherInput(asset_class="FOREX"), model=model, search_client=None
     )
 
     s = (await session.execute(select(Strategy).where(Strategy.id == strategy_id))).scalar_one()
@@ -161,13 +209,96 @@ async def test_research_notes_render_includes_sources_and_diffs(db):
     session, _ = db
     model = _dispatch_model()
     sid = await research_and_translate(
-        session, ResearcherInput(asset_class="FOREX"), model=model, tavily=None
+        session, ResearcherInput(asset_class="FOREX"), model=model, search_client=None
     )
     s = (await session.execute(select(Strategy).where(Strategy.id == sid))).scalar_one()
     notes = (strategy_dir(s.slug) / "iteration_001" / "research_notes.md").read_text()
     assert "ORB note" in notes  # source title
     assert "no prior art surfaced" in notes  # empty differentiates_from rendering
     assert "`opening_range`" in notes
+
+
+@pytest.mark.asyncio
+async def test_fanout_n_equals_1_matches_today(db):
+    """Regression guard: fanout_n=1 must behave identically to pre-M4b
+    single-candidate research_and_translate — same Strategy fields, same
+    two AgentRun rows (researcher + translator), both DONE."""
+    session, _ = db
+    model = _dispatch_model()
+
+    strategy_id = await research_and_translate(
+        session,
+        ResearcherInput(asset_class="FOREX"),
+        model=model,
+        search_client=None,
+        fanout_n=1,
+    )
+
+    s = (await session.execute(select(Strategy).where(Strategy.id == strategy_id))).scalar_one()
+    assert s.slug == "orb__forex__001"
+    assert s.current_state == StrategyState.PROPOSED.value
+    assert s.asset_class == "FOREX"
+    assert s.strategy_family == "ORB"
+
+    runs = (await session.execute(select(AgentRun).order_by(AgentRun.id))).scalars().all()
+    assert [r.agent_name for r in runs] == ["researcher", "translator"]
+    assert all(r.status == AgentRunStatus.DONE.value for r in runs)
+
+
+@pytest.mark.asyncio
+async def test_fanout_returns_first_valid_candidate(db, monkeypatch):
+    session, _ = db
+    monkeypatch.setattr(research_flow, "Researcher", _make_flaky_researcher_factory(n_fail=2))
+
+    strategy_id = await research_and_translate(
+        session,
+        ResearcherInput(asset_class="FOREX"),
+        model=_dispatch_model(),
+        fanout_n=3,
+    )
+
+    s = (await session.execute(select(Strategy).where(Strategy.id == strategy_id))).scalar_one()
+    assert s.strategy_family == "ORB"
+    assert s.current_state == StrategyState.PROPOSED.value
+
+
+@pytest.mark.asyncio
+async def test_fanout_creates_one_agent_run_per_candidate(db, monkeypatch):
+    session, _ = db
+    monkeypatch.setattr(research_flow, "Researcher", _make_flaky_researcher_factory(n_fail=2))
+
+    await research_and_translate(
+        session,
+        ResearcherInput(asset_class="FOREX"),
+        model=_dispatch_model(),
+        fanout_n=3,
+    )
+
+    researcher_runs = (
+        await session.execute(select(AgentRun).where(AgentRun.agent_name == "researcher"))
+    ).scalars().all()
+    statuses = sorted(r.status for r in researcher_runs)
+    assert statuses == sorted(
+        [AgentRunStatus.FAILED.value, AgentRunStatus.FAILED.value, AgentRunStatus.DONE.value]
+    )
+
+
+@pytest.mark.asyncio
+async def test_fanout_all_candidates_fail_raises_with_combined_reasons(db, monkeypatch):
+    session, _ = db
+    monkeypatch.setattr(research_flow, "Researcher", _make_flaky_researcher_factory(n_fail=3))
+
+    with pytest.raises(ResearcherFanoutExhaustedError) as exc_info:
+        await research_and_translate(
+            session,
+            ResearcherInput(asset_class="FOREX"),
+            model=_dispatch_model(),
+            fanout_n=3,
+        )
+
+    message = str(exc_info.value)
+    for idx in range(3):
+        assert f"candidate {idx} rejected" in message
 
 
 @pytest.mark.asyncio
