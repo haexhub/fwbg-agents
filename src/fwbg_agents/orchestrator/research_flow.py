@@ -39,7 +39,7 @@ from fwbg_agents.persistence.models import (
     StrategyTag,
     Transition,
 )
-from fwbg_agents.tools.web_search import TavilyClient
+from fwbg_agents.tools.search import TavilyClient
 
 log = logging.getLogger(__name__)
 

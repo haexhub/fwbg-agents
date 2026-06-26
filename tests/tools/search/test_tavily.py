@@ -12,12 +12,8 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from fwbg_agents.persistence.database import Base
 from fwbg_agents.persistence.models import AgentRun, AgentRunStatus, LlmCall
-from fwbg_agents.tools.web_search import (
-    SearchResult,
-    TavilyClient,
-    TavilyUnavailableError,
-    get_quota_usage,
-)
+from fwbg_agents.tools.search import SearchResult, SearchUnavailableError, TavilyClient
+from fwbg_agents.tools.search.tavily import get_quota_usage
 
 
 def _mock_transport(payload, status=200):
@@ -72,7 +68,7 @@ async def test_search_parses_results():
 @pytest.mark.asyncio
 async def test_search_raises_when_api_key_missing():
     client = TavilyClient(api_key=None)
-    with pytest.raises(TavilyUnavailableError):
+    with pytest.raises(SearchUnavailableError):
         await client.search("q")
 
 

@@ -38,7 +38,7 @@ from fwbg_agents.persistence.models import (
     StrategyState,
     StrategyTag,
 )
-from fwbg_agents.tools.web_search import TavilyClient
+from fwbg_agents.tools.search import TavilyClient
 
 
 def _hyp_args(**over):

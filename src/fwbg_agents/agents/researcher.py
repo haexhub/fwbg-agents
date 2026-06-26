@@ -37,7 +37,7 @@ from fwbg_agents.persistence.models import (
     LlmCall,
 )
 from fwbg_agents.tools.llm import default_model
-from fwbg_agents.tools.web_search import SearchResult, TavilyClient, TavilyUnavailableError
+from fwbg_agents.tools.search import SearchResult, SearchUnavailableError, TavilyClient
 
 log = logging.getLogger(__name__)
 
@@ -126,7 +126,7 @@ class Researcher:
                     results: list[SearchResult] = await tavily.search(
                         query, session=session, agent_run_id=agent_run_id
                     )
-                except TavilyUnavailableError:
+                except SearchUnavailableError:
                     return []
                 except Exception as exc:
                     log.warning("researcher: tavily search failed: %s", exc)
