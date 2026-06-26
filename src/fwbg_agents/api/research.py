@@ -55,7 +55,10 @@ async def _run_research_background(input: ResearcherInput, agent_run_id: int) ->
         search_client = FallbackSearchClient([tavily, brave])
         try:
             strategy_id = await research_and_translate(
-                session, input, search_client=search_client
+                session,
+                input,
+                search_client=search_client,
+                fanout_n=settings.researcher_fanout_n,
             )
             ar.status = AgentRunStatus.DONE.value
             ar.strategy_id = strategy_id

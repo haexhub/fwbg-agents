@@ -19,6 +19,7 @@ the smoke script can drive the pipeline without re-implementing it.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from datetime import UTC, datetime
 
@@ -33,6 +34,7 @@ from fwbg_agents.orchestrator.hypotheses import (
     generate_slug,
 )
 from fwbg_agents.orchestrator.lifecycle import strategy_dir
+from fwbg_agents.persistence.database import SessionLocal
 from fwbg_agents.persistence.models import (
     Strategy,
     StrategyState,
@@ -47,6 +49,42 @@ log = logging.getLogger(__name__)
 class ReiteratePreconditionError(ValueError):
     """Raised by `reiterate` when the parent isn't in a state suitable for
     re-iteration (not BACKTESTED, or missing Analyst sidecar)."""
+
+
+class ResearcherFanoutExhaustedError(RuntimeError):
+    """Raised by `research_and_translate` when every fan-out candidate
+    failed (validation rejection or otherwise) within the same call."""
+
+
+async def _generate_valid_hypothesis(
+    input: ResearcherInput,
+    *,
+    model: Model | None,
+    search_client: SearchProvider | None,
+    fanout_n: int,
+) -> ResearcherHypothesis:
+    """Run up to `fanout_n` Researcher candidates concurrently, each in its
+    own session (decision C — AsyncSession isn't safe to share across
+    concurrent tasks, unlike the httpx-backed search_client). Returns the
+    first candidate that survives `validate_hypothesis`, in submission
+    order (decision D — no ranking across multiple valid candidates).
+    """
+
+    async def _one_candidate() -> ResearcherHypothesis:
+        async with SessionLocal() as candidate_session:
+            researcher = Researcher(candidate_session, model=model, search_client=search_client)
+            return await researcher.run(input)
+
+    results = await asyncio.gather(
+        *(_one_candidate() for _ in range(fanout_n)),
+        return_exceptions=True,
+    )
+    for result in results:
+        if not isinstance(result, BaseException):
+            return result
+
+    reasons = "; ".join(str(r) for r in results if isinstance(r, BaseException))
+    raise ResearcherFanoutExhaustedError(f"all {fanout_n} candidates rejected: {reasons}")
 
 
 def _render_research_notes(hypothesis: ResearcherHypothesis) -> str:
@@ -82,16 +120,20 @@ async def research_and_translate(
     *,
     model: Model | None = None,
     search_client: SearchProvider | None = None,
+    fanout_n: int = 1,
 ) -> int:
-    """Run Researcher → persist Strategy → run Translator (fresh).
+    """Run Researcher (fanout_n candidates, first-valid-wins) → persist
+    Strategy → run Translator (fresh).
 
     Returns the new Strategy id. The Researcher and Translator each manage
     their own AgentRun rows; this function is pure orchestration. Failures
-    propagate (ResearcherError / TranslatorError) — the caller is
-    responsible for wrapping bookkeeping (e.g. the API background task).
+    propagate (ResearcherFanoutExhaustedError / TranslatorError) — the
+    caller is responsible for wrapping bookkeeping (e.g. the API
+    background task).
     """
-    researcher = Researcher(session, model=model, search_client=search_client)
-    hypothesis = await researcher.run(input)
+    hypothesis = await _generate_valid_hypothesis(
+        input, model=model, search_client=search_client, fanout_n=fanout_n
+    )
 
     slug = await generate_slug(
         session, hypothesis.strategy_family, hypothesis.asset_class

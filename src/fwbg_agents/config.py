@@ -27,6 +27,15 @@ class Settings(BaseSettings):
     # Web research
     tavily_api_key: str | None = None
     brave_api_key: str | None = None
+    researcher_fanout_n: int = Field(
+        default=2,
+        ge=1,
+        le=5,
+        description=(
+            "Parallel hypothesis candidates per /research/brief call; "
+            "first to pass validate_hypothesis wins."
+        ),
+    )
 
     # fwbg
     fwbg_api_url: str = Field(default="http://localhost:8420")
