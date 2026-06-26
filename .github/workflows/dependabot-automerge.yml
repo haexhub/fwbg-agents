@@ -1,0 +1,23 @@
+name: Dependabot Auto-Merge
+
+# Enables GitHub auto-merge on every Dependabot PR so it merges itself into
+# develop once required checks pass.
+
+on:
+  pull_request:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  automerge:
+    if: github.actor == 'dependabot[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Enable auto-merge
+        env:
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          REPO: ${{ github.repository }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh pr merge "$PR_NUMBER" --squash --auto --repo "$REPO"
