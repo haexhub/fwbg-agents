@@ -38,7 +38,7 @@ from fwbg_agents.persistence.models import (
     StrategyState,
     StrategyTag,
 )
-from fwbg_agents.tools.search import TavilyClient
+from fwbg_agents.tools.search import BraveClient, FallbackSearchClient, TavilyClient
 
 
 def _hyp_args(**over):
@@ -131,7 +131,7 @@ async def _seed_prior_strategy(session, slug, family, asset_class, tags):
 @pytest.mark.asyncio
 async def test_happy_path_no_prior_art(db):
     model = FunctionModel(_final_only_handler(_hyp_args()))
-    researcher = Researcher(db, model=model, tavily=None)
+    researcher = Researcher(db, model=model, search_client=None)
     result = await researcher.run(
         ResearcherInput(asset_class="FOREX", strategy_family_hint="RSI_meanrev")
     )
@@ -162,7 +162,7 @@ async def test_hypothesis_rejected_when_prior_art_and_no_differentiates_from(db)
             _hyp_args(),  # differentiates_from=[]
         )
     )
-    researcher = Researcher(db, model=model, tavily=None)
+    researcher = Researcher(db, model=model, search_client=None)
     with pytest.raises(ResearcherError):
         await researcher.run(
             ResearcherInput(asset_class="FOREX", strategy_family_hint="RSI_meanrev")
@@ -187,7 +187,7 @@ async def test_hypothesis_accepted_when_differentiates_from_covers_prior_art(db)
             _hyp_args(differentiates_from=["rsimeanrev__forex__001"]),
         )
     )
-    researcher = Researcher(db, model=model, tavily=None)
+    researcher = Researcher(db, model=model, search_client=None)
     result = await researcher.run(
         ResearcherInput(asset_class="FOREX", strategy_family_hint="RSI_meanrev")
     )
@@ -209,7 +209,7 @@ async def test_search_web_with_tavily_unset_returns_empty(db):
         return ModelResponse(parts=[ToolCallPart("final_result", _hyp_args())])
 
     model = FunctionModel(handler)
-    researcher = Researcher(db, model=model, tavily=None)
+    researcher = Researcher(db, model=model, search_client=None)
     result = await researcher.run(
         ResearcherInput(asset_class="FOREX", strategy_family_hint="RSI_meanrev")
     )
@@ -237,10 +237,55 @@ async def test_search_web_with_tavily_set_logs_tavily_quota(db):
             return ModelResponse(parts=[ToolCallPart("search_web_tool", {"query": "RSI FX"})])
         return ModelResponse(parts=[ToolCallPart("final_result", _hyp_args())])
 
-    researcher = Researcher(db, model=FunctionModel(handler), tavily=tavily)
+    researcher = Researcher(db, model=FunctionModel(handler), search_client=tavily)
     await researcher.run(ResearcherInput(asset_class="FOREX"))
 
     tavily_rows = (
         await db.execute(select(LlmCall).where(LlmCall.model == "tavily-search"))
     ).scalars().all()
     assert len(tavily_rows) == 1
+
+
+@pytest.mark.asyncio
+async def test_researcher_falls_back_to_brave_when_tavily_unavailable(db):
+    """Tavily unconfigured -> FallbackSearchClient serves Brave instead; the
+    Brave-sourced URL must reach the emitted hypothesis's sources."""
+    raising_tavily = TavilyClient(api_key=None)
+
+    brave_payload = {
+        "web": {
+            "results": [
+                {"url": "https://brave.example/fx-meanrev", "title": "Brave hit",
+                 "description": "from brave"},
+            ]
+        }
+    }
+    brave = BraveClient(
+        api_key="k",
+        http=httpx.AsyncClient(transport=_mock_transport(brave_payload)),
+    )
+    search_client = FallbackSearchClient([raising_tavily, brave])
+
+    def handler(messages, _info: AgentInfo) -> ModelResponse:
+        for msg in messages:
+            for part in getattr(msg, "parts", []):
+                if isinstance(part, ToolReturnPart) and part.tool_name == "search_web_tool":
+                    url = part.content[0]["url"]
+                    hyp = _hyp_args(
+                        sources=[
+                            {"url": url, "title": "Brave hit",
+                             "why_relevant": "served via fallback after Tavily was unavailable"},
+                        ]
+                    )
+                    return ModelResponse(parts=[ToolCallPart("final_result", hyp)])
+        return ModelResponse(parts=[ToolCallPart("search_web_tool", {"query": "RSI FX"})])
+
+    researcher = Researcher(db, model=FunctionModel(handler), search_client=search_client)
+    result = await researcher.run(ResearcherInput(asset_class="FOREX"))
+
+    assert any(s.url == "https://brave.example/fx-meanrev" for s in result.sources)
+
+    quota_rows = (
+        await db.execute(select(LlmCall).where(LlmCall.model == "brave-search"))
+    ).scalars().all()
+    assert len(quota_rows) == 1

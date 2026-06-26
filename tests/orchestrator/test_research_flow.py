@@ -106,7 +106,7 @@ async def test_research_and_translate_persists_strategy_and_artifacts(db):
     model = _dispatch_model()
 
     strategy_id = await research_and_translate(
-        session, ResearcherInput(asset_class="FOREX"), model=model, tavily=None
+        session, ResearcherInput(asset_class="FOREX"), model=model, search_client=None
     )
 
     s = (await session.execute(select(Strategy).where(Strategy.id == strategy_id))).scalar_one()
@@ -161,7 +161,7 @@ async def test_research_notes_render_includes_sources_and_diffs(db):
     session, _ = db
     model = _dispatch_model()
     sid = await research_and_translate(
-        session, ResearcherInput(asset_class="FOREX"), model=model, tavily=None
+        session, ResearcherInput(asset_class="FOREX"), model=model, search_client=None
     )
     s = (await session.execute(select(Strategy).where(Strategy.id == sid))).scalar_one()
     notes = (strategy_dir(s.slug) / "iteration_001" / "research_notes.md").read_text()

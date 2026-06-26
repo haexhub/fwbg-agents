@@ -39,7 +39,7 @@ from fwbg_agents.persistence.models import (
     StrategyTag,
     Transition,
 )
-from fwbg_agents.tools.search import TavilyClient
+from fwbg_agents.tools.search import SearchProvider
 
 log = logging.getLogger(__name__)
 
@@ -81,7 +81,7 @@ async def research_and_translate(
     input: ResearcherInput,
     *,
     model: Model | None = None,
-    tavily: TavilyClient | None = None,
+    search_client: SearchProvider | None = None,
 ) -> int:
     """Run Researcher → persist Strategy → run Translator (fresh).
 
@@ -90,7 +90,7 @@ async def research_and_translate(
     propagate (ResearcherError / TranslatorError) — the caller is
     responsible for wrapping bookkeeping (e.g. the API background task).
     """
-    researcher = Researcher(session, model=model, tavily=tavily)
+    researcher = Researcher(session, model=model, search_client=search_client)
     hypothesis = await researcher.run(input)
 
     slug = await generate_slug(

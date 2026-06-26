@@ -3,7 +3,7 @@
 Drives the start of the iteration loop:
 - pulls inputs (asset class, family hint, free-text brief)
 - calls `lookup_prior_art` (deterministic, anti-redundancy gate)
-- optionally calls `search_web` (Tavily) for current literature
+- optionally calls `search_web` (Tavily, falling back to Brave) for current literature
 - emits a typed ResearcherHypothesis
 
 `validate_hypothesis` (orchestrator/hypotheses.py) runs after the LLM
@@ -37,7 +37,7 @@ from fwbg_agents.persistence.models import (
     LlmCall,
 )
 from fwbg_agents.tools.llm import default_model
-from fwbg_agents.tools.search import SearchResult, SearchUnavailableError, TavilyClient
+from fwbg_agents.tools.search import SearchProvider, SearchResult, SearchUnavailableError
 
 log = logging.getLogger(__name__)
 
@@ -68,12 +68,12 @@ class Researcher:
         session: AsyncSession,
         *,
         model: Model | None = None,
-        tavily: TavilyClient | None = None,
+        search_client: SearchProvider | None = None,
         prompt_path: Path | None = None,
     ):
         self.session = session
         self.model = model if model is not None else default_model()
-        self.tavily = tavily
+        self.search_client = search_client
         self.prompt_path = prompt_path or _PROMPT_PATH
 
     async def run(self, input: ResearcherInput) -> ResearcherHypothesis:
@@ -101,7 +101,7 @@ class Researcher:
             )
 
             session = self.session
-            tavily = self.tavily
+            search_client = self.search_client
             agent_run_id = ar.id
 
             @agent.tool_plain
@@ -119,17 +119,20 @@ class Researcher:
             @agent.tool_plain
             async def search_web_tool(query: str) -> list[dict]:
                 """Search the web for recent literature on a trading-strategy idea."""
-                if tavily is None or tavily.api_key is None:
-                    log.info("researcher: Tavily not configured; skipping search_web('%s')", query)
+                if search_client is None:
+                    log.info(
+                        "researcher: no search_client configured; skipping search_web('%s')",
+                        query,
+                    )
                     return []
                 try:
-                    results: list[SearchResult] = await tavily.search(
+                    results: list[SearchResult] = await search_client.search(
                         query, session=session, agent_run_id=agent_run_id
                     )
                 except SearchUnavailableError:
                     return []
                 except Exception as exc:
-                    log.warning("researcher: tavily search failed: %s", exc)
+                    log.warning("researcher: search_web failed: %s", exc)
                     return []
                 return [r.model_dump() for r in results]
 
