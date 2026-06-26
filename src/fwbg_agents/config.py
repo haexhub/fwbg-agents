@@ -26,6 +26,7 @@ class Settings(BaseSettings):
 
     # Web research
     tavily_api_key: str | None = None
+    brave_api_key: str | None = None
 
     # fwbg
     fwbg_api_url: str = Field(default="http://localhost:8420")
