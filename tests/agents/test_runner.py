@@ -15,7 +15,6 @@ from __future__ import annotations
 
 import json
 from datetime import UTC, datetime
-from pathlib import Path
 from typing import Any
 
 import pytest
@@ -23,7 +22,7 @@ import pytest_asyncio
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
-from fwbg_agents.agents.runner import Runner, RunnerFailed
+from fwbg_agents.agents.runner import Runner, RunnerError
 from fwbg_agents.persistence.database import Base
 from fwbg_agents.persistence.models import (
     AgentRun,
@@ -142,7 +141,8 @@ async def test_runner_happy_path_transitions_to_backtested(db_and_strategy):
     assert copied.is_file()
     # fwbg_results.json was saved in the iteration dir
     results_path = (
-        tmp_path / "agents_data" / "strategies" / "demo_orb_v1" / "iteration_001" / "fwbg_results.json"
+        tmp_path / "agents_data" / "strategies" / "demo_orb_v1"
+        / "iteration_001" / "fwbg_results.json"
     )
     assert results_path.is_file()
     assert json.loads(results_path.read_text())["status"] == "completed"
@@ -169,7 +169,7 @@ async def test_runner_fwbg_failed_no_transition(db_and_strategy):
     async with SessionMaker() as session:
         s = (await session.execute(select(Strategy).where(Strategy.id == strategy_id))).scalar_one()
         runner = Runner(fake, session)
-        with pytest.raises(RunnerFailed) as exc:
+        with pytest.raises(RunnerError) as exc:
             await runner.run(s)
         assert "failed" in str(exc.value).lower()
 
@@ -193,7 +193,7 @@ async def test_runner_timeout_no_transition(db_and_strategy, monkeypatch):
     async with SessionMaker() as session:
         s = (await session.execute(select(Strategy).where(Strategy.id == strategy_id))).scalar_one()
         runner = Runner(fake, session)
-        with pytest.raises(RunnerFailed) as exc:
+        with pytest.raises(RunnerError) as exc:
             await runner.run(s)
         assert "timeout" in str(exc.value).lower()
 
@@ -204,7 +204,10 @@ async def test_runner_timeout_no_transition(db_and_strategy, monkeypatch):
 
 async def test_runner_missing_strategy_json_raises(db_and_strategy):
     SessionMaker, strategy_id, tmp_path = db_and_strategy
-    (tmp_path / "agents_data" / "strategies" / "demo_orb_v1" / "iteration_001" / "strategy.json").unlink()
+    (
+        tmp_path / "agents_data" / "strategies" / "demo_orb_v1"
+        / "iteration_001" / "strategy.json"
+    ).unlink()
 
     async with SessionMaker() as session:
         s = (await session.execute(select(Strategy).where(Strategy.id == strategy_id))).scalar_one()

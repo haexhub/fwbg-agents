@@ -12,7 +12,7 @@ from pydantic_ai.models.function import AgentInfo, FunctionModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
-from fwbg_agents.agents.translator import Translator, TranslatorFailed
+from fwbg_agents.agents.translator import Translator, TranslatorError
 from fwbg_agents.orchestrator.hypotheses import ResearcherHypothesis, Source
 from fwbg_agents.persistence.database import Base
 from fwbg_agents.persistence.models import (
@@ -21,7 +21,6 @@ from fwbg_agents.persistence.models import (
     Strategy,
     StrategyState,
 )
-
 
 VALID_OUTPUT = {
     "name": "will_be_overwritten",
@@ -137,7 +136,7 @@ async def test_fresh_invalid_structure_fails_translator_run(db_with_strategy):
     async with SessionMaker() as session:
         s = (await session.execute(select(Strategy).where(Strategy.id == strategy_id))).scalar_one()
         translator = Translator(session, model=_stub_model(bad))
-        with pytest.raises(TranslatorFailed):
+        with pytest.raises(TranslatorError):
             await translator.run_fresh(s)
 
     async with SessionMaker() as v:
@@ -153,7 +152,7 @@ async def test_fresh_unknown_plugin_slug_fails(db_with_strategy):
     async with SessionMaker() as session:
         s = (await session.execute(select(Strategy).where(Strategy.id == strategy_id))).scalar_one()
         translator = Translator(session, model=_stub_model(bad))
-        with pytest.raises(TranslatorFailed):
+        with pytest.raises(TranslatorError):
             await translator.run_fresh(s)
 
 

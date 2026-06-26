@@ -19,10 +19,8 @@ the smoke script can drive the pipeline without re-implementing it.
 
 from __future__ import annotations
 
-import json
 import logging
 from datetime import UTC, datetime
-from pathlib import Path
 
 from pydantic_ai.models import Model
 from sqlalchemy import select
@@ -89,7 +87,7 @@ async def research_and_translate(
 
     Returns the new Strategy id. The Researcher and Translator each manage
     their own AgentRun rows; this function is pure orchestration. Failures
-    propagate (ResearcherFailed / TranslatorFailed) — the caller is
+    propagate (ResearcherError / TranslatorError) — the caller is
     responsible for wrapping bookkeeping (e.g. the API background task).
     """
     researcher = Researcher(session, model=model, tavily=tavily)

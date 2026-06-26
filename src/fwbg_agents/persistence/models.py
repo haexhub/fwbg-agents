@@ -26,13 +26,12 @@ from sqlalchemy.orm import Mapped, mapped_column
 
 from fwbg_agents.persistence.database import Base
 
-
 # ---------------------------------------------------------------------------
 # Enums
 # ---------------------------------------------------------------------------
 
 
-class StrategyState(str, enum.Enum):
+class StrategyState(enum.StrEnum):
     """Collapsed strategy lifecycle for M2.
 
     Section 5.1 of the design has a richer granularity (proposed → specified →
@@ -48,7 +47,7 @@ class StrategyState(str, enum.Enum):
     ABANDONED = "abandoned"
 
 
-class PluginState(str, enum.Enum):
+class PluginState(enum.StrEnum):
     SPECIFIED = "specified"
     AUTHORED = "authored"
     VERIFIED = "verified"
@@ -56,7 +55,7 @@ class PluginState(str, enum.Enum):
     ABANDONED = "abandoned"
 
 
-class PluginKind(str, enum.Enum):
+class PluginKind(enum.StrEnum):
     """fwbg plugin category — matches `PluginContract.kind` Literal 1:1.
 
     Migration 0004 (M5b) replaced the M3 placeholder set `{INDICATOR, EXIT}`
@@ -74,12 +73,12 @@ class PluginKind(str, enum.Enum):
     DATA_LOADING = "data_loading"
 
 
-class EntityType(str, enum.Enum):
+class EntityType(enum.StrEnum):
     STRATEGY = "strategy"
     PLUGIN = "plugin"
 
 
-class AgentRunStatus(str, enum.Enum):
+class AgentRunStatus(enum.StrEnum):
     PENDING = "pending"
     RUNNING = "running"
     DONE = "done"

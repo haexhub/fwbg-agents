@@ -8,7 +8,6 @@ Tavily.
 
 from __future__ import annotations
 
-import json
 from datetime import UTC, datetime
 
 import httpx
@@ -17,7 +16,6 @@ import pytest_asyncio
 from pydantic_ai.messages import (
     ModelRequest,
     ModelResponse,
-    TextPart,
     ToolCallPart,
     ToolReturnPart,
 )
@@ -27,7 +25,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from fwbg_agents.agents.researcher import (
     Researcher,
-    ResearcherFailed,
+    ResearcherError,
     ResearcherInput,
 )
 from fwbg_agents.orchestrator.hypotheses import ResearcherHypothesis
@@ -48,8 +46,14 @@ def _hyp_args(**over):
         title="Mean-reversion on FOREX majors during London open",
         asset_class="FOREX",
         strategy_family="RSI_meanrev",
-        hypothesis="During the London session, EUR/USD mean-reverts after 1-bar momentum spikes filtered by RSI extremes.",
-        expected_edge_explanation="Liquidity-driven overreactions in the first 30 minutes of London revert as US algos take over.",
+        hypothesis=(
+            "During the London session, EUR/USD mean-reverts after 1-bar momentum "
+            "spikes filtered by RSI extremes."
+        ),
+        expected_edge_explanation=(
+            "Liquidity-driven overreactions in the first 30 minutes of London "
+            "revert as US algos take over."
+        ),
         key_indicators=["rsi", "atr", "session_clock"],
         tags=["mean_reversion", "intraday", "forex_majors", "session_filter"],
         sources=[
@@ -159,7 +163,7 @@ async def test_hypothesis_rejected_when_prior_art_and_no_differentiates_from(db)
         )
     )
     researcher = Researcher(db, model=model, tavily=None)
-    with pytest.raises(ResearcherFailed):
+    with pytest.raises(ResearcherError):
         await researcher.run(
             ResearcherInput(asset_class="FOREX", strategy_family_hint="RSI_meanrev")
         )

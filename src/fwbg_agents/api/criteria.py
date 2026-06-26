@@ -38,7 +38,7 @@ def _validate_asset_class(asset_class: str) -> str:
     return asset_class
 
 
-def _criteria_path(asset_class: str) -> "Path":  # noqa: F821 - forward type only
+def _criteria_path(asset_class: str) -> Path:  # noqa: F821 - forward type only
     from pathlib import Path
 
     p: Path = settings.criteria_dir / f"{asset_class}.yaml"
@@ -112,7 +112,9 @@ def _validate_criteria_schema(data: Any) -> dict[str, Any]:
     btp = data["backtest_to_paper"]
     for section in ("required_all", "required_any", "hard_blockers"):
         if section in btp and not isinstance(btp[section], list):
-            raise HTTPException(status_code=422, detail=f"backtest_to_paper.{section} must be a list")
+            raise HTTPException(
+                status_code=422, detail=f"backtest_to_paper.{section} must be a list"
+            )
     return data
 
 

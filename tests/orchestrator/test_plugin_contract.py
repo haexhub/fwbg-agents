@@ -13,14 +13,15 @@ import pytest
 import yaml
 
 from fwbg_agents.orchestrator.plugin_contract import (
-    PluginContract,
     PluginContractError,
     dump_contract,
     load_contract,
 )
 
-
-EXAMPLE_PATH = Path(__file__).resolve().parents[2].parent / "fwbg" / "docs" / "specs" / "plugin_contract.example.yaml"
+EXAMPLE_PATH = (
+    Path(__file__).resolve().parents[2].parent
+    / "fwbg" / "docs" / "specs" / "plugin_contract.example.yaml"
+)
 
 
 def test_load_example_roundtrip():

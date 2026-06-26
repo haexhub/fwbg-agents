@@ -42,7 +42,7 @@ from fwbg_agents.persistence.models import (
 log = logging.getLogger(__name__)
 
 
-class InvalidTransition(Exception):
+class InvalidTransitionError(Exception):
     """Raised by `transition_strategy` / `transition_plugin` when the requested
     edge is illegal or its guard fails. The exception message is safe to surface
     in API responses — guards put the failing rule into the message."""
@@ -200,12 +200,12 @@ def _guard_strategy_proposed_to_backtested(_strategy: Strategy, _payload: dict[s
 def _guard_strategy_backtested_to_paper(strategy: Strategy, payload: dict[str, Any]) -> None:
     metrics = payload.get("backtest_metrics") or {}
     if not metrics:
-        raise InvalidTransition(
+        raise InvalidTransitionError(
             "backtested → paper_trading requires backtest_metrics in payload"
         )
     ok, failed = check_backtest_criteria(asset_class=strategy.asset_class, metrics=metrics)
     if not ok:
-        raise InvalidTransition(f"criteria not met: {failed}")
+        raise InvalidTransitionError(f"criteria not met: {failed}")
 
 
 def _guard_strategy_paper_to_live(_strategy: Strategy, payload: dict[str, Any]) -> None:
@@ -213,7 +213,7 @@ def _guard_strategy_paper_to_live(_strategy: Strategy, payload: dict[str, Any]) 
     that produces this payload arrives in M7, but the state machine refuses
     auto-promotion from day one."""
     if not payload.get("human_approval"):
-        raise InvalidTransition(
+        raise InvalidTransitionError(
             "paper_trading → live_trading requires human_approval=True in payload"
         )
 
@@ -230,12 +230,12 @@ _STRATEGY_GUARDS: dict[
 
 def _guard_strategy_abandon(_strategy: Strategy, payload: dict[str, Any]) -> None:
     if not payload.get("post_mortem_path"):
-        raise InvalidTransition("abandon transition requires post_mortem_path in payload")
+        raise InvalidTransitionError("abandon transition requires post_mortem_path in payload")
 
 
 def _guard_plugin_abandon(_plugin: Plugin, payload: dict[str, Any]) -> None:
     if not payload.get("post_mortem_path"):
-        raise InvalidTransition("abandon transition requires post_mortem_path in payload")
+        raise InvalidTransitionError("abandon transition requires post_mortem_path in payload")
 
 
 # ---------------------------------------------------------------------------
@@ -256,7 +256,7 @@ async def transition_strategy(
     payload = dict(payload or {})
     current = StrategyState(strategy.current_state)
     if current in STRATEGY_TERMINAL_STATES:
-        raise InvalidTransition(
+        raise InvalidTransitionError(
             f"{strategy.slug} is terminal ({current.value}); cannot transition"
         )
 
@@ -265,7 +265,7 @@ async def transition_strategy(
         strategy.post_mortem_path = str(payload["post_mortem_path"])
     else:
         if to_state not in VALID_STRATEGY_TRANSITIONS[current]:
-            raise InvalidTransition(
+            raise InvalidTransitionError(
                 f"{strategy.slug}: {current.value} → {to_state.value} is not a valid edge"
             )
         guard = _STRATEGY_GUARDS.get((current, to_state))
@@ -315,7 +315,7 @@ async def transition_plugin(
     payload = dict(payload or {})
     current = PluginState(plugin.current_state)
     if current in PLUGIN_TERMINAL_STATES:
-        raise InvalidTransition(
+        raise InvalidTransitionError(
             f"{plugin.slug} is terminal ({current.value}); cannot transition"
         )
 
@@ -324,7 +324,7 @@ async def transition_plugin(
         plugin.post_mortem_path = str(payload["post_mortem_path"])
     else:
         if to_state not in VALID_PLUGIN_TRANSITIONS[current]:
-            raise InvalidTransition(
+            raise InvalidTransitionError(
                 f"{plugin.slug}: {current.value} → {to_state.value} is not a valid edge"
             )
 

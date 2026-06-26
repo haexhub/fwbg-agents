@@ -2,12 +2,12 @@
 
 Covers:
 - happy path (returns PlannerRunResult, plan.json written)
-- phase mismatch → PluginPlannerFailed
-- slug collision → PluginPlannerFailed
+- phase mismatch → PluginPlannerError
+- slug collision → PluginPlannerError
 - plan.json round-trips into PluginPlan
 - system prompt loads from prompts/plugin_authoring.md
 - env-driven model selection (PLUGIN_PLANNER_MODEL)
-- pydantic schema failure surfaces as PluginPlannerFailed
+- pydantic schema failure surfaces as PluginPlannerError
 - examples appear in the user prompt
 """
 
@@ -25,7 +25,7 @@ from pydantic_ai.models.function import AgentInfo, FunctionModel
 from fwbg_agents.agents.plugin_planner import (
     PluginPlan,
     PluginPlanner,
-    PluginPlannerFailed,
+    PluginPlannerError,
     _render_user_prompt,
     planner_model,
 )
@@ -34,7 +34,6 @@ from fwbg_agents.orchestrator.plugin_catalog import (
     PluginManifest,
 )
 from fwbg_agents.persistence.models import Strategy, StrategyState
-
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -192,7 +191,7 @@ async def test_planner_raises_on_phase_mismatch():
     bad_args = _valid_plan_args(phase="preprocessing")
     planner = PluginPlanner(model=_stub_model(bad_args))
 
-    with pytest.raises(PluginPlannerFailed) as exc_info:
+    with pytest.raises(PluginPlannerError) as exc_info:
         await planner.run_plan(
             parent_strategy=parent,
             sidecar=_SIDECAR_INDICATORS,
@@ -206,7 +205,7 @@ async def test_planner_raises_on_unknown_sidecar_phase():
     planner = PluginPlanner(model=_stub_model(_valid_plan_args()))
 
     bad_sidecar = {**_SIDECAR_INDICATORS, "phase": "made_up_phase"}
-    with pytest.raises(PluginPlannerFailed) as exc_info:
+    with pytest.raises(PluginPlannerError) as exc_info:
         await planner.run_plan(
             parent_strategy=parent,
             sidecar=bad_sidecar,
@@ -220,7 +219,7 @@ async def test_planner_raises_on_slug_collision():
     catalog = _catalog_with("fancy_indicator", category="indicators")
     planner = PluginPlanner(model=_stub_model(_valid_plan_args()))
 
-    with pytest.raises(PluginPlannerFailed) as exc_info:
+    with pytest.raises(PluginPlannerError) as exc_info:
         await planner.run_plan(
             parent_strategy=parent, sidecar=_SIDECAR_INDICATORS, catalog=catalog
         )
@@ -233,7 +232,7 @@ async def test_planner_raises_when_pydantic_schema_invalid():
     bad_args["feature_columns"] = []  # violates Field(min_length=1)
     planner = PluginPlanner(model=_stub_model(bad_args))
 
-    with pytest.raises(PluginPlannerFailed) as exc_info:
+    with pytest.raises(PluginPlannerError) as exc_info:
         await planner.run_plan(
             parent_strategy=parent,
             sidecar=_SIDECAR_INDICATORS,
@@ -244,7 +243,6 @@ async def test_planner_raises_when_pydantic_schema_invalid():
 
 def test_planner_uses_canonical_prompt_path():
     """Default prompt_path points at prompts/plugin_authoring.md and is readable."""
-    planner = PluginPlanner.__new__(PluginPlanner)
     # Don't construct a real model — just check the class default.
     default_path = (
         Path(__file__).parents[2] / "prompts" / "plugin_authoring.md"

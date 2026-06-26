@@ -21,7 +21,6 @@ from fwbg_agents.agents.researcher import ResearcherInput
 from fwbg_agents.config import settings
 from fwbg_agents.orchestrator.lifecycle import strategy_dir
 from fwbg_agents.orchestrator.research_flow import (
-    ReiteratePreconditionError,
     reiterate,
     research_and_translate,
 )

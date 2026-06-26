@@ -228,7 +228,9 @@ class Analyst:
                 catalog_snapshot=catalog_snapshot,
             )
 
-            agent = Agent(self.model, output_type=AnalystRecommendation, system_prompt=system_prompt)
+            agent = Agent(
+                self.model, output_type=AnalystRecommendation, system_prompt=system_prompt
+            )
             t0 = time.monotonic()
             result = await agent.run("Emit your recommendation now.")
             latency_ms = int((time.monotonic() - t0) * 1000)

@@ -171,7 +171,9 @@ async def list_strategies(
 async def get_strategy(
     strategy_id: int, session: AsyncSession = Depends(get_session)
 ) -> dict[str, Any]:
-    s = (await session.execute(select(Strategy).where(Strategy.id == strategy_id))).scalar_one_or_none()
+    s = (
+        await session.execute(select(Strategy).where(Strategy.id == strategy_id))
+    ).scalar_one_or_none()
     if s is None:
         raise HTTPException(status_code=404, detail=f"strategy {strategy_id} not found")
     tags = (
@@ -295,9 +297,10 @@ async def _run_paper_analyze_background(strategy_id: int, agent_run_id: int) -> 
             log.exception(
                 "paper-analyze background task failed (agent_run %s)", agent_run_id
             )
-            # Defensive: paper_analyze's own except block already marks FAILED + commits before re-raising.
-            # This handler covers TOCTOU windows (e.g. state changed between endpoint check and BG-task start)
-            # where the row could end up in an inconsistent state.
+            # Defensive: paper_analyze's own except block already marks FAILED +
+            # commits before re-raising. This handler covers TOCTOU windows (e.g.
+            # state changed between endpoint check and BG-task start) where the
+            # row could end up in an inconsistent state.
             await session.refresh(ar)
             if ar.status != AgentRunStatus.FAILED.value:
                 ar.status = AgentRunStatus.FAILED.value

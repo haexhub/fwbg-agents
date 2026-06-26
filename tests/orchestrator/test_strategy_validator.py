@@ -303,7 +303,8 @@ def test_extra_filters_routes_to_catalog_filters_category():
     msg = str(exc.value)
     assert "custom-filter-y" in msg
     assert "filters" in msg
-    assert "extra_filters" not in msg.split("category")[1]  # category was 'filters', not 'extra_filters'
+    # category was 'filters', not 'extra_filters'
+    assert "extra_filters" not in msg.split("category")[1]
 
 
 def test_no_catalog_means_lax_membership_for_list_fields():

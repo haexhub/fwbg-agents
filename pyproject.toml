@@ -48,6 +48,16 @@ target-version = "py312"
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "B", "UP", "N", "SIM", "RUF"]
+# B008: FastAPI's Depends()/Body() are meant to be called in argument
+# defaults - that's the framework's DI mechanism, not a bug.
+ignore = ["B008"]
+
+[tool.ruff.lint.per-file-ignores]
+# SQLAlchemy's own docs use PascalCase for sessionmaker aliases
+# (Session = sessionmaker(...); session = Session()) - that's the
+# pattern these test fixtures follow, not a real naming violation.
+# N803 covers the same alias passed as a parameter rather than assigned.
+"tests/**" = ["N806", "N803"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

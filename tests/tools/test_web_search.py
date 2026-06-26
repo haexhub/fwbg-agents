@@ -15,7 +15,7 @@ from fwbg_agents.persistence.models import AgentRun, AgentRunStatus, LlmCall
 from fwbg_agents.tools.web_search import (
     SearchResult,
     TavilyClient,
-    TavilyUnavailable,
+    TavilyUnavailableError,
     get_quota_usage,
 )
 
@@ -72,7 +72,7 @@ async def test_search_parses_results():
 @pytest.mark.asyncio
 async def test_search_raises_when_api_key_missing():
     client = TavilyClient(api_key=None)
-    with pytest.raises(TavilyUnavailable):
+    with pytest.raises(TavilyUnavailableError):
         await client.search("q")
 
 
@@ -128,7 +128,7 @@ async def test_search_omits_results_with_missing_fields():
 async def test_get_quota_usage_counts_recent_rows(db):
     ar = await _new_agent_run(db)
     now = datetime.now(UTC)
-    for i in range(3):
+    for _i in range(3):
         db.add(
             LlmCall(
                 agent_run_id=ar.id,

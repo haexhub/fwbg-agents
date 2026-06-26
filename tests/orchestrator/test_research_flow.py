@@ -29,7 +29,6 @@ from fwbg_agents.persistence.models import (
     Transition,
 )
 
-
 _HYP_ARGS = {
     "title": "ORB on FOREX majors",
     "asset_class": "FOREX",

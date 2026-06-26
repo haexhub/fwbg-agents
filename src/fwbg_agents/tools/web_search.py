@@ -31,7 +31,7 @@ DEFAULT_BASE_URL = "https://api.tavily.com"
 DEFAULT_TIMEOUT_SECONDS = 30.0
 
 
-class TavilyUnavailable(RuntimeError):
+class TavilyUnavailableError(RuntimeError):
     """Raised when the Tavily API key is not configured."""
 
 
@@ -68,7 +68,7 @@ class TavilyClient:
         agent_run_id: int | None = None,
     ) -> list[SearchResult]:
         if not self.api_key:
-            raise TavilyUnavailable("TAVILY_API_KEY is not set")
+            raise TavilyUnavailableError("TAVILY_API_KEY is not set")
 
         body = {
             "api_key": self.api_key,

@@ -29,7 +29,6 @@ from fwbg_agents.persistence.models import (
     StrategyState,
 )
 
-
 PARENT_STRATEGY_JSON = {
     "name": "orb__forex__001",
     "description": "ORB rule-based on FOREX majors",

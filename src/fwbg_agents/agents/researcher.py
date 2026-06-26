@@ -26,7 +26,7 @@ from pydantic_ai.models import Model
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from fwbg_agents.orchestrator.hypotheses import (
-    HypothesisRejected,
+    HypothesisRejectedError,
     ResearcherHypothesis,
     validate_hypothesis,
 )
@@ -37,14 +37,14 @@ from fwbg_agents.persistence.models import (
     LlmCall,
 )
 from fwbg_agents.tools.llm import default_model
-from fwbg_agents.tools.web_search import SearchResult, TavilyClient, TavilyUnavailable
+from fwbg_agents.tools.web_search import SearchResult, TavilyClient, TavilyUnavailableError
 
 log = logging.getLogger(__name__)
 
 _PROMPT_PATH = Path(__file__).parent / "prompts" / "researcher.md"
 
 
-class ResearcherFailed(RuntimeError):
+class ResearcherError(RuntimeError):
     """Raised when the Researcher's hypothesis fails post-LLM validation."""
 
 
@@ -110,7 +110,8 @@ class Researcher:
                 asset_class: str,
                 tags: list[str],
             ) -> list[dict]:
-                """Search for prior strategies similar to a proposed one (tag-based, anti-redundancy)."""
+                """Search for prior strategies similar to a proposed one (tag-based,
+                anti-redundancy)."""
                 matches = await lookup_prior_art(session, strategy_family, asset_class, tags)
                 prior_art_seen.extend(matches)
                 return [m.model_dump() for m in matches]
@@ -125,7 +126,7 @@ class Researcher:
                     results: list[SearchResult] = await tavily.search(
                         query, session=session, agent_run_id=agent_run_id
                     )
-                except TavilyUnavailable:
+                except TavilyUnavailableError:
                     return []
                 except Exception as exc:
                     log.warning("researcher: tavily search failed: %s", exc)
@@ -157,8 +158,8 @@ class Researcher:
 
             try:
                 validate_hypothesis(result.output, prior_art_seen)
-            except HypothesisRejected as exc:
-                raise ResearcherFailed(str(exc)) from exc
+            except HypothesisRejectedError as exc:
+                raise ResearcherError(str(exc)) from exc
 
             ar.status = AgentRunStatus.DONE.value
             ar.ended_at = datetime.now(UTC)

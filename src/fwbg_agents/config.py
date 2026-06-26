@@ -35,7 +35,9 @@ class Settings(BaseSettings):
     )
     fwbg_strategies_dir: Path = Field(
         default=Path.home() / "fwbg" / "strategies" / "configs",
-        description="fwbg's strategies dir; Runner copies strategy.json here as <slug>__itNNN.json.",
+        description=(
+            "fwbg's strategies dir; Runner copies strategy.json here as <slug>__itNNN.json."
+        ),
     )
     fwbg_repo_root: Path = Field(
         default=Path.home() / "Projekte" / "fwbg",

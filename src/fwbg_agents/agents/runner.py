@@ -29,7 +29,6 @@ import re
 import shutil
 import time
 from datetime import UTC, datetime
-from pathlib import Path
 from typing import Any, Protocol
 
 from pydantic import BaseModel
@@ -47,7 +46,7 @@ from fwbg_agents.persistence.models import (
 log = logging.getLogger(__name__)
 
 
-class RunnerFailed(RuntimeError):
+class RunnerError(RuntimeError):
     """Raised when fwbg reports a failed run or polling times out."""
 
 
@@ -143,11 +142,11 @@ class Runner:
                     break
                 await asyncio.sleep(settings.runner_poll_interval_seconds)
             else:
-                raise RunnerFailed(f"polling timeout for {job_id} (last status={status!r})")
+                raise RunnerError(f"polling timeout for {job_id} (last status={status!r})")
 
             if status != "completed":
                 msg = last_progress.get("message") or last_progress.get("error_message") or status
-                raise RunnerFailed(f"fwbg reported status={status!r}: {msg}")
+                raise RunnerError(f"fwbg reported status={status!r}: {msg}")
 
             # Fetch full run + persist.
             run_data = await self.fwbg.get_run(job_id)

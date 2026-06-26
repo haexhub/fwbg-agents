@@ -19,14 +19,13 @@ import yaml
 
 from fwbg_agents.agents.calibrator import (
     SYMBOL_ASSET_CLASS,
-    calibrate,
-    classify_symbol,
     _compute_sortino,
     _extract_metrics,
     _quantiles,
+    calibrate,
+    classify_symbol,
 )
 from fwbg_agents.agents.criteria_defaults import (
-    DEFAULT_CRITERIA_BY_CLASS,
     default_criteria,
     known_asset_classes,
 )

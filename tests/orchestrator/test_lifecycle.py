@@ -16,7 +16,6 @@ each transition produces one immutable `transition` row.
 from __future__ import annotations
 
 from datetime import UTC, datetime
-from pathlib import Path
 
 import pytest
 import pytest_asyncio
@@ -25,7 +24,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from fwbg_agents.orchestrator.lifecycle import (
-    InvalidTransition,
+    InvalidTransitionError,
     plugin_dir,
     strategy_dir,
     transition_plugin,
@@ -40,7 +39,6 @@ from fwbg_agents.persistence.models import (
     StrategyState,
     Transition,
 )
-
 
 # ----- fixtures --------------------------------------------------------------
 
@@ -113,7 +111,9 @@ async def test_strategy_proposed_to_backtested_succeeds(db_session, proposed_str
     assert proposed_strategy.current_state == StrategyState.BACKTESTED.value
 
     rows = (
-        await db_session.execute(select(Transition).where(Transition.entity_id == proposed_strategy.id))
+        await db_session.execute(
+            select(Transition).where(Transition.entity_id == proposed_strategy.id)
+        )
     ).scalars().all()
     assert len(rows) == 1
     assert rows[0].from_state == StrategyState.PROPOSED.value
@@ -158,7 +158,9 @@ async def test_strategy_full_happy_path(db_session, proposed_strategy):
 
     rows = (
         await db_session.execute(
-            select(Transition).where(Transition.entity_id == proposed_strategy.id).order_by(Transition.id)
+            select(Transition)
+            .where(Transition.entity_id == proposed_strategy.id)
+            .order_by(Transition.id)
         )
     ).scalars().all()
     assert [r.to_state for r in rows] == [
@@ -172,7 +174,7 @@ async def test_strategy_full_happy_path(db_session, proposed_strategy):
 
 
 async def test_strategy_cannot_skip_directly_to_live(db_session, proposed_strategy):
-    with pytest.raises(InvalidTransition):
+    with pytest.raises(InvalidTransitionError):
         await transition_strategy(
             db_session,
             proposed_strategy,
@@ -182,7 +184,9 @@ async def test_strategy_cannot_skip_directly_to_live(db_session, proposed_strate
         )
     # Nothing was written.
     rows = (
-        await db_session.execute(select(Transition).where(Transition.entity_id == proposed_strategy.id))
+        await db_session.execute(
+            select(Transition).where(Transition.entity_id == proposed_strategy.id)
+        )
     ).scalars().all()
     assert rows == []
     assert proposed_strategy.current_state == StrategyState.PROPOSED.value
@@ -204,7 +208,7 @@ async def test_strategy_paper_to_live_requires_human_approval(db_session, propos
             }
         },
     )
-    with pytest.raises(InvalidTransition) as exc:
+    with pytest.raises(InvalidTransitionError) as exc:
         await transition_strategy(
             db_session,
             proposed_strategy,
@@ -231,7 +235,7 @@ async def test_strategy_backtested_to_paper_rejects_failing_metrics(db_session, 
     await transition_strategy(
         db_session, proposed_strategy, StrategyState.BACKTESTED, reason=""
     )
-    with pytest.raises(InvalidTransition):
+    with pytest.raises(InvalidTransitionError):
         await transition_strategy(
             db_session,
             proposed_strategy,
@@ -253,7 +257,7 @@ async def test_strategy_backtested_to_paper_rejects_failing_metrics(db_session, 
 
 
 async def test_abandon_requires_post_mortem_path(db_session, proposed_strategy):
-    with pytest.raises(InvalidTransition) as exc:
+    with pytest.raises(InvalidTransitionError) as exc:
         await transition_strategy(
             db_session,
             proposed_strategy,
@@ -312,7 +316,7 @@ async def test_cannot_leave_terminal_state(db_session, proposed_strategy):
         reason="",
         payload={"post_mortem_path": str(pm_path)},
     )
-    with pytest.raises(InvalidTransition):
+    with pytest.raises(InvalidTransitionError):
         await transition_strategy(
             db_session,
             proposed_strategy,
@@ -348,7 +352,7 @@ async def test_plugin_specified_to_authored(db_session, specified_plugin):
 
 
 async def test_plugin_invalid_skip(db_session, specified_plugin):
-    with pytest.raises(InvalidTransition):
+    with pytest.raises(InvalidTransitionError):
         await transition_plugin(
             db_session,
             specified_plugin,
@@ -358,7 +362,7 @@ async def test_plugin_invalid_skip(db_session, specified_plugin):
 
 
 async def test_plugin_abandon_requires_post_mortem(db_session, specified_plugin):
-    with pytest.raises(InvalidTransition):
+    with pytest.raises(InvalidTransitionError):
         await transition_plugin(
             db_session,
             specified_plugin,
