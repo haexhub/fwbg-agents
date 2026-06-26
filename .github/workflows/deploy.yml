@@ -20,21 +20,28 @@ jobs:
   test:
     name: Run Tests
     runs-on: ubuntu-latest
+    # tests/orchestrator/test_plugin_contract.py resolves a canonical example
+    # from a sibling fwbg checkout (mirrors production, where FWBG_REPO_ROOT
+    # always points at a checked-out fwbg tree - see docker-compose's
+    # `.:/fwbg-src:ro` mount). actions/checkout refuses a `path` outside the
+    # workspace root, so both repos are checked out *under* it instead and
+    # every step below runs with fwbg-agents as its working directory -
+    # net result is the same sibling layout local dev already has.
+    defaults:
+      run:
+        working-directory: fwbg-agents
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v7
+        with:
+          path: fwbg-agents
 
-      # tests/orchestrator/test_plugin_contract.py reads a canonical example
-      # from the fwbg repo's docs/specs/ - mirrors production, where
-      # FWBG_REPO_ROOT always points at a checked-out fwbg tree (see
-      # docker-compose's `.:/fwbg-src:ro` mount). Sibling path matches what
-      # local dev has when both repos are cloned next to each other.
       - name: Checkout sibling fwbg repo (for plugin contract fixtures)
         uses: actions/checkout@v7
         with:
           repository: haexhub/fwbg
-          path: ../fwbg
+          path: fwbg
           token: ${{ secrets.RELEASE_PAT }}
 
       - name: Install uv
