@@ -11,7 +11,6 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
-import pytest
 import pytest_asyncio
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine

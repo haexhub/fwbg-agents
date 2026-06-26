@@ -10,7 +10,7 @@ from pydantic import ValidationError
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from fwbg_agents.orchestrator.hypotheses import (
-    HypothesisRejected,
+    HypothesisRejectedError,
     ResearcherHypothesis,
     Source,
     generate_slug,
@@ -58,7 +58,7 @@ def test_validate_passes_with_no_prior_art():
 
 
 def test_validate_rejects_when_prior_art_and_no_differentiates_from():
-    with pytest.raises(HypothesisRejected):
+    with pytest.raises(HypothesisRejectedError):
         validate_hypothesis(_hyp(), [_match()])
 
 
@@ -67,14 +67,14 @@ def test_validate_passes_when_differentiates_from_covers_prior_art():
 
 
 def test_validate_rejects_when_differentiates_from_slug_unknown():
-    with pytest.raises(HypothesisRejected):
+    with pytest.raises(HypothesisRejectedError):
         validate_hypothesis(_hyp(differentiates_from=["unrelated"]), [_match()])
 
 
 def test_validate_rejects_when_partial_differentiates_from():
     """All prior-art slugs must be addressed, not just some."""
     matches = [_match("prev_orb_001"), _match("prev_orb_002")]
-    with pytest.raises(HypothesisRejected):
+    with pytest.raises(HypothesisRejectedError):
         validate_hypothesis(_hyp(differentiates_from=["prev_orb_001"]), matches)
 
 

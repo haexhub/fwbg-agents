@@ -19,7 +19,6 @@ from collections.abc import Callable
 import numpy as np
 import pandas as pd
 
-
 _BARS_DEFAULT = 500
 _START_TS = pd.Timestamp("2026-01-01T00:00:00Z")
 _SPACING = pd.Timedelta(minutes=1)
@@ -29,7 +28,10 @@ def _build_ohlcv(close: np.ndarray, *, vol_base: float, rng: np.random.Generator
     """Wrap a close-series into a full OHLCV frame using small noise wings."""
     n = len(close)
     spread = np.abs(rng.normal(0.0, 0.15, size=n))  # half-spread, always positive
-    direction = rng.choice([-1.0, 1.0], size=n)
+    # Unused, but kept to preserve rng's draw sequence for byte-identical
+    # reruns (see module docstring) - removing it would shift every
+    # subsequent draw for callers sharing this rng instance.
+    _direction = rng.choice([-1.0, 1.0], size=n)
     open_ = np.concatenate([[close[0]], close[:-1]])
     high = np.maximum(open_, close) + spread
     low = np.minimum(open_, close) - spread
@@ -86,7 +88,7 @@ def gen_sideways() -> pd.DataFrame:
 
 def gen_high_vola() -> pd.DataFrame:
     """Drift-free baseline plus a strong random-walk component — close.std()
-    must be at least ~3× the sideways generator's std. Seed 20260627."""
+    must be at least ~3x the sideways generator's std. Seed 20260627."""
     rng = np.random.default_rng(20260627)
     n = _BARS_DEFAULT
     base = np.full(n, 100.0)

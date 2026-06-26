@@ -21,7 +21,7 @@ import pytest_asyncio
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
-from fwbg_agents.agents.translator import Translator, TranslatorFailed
+from fwbg_agents.agents.translator import Translator, TranslatorError
 from fwbg_agents.orchestrator.plugin_catalog import _load_fwbg_cached
 from fwbg_agents.persistence.database import Base
 from fwbg_agents.persistence.models import (
@@ -34,7 +34,6 @@ from fwbg_agents.persistence.models import (
     StrategyTag,
     Transition,
 )
-
 
 PARENT_STRATEGY_JSON = {
     "name": "orb__forex__001",
@@ -89,7 +88,9 @@ def _make_plugin(slug: str, kind: str) -> Plugin:
     )
 
 
-def _sidecar(phase: str, *, slug: str = PLUGIN_SLUG, capability: str = "detect strong trends") -> dict:
+def _sidecar(
+    phase: str, *, slug: str = PLUGIN_SLUG, capability: str = "detect strong trends"
+) -> dict:
     return {
         "kind": "add_indicator",
         "capability": capability,
@@ -248,7 +249,9 @@ async def test_run_reiterate_with_plugin_feature_selection_phase(db_with_parent)
     from fwbg_agents.config import settings
 
     child_payload = json.loads(
-        (settings.data_dir / "strategies" / child.slug / "iteration_001" / "strategy.json").read_text()
+        (
+            settings.data_dir / "strategies" / child.slug / "iteration_001" / "strategy.json"
+        ).read_text()
     )
     assert child_payload["feature_selection"] == [slug]
     assert "indicators" not in child_payload or child_payload["indicators"] == []
@@ -274,7 +277,9 @@ async def test_run_reiterate_with_plugin_preprocessing_phase(db_with_parent):
     from fwbg_agents.config import settings
 
     child_payload = json.loads(
-        (settings.data_dir / "strategies" / child.slug / "iteration_001" / "strategy.json").read_text()
+        (
+            settings.data_dir / "strategies" / child.slug / "iteration_001" / "strategy.json"
+        ).read_text()
     )
     assert child_payload["preprocessing"] == [slug]
 
@@ -297,7 +302,9 @@ async def test_run_reiterate_with_plugin_filter_phase(db_with_parent):
     from fwbg_agents.config import settings
 
     child_payload = json.loads(
-        (settings.data_dir / "strategies" / child.slug / "iteration_001" / "strategy.json").read_text()
+        (
+            settings.data_dir / "strategies" / child.slug / "iteration_001" / "strategy.json"
+        ).read_text()
     )
     assert child_payload["extra_filters"] == [slug]
     # Critically: parent's legacy `filters` single-string must be untouched.
@@ -313,7 +320,7 @@ async def test_run_reiterate_with_plugin_rejects_unknown_phase(db_with_parent):
         parent = (
             await session.execute(select(Strategy).where(Strategy.id == parent_id))
         ).scalar_one()
-        with pytest.raises(TranslatorFailed) as exc:
+        with pytest.raises(TranslatorError) as exc:
             await Translator(session).run_reiterate_with_plugin(
                 parent, PLUGIN_SLUG, sidecar
             )
@@ -375,7 +382,7 @@ async def test_run_reiterate_with_plugin_rejects_parent_not_backtested(tmp_path,
         parent = (
             await session.execute(select(Strategy).where(Strategy.id == parent_id))
         ).scalar_one()
-        with pytest.raises(TranslatorFailed) as exc:
+        with pytest.raises(TranslatorError) as exc:
             await Translator(session).run_reiterate_with_plugin(
                 parent, PLUGIN_SLUG, sidecar
             )
@@ -399,7 +406,7 @@ async def test_run_reiterate_with_plugin_rejects_parent_not_backtested(tmp_path,
 async def test_run_reiterate_with_plugin_appends_to_existing_iterations(db_with_parent):
     """When parent hypothesis already has iterations[], the new entry
     appends with iteration = existing + 1."""
-    SessionMaker, parent_id, parent_slug, it_dir = db_with_parent
+    SessionMaker, parent_id, _parent_slug, it_dir = db_with_parent
 
     # Overwrite parent hypothesis to include a prior iterations block.
     parent_hypothesis_with_prior = {

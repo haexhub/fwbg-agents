@@ -68,7 +68,7 @@ class PluginEvaluator:
 
         try:
             contract = load_contract(Path(plugin.contract_path))
-        except Exception as exc:  # noqa: BLE001 — surface any contract issue
+        except Exception as exc:
             errors.append(
                 {
                     "scenario_name": "",
@@ -208,7 +208,7 @@ def _load_compute(plugin_py: Path):
             raise _PluginLoadError("plugin_spec_failed")
         mod = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(mod)
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         raise _PluginLoadError(
             "plugin_import_failed", tb="".join(traceback.format_exception(exc))
         ) from exc
@@ -234,7 +234,7 @@ def _evaluate_scenario(
 
     try:
         result = compute(df, **params)
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         return [
             {
                 "scenario_name": scenario.name,

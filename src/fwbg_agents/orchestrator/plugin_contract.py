@@ -21,7 +21,6 @@ from typing import Any, Literal
 import yaml
 from pydantic import BaseModel, ConfigDict, ValidationError, model_validator
 
-
 PluginKindLit = Literal[
     "indicator",
     "model",

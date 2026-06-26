@@ -18,7 +18,7 @@ from fwbg_agents.persistence.models import Strategy
 _SLUG_SUFFIX_RE = re.compile(r"__(\d{3,})$")
 
 
-class HypothesisRejected(ValueError):
+class HypothesisRejectedError(ValueError):
     """Raised by validate_hypothesis when the Researcher output conflicts with prior art."""
 
 
@@ -64,19 +64,19 @@ def validate_hypothesis(
     diff_slugs = set(hypothesis.differentiates_from)
 
     if not diff_slugs:
-        raise HypothesisRejected(
+        raise HypothesisRejectedError(
             f"prior-art exists ({sorted(prior_slugs)}) but differentiates_from is empty"
         )
 
     missing = prior_slugs - diff_slugs
     if missing:
-        raise HypothesisRejected(
+        raise HypothesisRejectedError(
             f"differentiates_from must address all prior art; missing {sorted(missing)}"
         )
 
     unknown = diff_slugs - prior_slugs
     if unknown:
-        raise HypothesisRejected(
+        raise HypothesisRejectedError(
             f"differentiates_from references unknown slugs {sorted(unknown)}"
         )
 

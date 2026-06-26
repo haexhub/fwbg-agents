@@ -72,7 +72,9 @@ async def lookup_prior_art(
     """
     input_tags = set(tags)
 
-    rows = (await session.execute(select(Strategy).where(Strategy.asset_class == asset_class))).scalars().all()
+    rows = (
+        await session.execute(select(Strategy).where(Strategy.asset_class == asset_class))
+    ).scalars().all()
     if not rows:
         return []
 

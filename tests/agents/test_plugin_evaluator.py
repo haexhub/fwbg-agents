@@ -18,7 +18,6 @@ import json
 from datetime import UTC, datetime
 from pathlib import Path
 
-import pytest
 import pytest_asyncio
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
@@ -36,7 +35,6 @@ from fwbg_agents.persistence.database import Base
 from fwbg_agents.persistence.models import (
     Plugin,
     PluginState,
-    Transition,
     VerificationRun,
 )
 

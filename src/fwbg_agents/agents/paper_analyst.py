@@ -34,7 +34,6 @@ from fwbg_agents.orchestrator.criteria_paper import CriteriaEvalResult
 from fwbg_agents.tools.fwbg_paper_reader import PaperPositions, PaperTradeSummary
 from fwbg_agents.tools.llm import default_model
 
-
 # ---------------------------------------------------------------------------
 # Discriminated-union output schema
 # ---------------------------------------------------------------------------

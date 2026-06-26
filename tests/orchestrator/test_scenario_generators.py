@@ -7,7 +7,6 @@ machines (CPython + numpy float64 are deterministic for this).
 
 from __future__ import annotations
 
-import numpy as np
 import pandas as pd
 import pytest
 
@@ -15,7 +14,6 @@ from fwbg_agents.orchestrator.scenario_generators import (
     SCENARIO_GENERATORS,
     generate_scenario,
 )
-
 
 EXPECTED_COLUMNS = {"timestamp", "open", "high", "low", "close", "volume"}
 

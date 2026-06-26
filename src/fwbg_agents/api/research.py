@@ -21,7 +21,6 @@ from fwbg_agents.agents.researcher import ResearcherInput
 from fwbg_agents.config import settings
 from fwbg_agents.orchestrator.lifecycle import strategy_dir
 from fwbg_agents.orchestrator.research_flow import (
-    ReiteratePreconditionError,
     reiterate,
     research_and_translate,
 )
@@ -32,7 +31,7 @@ from fwbg_agents.persistence.models import (
     Strategy,
     StrategyState,
 )
-from fwbg_agents.tools.web_search import TavilyClient
+from fwbg_agents.tools.search import BraveClient, FallbackSearchClient, TavilyClient
 
 log = logging.getLogger(__name__)
 
@@ -52,9 +51,14 @@ async def _run_research_background(input: ResearcherInput, agent_run_id: int) ->
         ar.status = AgentRunStatus.RUNNING.value
         await session.commit()
         tavily = TavilyClient(api_key=settings.tavily_api_key)
+        brave = BraveClient(api_key=settings.brave_api_key)
+        search_client = FallbackSearchClient([tavily, brave])
         try:
             strategy_id = await research_and_translate(
-                session, input, tavily=tavily
+                session,
+                input,
+                search_client=search_client,
+                fanout_n=settings.researcher_fanout_n,
             )
             ar.status = AgentRunStatus.DONE.value
             ar.strategy_id = strategy_id
@@ -79,6 +83,7 @@ async def _run_research_background(input: ResearcherInput, agent_run_id: int) ->
             await session.commit()
         finally:
             await tavily.aclose()
+            await brave.aclose()
 
 
 async def _run_reiterate_background(parent_id: int, agent_run_id: int) -> None:

@@ -1,14 +1,15 @@
-"""Tavily web-search client + quota tracking (M4).
+"""Tavily web-search client + quota tracking (M4, restructured M4b).
 
 Primary research tool for the Researcher agent (design §10).
 
-Quota: every call is logged in `llm_call` with `model="tavily-search"` so the
-existing infra (M3 token tracking) doubles as a Tavily counter. No schema
-change needed. `get_quota_usage()` counts within a sliding 30-day window.
+Quota: every call is logged in `llm_call` with `model="<provider>-search"` so
+the existing infra (M3 token tracking) doubles as a per-provider counter. No
+schema change needed. `get_quota_usage()` counts within a sliding 30-day
+window.
 
-Fallback strategy (design §10): Anthropic web_search built-in tool is the
-documented fallback, but proxy compatibility is unverified (open question §16).
-Brave Search is the secondary fallback. Neither is built in M4 — Tavily-only.
+Fallback strategy (design §10): Brave Search is the secondary fallback,
+added in M4b (`fwbg_agents.tools.search.brave`). The Anthropic built-in
+web_search tool stays parked — proxy compatibility still unverified.
 """
 
 from __future__ import annotations
@@ -18,31 +19,21 @@ import time
 from datetime import UTC, datetime, timedelta
 
 import httpx
-from pydantic import BaseModel
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from fwbg_agents.persistence.models import LlmCall
+from fwbg_agents.tools.search.base import SearchResult, SearchUnavailableError
 
 log = logging.getLogger(__name__)
 
-TAVILY_MODEL_NAME = "tavily-search"
 DEFAULT_BASE_URL = "https://api.tavily.com"
 DEFAULT_TIMEOUT_SECONDS = 30.0
 
 
-class TavilyUnavailable(RuntimeError):
-    """Raised when the Tavily API key is not configured."""
-
-
-class SearchResult(BaseModel):
-    url: str
-    title: str
-    content_snippet: str
-    score: float
-
-
 class TavilyClient:
+    name = "tavily"
+
     def __init__(
         self,
         api_key: str | None,
@@ -68,7 +59,7 @@ class TavilyClient:
         agent_run_id: int | None = None,
     ) -> list[SearchResult]:
         if not self.api_key:
-            raise TavilyUnavailable("TAVILY_API_KEY is not set")
+            raise SearchUnavailableError("TAVILY_API_KEY is not set")
 
         body = {
             "api_key": self.api_key,
@@ -98,39 +89,42 @@ class TavilyClient:
                 continue
 
         if session is not None and agent_run_id is not None:
-            await self._log_quota(session, agent_run_id, elapsed_ms)
+            await _log_quota(session, agent_run_id, self.name, elapsed_ms)
 
         return results
 
-    @staticmethod
-    async def _log_quota(session: AsyncSession, agent_run_id: int, latency_ms: int) -> None:
-        try:
-            session.add(
-                LlmCall(
-                    agent_run_id=agent_run_id,
-                    model=TAVILY_MODEL_NAME,
-                    input_tokens=0,
-                    output_tokens=0,
-                    latency_ms=latency_ms,
-                    created_at=datetime.now(UTC),
-                )
+
+async def _log_quota(
+    session: AsyncSession, agent_run_id: int, provider: str, latency_ms: int
+) -> None:
+    try:
+        session.add(
+            LlmCall(
+                agent_run_id=agent_run_id,
+                model=f"{provider}-search",
+                input_tokens=0,
+                output_tokens=0,
+                latency_ms=latency_ms,
+                created_at=datetime.now(UTC),
             )
-            await session.commit()
-        except Exception as exc:
-            log.warning("tavily: failed to log quota row: %s", exc)
+        )
+        await session.commit()
+    except Exception as exc:
+        log.warning("%s: failed to log quota row: %s", provider, exc)
 
 
 async def get_quota_usage(
     session: AsyncSession,
     *,
+    provider: str = "tavily",
     window_days: int = 30,
 ) -> int:
-    """Count Tavily calls in the trailing window."""
+    """Count a provider's search calls in the trailing window."""
     cutoff = datetime.now(UTC) - timedelta(days=window_days)
     count = (
         await session.execute(
             select(func.count(LlmCall.id)).where(
-                LlmCall.model == TAVILY_MODEL_NAME,
+                LlmCall.model == f"{provider}-search",
                 LlmCall.created_at >= cutoff,
             )
         )

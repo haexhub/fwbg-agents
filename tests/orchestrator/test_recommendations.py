@@ -24,7 +24,7 @@ from fwbg_agents.agents.analyst import (
     Promote,
     TuneParams,
 )
-from fwbg_agents.orchestrator.lifecycle import InvalidTransition
+from fwbg_agents.orchestrator.lifecycle import InvalidTransitionError
 from fwbg_agents.orchestrator.recommendations import validate_and_apply
 from fwbg_agents.persistence.database import Base
 from fwbg_agents.persistence.models import (
@@ -123,7 +123,7 @@ async def test_promote_with_failing_metrics_is_rejected(db_and_backtested):
     async with SessionMaker() as session:
         s = (await session.execute(select(Strategy).where(Strategy.id == sid))).scalar_one()
         rec = Promote(confidence=1.0, reasoning="LLM thinks it's great anyway")
-        with pytest.raises(InvalidTransition):
+        with pytest.raises(InvalidTransitionError):
             await validate_and_apply(session, s, rec, metrics=_GOOD_METRICS)
 
     async with SessionMaker() as v:
@@ -141,7 +141,10 @@ async def test_abandon_writes_post_mortem_and_transitions(db_and_backtested):
             confidence=0.85,
             reasoning="no edge",
             post_mortem_summary="failed across regimes",
-            lessons=["RSI mean reversion on intraday DAX shows no edge", "Choose trend strategies instead"],
+            lessons=[
+                "RSI mean reversion on intraday DAX shows no edge",
+                "Choose trend strategies instead",
+            ],
         )
         tr = await validate_and_apply(session, s, rec, metrics=_BAD_METRICS)
         assert tr is not None
@@ -192,9 +195,14 @@ async def test_tune_params_records_sidecar_no_transition(db_and_backtested):
 async def test_change_exit_records_sidecar_no_transition(db_and_backtested):
     SessionMaker, sid, tmp_path, _criteria = db_and_backtested
     async with SessionMaker() as session:
-        s = (await session.execute(select(Strategy).where(Strategy.id == sid))).scalar_one()
+        s = (
+            await session.execute(select(Strategy).where(Strategy.id == sid))
+        ).scalar_one()
         rec = ChangeExit(
-            confidence=0.5, reasoning="static SL too tight", from_exit="static_sl", to_exit="atr_trailing_sl"
+            confidence=0.5,
+            reasoning="static SL too tight",
+            from_exit="static_sl",
+            to_exit="atr_trailing_sl",
         )
         tr = await validate_and_apply(session, s, rec, metrics=_BAD_METRICS)
         assert tr is None

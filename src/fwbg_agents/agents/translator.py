@@ -67,7 +67,7 @@ _PHASE_TO_FIELD: dict[str, str] = {
 }
 
 
-class TranslatorFailed(RuntimeError):
+class TranslatorError(RuntimeError):
     """Raised when the Translator output fails structural validation."""
 
 
@@ -109,7 +109,9 @@ def _known_plugins_dict() -> dict[str, list[str]]:
     }
 
 
-def _write_spec_md(path: Path, *, strategy_slug: str, hypothesis: dict, strategy_json: dict) -> None:
+def _write_spec_md(
+    path: Path, *, strategy_slug: str, hypothesis: dict, strategy_json: dict
+) -> None:
     plugins = ", ".join(
         f"{k}={strategy_json.get(k)}"
         for k in ("pipeline", "model", "filters", "validation", "resources")
@@ -209,7 +211,7 @@ class Translator:
             try:
                 validate_strategy_json(payload)
             except StrategyValidationError as exc:
-                raise TranslatorFailed(str(exc)) from exc
+                raise TranslatorError(str(exc)) from exc
 
             strategy_path = iteration_dir / "strategy.json"
             strategy_path.write_text(json.dumps(payload, indent=2, sort_keys=True))
@@ -268,11 +270,11 @@ class Translator:
             parent_hypothesis_path = parent_dir / "hypothesis.json"
 
             if not sidecar_path.is_file():
-                raise TranslatorFailed(
+                raise TranslatorError(
                     f"missing analyst_recommendation.json at {sidecar_path}"
                 )
             if not parent_strategy_path.is_file():
-                raise TranslatorFailed(
+                raise TranslatorError(
                     f"parent missing strategy.json at {parent_strategy_path}"
                 )
             ar.input_artifact_path = str(sidecar_path)
@@ -286,7 +288,7 @@ class Translator:
                 param = rec.get("param")
                 new_range = rec.get("new_range")
                 if not param or not isinstance(new_range, list):
-                    raise TranslatorFailed(
+                    raise TranslatorError(
                         f"tune_params sidecar missing param/new_range: {rec}"
                     )
                 grid = child_payload.setdefault("optimization", {}).setdefault(
@@ -296,13 +298,13 @@ class Translator:
             elif kind == "change_exit":
                 new_exit = rec.get("new_exit_strategy")
                 if not isinstance(new_exit, dict):
-                    raise TranslatorFailed(
+                    raise TranslatorError(
                         "change_exit sidecar missing new_exit_strategy (the Analyst must "
                         "populate it for M4 reiterate; see ChangeExit.new_exit_strategy)"
                     )
                 child_payload["exit_strategies"] = [new_exit]
             else:
-                raise TranslatorFailed(
+                raise TranslatorError(
                     f"reiterate only handles tune_params/change_exit, got kind={kind!r}"
                 )
 
@@ -314,7 +316,7 @@ class Translator:
             try:
                 validate_strategy_json(child_payload)
             except StrategyValidationError as exc:
-                raise TranslatorFailed(str(exc)) from exc
+                raise TranslatorError(str(exc)) from exc
 
             now2 = datetime.now(UTC)
             child = Strategy(
@@ -430,14 +432,14 @@ class Translator:
 
         try:
             if parent.current_state != StrategyState.BACKTESTED.value:
-                raise TranslatorFailed(
+                raise TranslatorError(
                     f"reiterate_with_plugin requires parent in BACKTESTED, "
                     f"got {parent.current_state}"
                 )
 
             phase = sidecar.get("phase")
             if phase not in _PHASE_TO_FIELD:
-                raise TranslatorFailed(
+                raise TranslatorError(
                     f"unknown phase: {phase!r} (must be one of: "
                     "indicator, feature_selection, preprocessing, filter)"
                 )
@@ -449,7 +451,7 @@ class Translator:
             sidecar_input_path = parent_dir / "add_indicator_request.json"
 
             if not parent_strategy_path.is_file():
-                raise TranslatorFailed(
+                raise TranslatorError(
                     f"parent missing strategy.json at {parent_strategy_path}"
                 )
             ar.input_artifact_path = str(sidecar_input_path)
@@ -467,7 +469,7 @@ class Translator:
             try:
                 validate_strategy_json(child_payload, catalog=catalog)
             except StrategyValidationError as exc:
-                raise TranslatorFailed(str(exc)) from exc
+                raise TranslatorError(str(exc)) from exc
 
             now2 = datetime.now(UTC)
             child = Strategy(

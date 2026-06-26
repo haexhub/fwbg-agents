@@ -4,7 +4,7 @@ env-overridable via PLUGIN_IMPLEMENTER_MODEL).
 
 Loop: implement → syntax gate → contract gate (AST static check). On gate
 fail, feed back the last code + last error string and try again. After
-`settings.plugin_impl_max_rounds` rounds, raise PluginImplementerFailed.
+`settings.plugin_impl_max_rounds` rounds, raise PluginImplementerError.
 
 Pure callable: returns ImplementerRunResult bundle (output + rounds_used +
 per-round LlmCallMeta tuple). Orchestrator persists AgentRun/LlmCalls.
@@ -64,7 +64,7 @@ class ImplementerRunResult:
     llm_calls: tuple[LlmCallMeta, ...]
 
 
-class PluginImplementerFailed(RuntimeError):
+class PluginImplementerError(RuntimeError):
     """The Implementer exhausted its round budget without passing the gates.
 
     Carries the last attempted code and last gate error for post-mortem; the
@@ -105,9 +105,13 @@ def _get_class_attr_value(node: ast.ClassDef, name: str) -> ast.expr | None:
             for tgt in stmt.targets:
                 if isinstance(tgt, ast.Name) and tgt.id == name:
                     return stmt.value
-        elif isinstance(stmt, ast.AnnAssign):
-            if isinstance(stmt.target, ast.Name) and stmt.target.id == name and stmt.value is not None:
-                return stmt.value
+        elif (
+            isinstance(stmt, ast.AnnAssign)
+            and isinstance(stmt.target, ast.Name)
+            and stmt.target.id == name
+            and stmt.value is not None
+        ):
+            return stmt.value
     return None
 
 
@@ -251,7 +255,7 @@ class PluginImplementer:
         try:
             system_prompt = self.prompt_path.read_text(encoding="utf-8")
         except OSError as exc:
-            raise PluginImplementerFailed(
+            raise PluginImplementerError(
                 f"prompt-doc not readable at {self.prompt_path}: {exc}",
                 last_code=None,
                 last_err=None,
@@ -340,7 +344,7 @@ class PluginImplementer:
                 llm_calls=tuple(llm_calls),
             )
 
-        raise PluginImplementerFailed(
+        raise PluginImplementerError(
             f"gates still failing after {self.max_rounds} rounds: {last_err}",
             last_code=last_code,
             last_err=last_err,

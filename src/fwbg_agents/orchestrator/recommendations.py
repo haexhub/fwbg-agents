@@ -6,7 +6,7 @@ not trusted to bypass guards:
 
 - Promote     → criteria YAML re-check (re-use M2's `check_backtest_criteria`).
                 Pass → transition backtested → paper_trading with metrics +
-                recommendation in payload. Fail → InvalidTransition raised.
+                recommendation in payload. Fail → InvalidTransitionError raised.
 - Abandon     → write post_mortem.yaml; transition → abandoned.
 - TuneParams  → no transition. The recommendation is persisted as a sidecar
   ChangeExit    JSON for the Translator (M4) to pick up and re-iterate.
@@ -62,7 +62,7 @@ async def validate_and_apply(
 
     Returns the new transition row when a state change happened, or None when
     the recommendation only resulted in a sidecar artifact (tune_params,
-    change_exit). Raises `InvalidTransition` if a promote recommendation
+    change_exit). Raises `InvalidTransitionError` if a promote recommendation
     fails the criteria gate.
     """
     if isinstance(rec, Promote):

@@ -19,8 +19,6 @@ from sqlalchemy import asc, desc, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from fwbg_agents.orchestrator.plugin_flow import (
-    AuthorPluginPreconditionError,
-    EvaluatePluginPreconditionError,
     ReiterateWithPluginPreconditionError,
     _find_latest_sidecar,
     author_plugin_from_strategy,
@@ -110,7 +108,9 @@ async def list_plugins(
 
 
 @router.get("/plugins/{plugin_id}")
-async def get_plugin(plugin_id: int, session: AsyncSession = Depends(get_session)) -> dict[str, Any]:
+async def get_plugin(
+    plugin_id: int, session: AsyncSession = Depends(get_session)
+) -> dict[str, Any]:
     p = (await session.execute(select(Plugin).where(Plugin.id == plugin_id))).scalar_one_or_none()
     if p is None:
         raise HTTPException(status_code=404, detail=f"plugin {plugin_id} not found")

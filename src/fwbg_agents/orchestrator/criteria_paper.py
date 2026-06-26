@@ -27,12 +27,12 @@ Contract notes:
 
 from __future__ import annotations
 
+import operator
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-import operator
 import yaml
 
 from fwbg_agents.tools.fwbg_paper_reader import PaperTradeSummary

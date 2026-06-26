@@ -26,7 +26,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from fwbg_agents.orchestrator.plugin_catalog import _load_fwbg_cached
 from fwbg_agents.orchestrator.plugin_flow import (
     AuthorPluginPreconditionError,
-    PluginAuthorFailed,
+    PluginAuthorError,
     author_plugin_from_strategy,
     lookup_plugin_capability,
 )
@@ -306,13 +306,13 @@ async def test_implementer_loop_persists_n_llm_calls(author_env):
 
 
 async def test_planner_failure_short_circuits_implementer(author_env):
-    """Planner emits wrong phase → PluginAuthorFailed, no implementer-AR."""
+    """Planner emits wrong phase → PluginAuthorError, no implementer-AR."""
     Session, parent_id, _ = author_env
     bad_plan = {**_PLAN_ARGS, "phase": "preprocessing"}
     planner = _stub_model(bad_plan)
 
     async with Session() as session:
-        with pytest.raises(PluginAuthorFailed):
+        with pytest.raises(PluginAuthorError):
             await author_plugin_from_strategy(
                 session,
                 parent_id,
@@ -346,7 +346,7 @@ async def test_implementer_failure_marks_both_runs_and_stores_last_code(
     implementer = _stub_model(bad, bad, bad, bad, bad)
 
     async with Session() as session:
-        with pytest.raises(PluginAuthorFailed):
+        with pytest.raises(PluginAuthorError):
             await author_plugin_from_strategy(
                 session,
                 parent_id,

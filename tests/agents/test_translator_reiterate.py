@@ -15,7 +15,7 @@ import pytest_asyncio
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
-from fwbg_agents.agents.translator import Translator, TranslatorFailed
+from fwbg_agents.agents.translator import Translator, TranslatorError
 from fwbg_agents.persistence.database import Base
 from fwbg_agents.persistence.models import (
     AgentRun,
@@ -25,7 +25,6 @@ from fwbg_agents.persistence.models import (
     StrategyTag,
     Transition,
 )
-
 
 PARENT_STRATEGY_JSON = {
     "name": "orb__forex__001",
@@ -192,7 +191,9 @@ async def test_reiterate_change_exit_swaps_exit_strategies(db_with_parent):
     )
 
     async with SessionMaker() as session:
-        parent = (await session.execute(select(Strategy).where(Strategy.id == parent_id))).scalar_one()
+        parent = (
+            await session.execute(select(Strategy).where(Strategy.id == parent_id))
+        ).scalar_one()
         child = await Translator(session).run_reiterate(parent)
 
     from fwbg_agents.config import settings
@@ -207,8 +208,10 @@ async def test_reiterate_change_exit_swaps_exit_strategies(db_with_parent):
 async def test_reiterate_missing_sidecar_fails(db_with_parent):
     SessionMaker, parent_id, *_ = db_with_parent
     async with SessionMaker() as session:
-        parent = (await session.execute(select(Strategy).where(Strategy.id == parent_id))).scalar_one()
-        with pytest.raises(TranslatorFailed):
+        parent = (
+            await session.execute(select(Strategy).where(Strategy.id == parent_id))
+        ).scalar_one()
+        with pytest.raises(TranslatorError):
             await Translator(session).run_reiterate(parent)
 
 
@@ -227,8 +230,10 @@ async def test_reiterate_invalid_resulting_json_fails(db_with_parent):
         },
     )
     async with SessionMaker() as session:
-        parent = (await session.execute(select(Strategy).where(Strategy.id == parent_id))).scalar_one()
-        with pytest.raises(TranslatorFailed):
+        parent = (
+            await session.execute(select(Strategy).where(Strategy.id == parent_id))
+        ).scalar_one()
+        with pytest.raises(TranslatorError):
             await Translator(session).run_reiterate(parent)
 
 
@@ -237,8 +242,10 @@ async def test_reiterate_unknown_recommendation_kind_fails(db_with_parent):
     SessionMaker, parent_id, _parent_slug, it_dir = db_with_parent
     _write_sidecar(it_dir, {"kind": "weird_thing", "confidence": 0.5})
     async with SessionMaker() as session:
-        parent = (await session.execute(select(Strategy).where(Strategy.id == parent_id))).scalar_one()
-        with pytest.raises(TranslatorFailed):
+        parent = (
+            await session.execute(select(Strategy).where(Strategy.id == parent_id))
+        ).scalar_one()
+        with pytest.raises(TranslatorError):
             await Translator(session).run_reiterate(parent)
 
 
@@ -257,7 +264,9 @@ async def test_reiterate_copies_hypothesis_into_child_dir(db_with_parent):
         },
     )
     async with SessionMaker() as session:
-        parent = (await session.execute(select(Strategy).where(Strategy.id == parent_id))).scalar_one()
+        parent = (
+            await session.execute(select(Strategy).where(Strategy.id == parent_id))
+        ).scalar_one()
         child = await Translator(session).run_reiterate(parent)
 
     from fwbg_agents.config import settings

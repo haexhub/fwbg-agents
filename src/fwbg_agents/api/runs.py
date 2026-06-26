@@ -110,7 +110,9 @@ async def post_strategy_run(
     background_tasks: BackgroundTasks,
     session: AsyncSession = Depends(get_session),
 ) -> dict[str, Any]:
-    s = (await session.execute(select(Strategy).where(Strategy.id == strategy_id))).scalar_one_or_none()
+    s = (
+        await session.execute(select(Strategy).where(Strategy.id == strategy_id))
+    ).scalar_one_or_none()
     if s is None:
         raise HTTPException(404, f"strategy {strategy_id} not found")
 
@@ -136,7 +138,9 @@ async def post_strategy_analyze(
     background_tasks: BackgroundTasks,
     session: AsyncSession = Depends(get_session),
 ) -> dict[str, Any]:
-    s = (await session.execute(select(Strategy).where(Strategy.id == strategy_id))).scalar_one_or_none()
+    s = (
+        await session.execute(select(Strategy).where(Strategy.id == strategy_id))
+    ).scalar_one_or_none()
     if s is None:
         raise HTTPException(404, f"strategy {strategy_id} not found")
 

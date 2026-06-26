@@ -17,7 +17,6 @@ because SQLAlchemy's DeclarativeBase reserves `metadata` on the model class.
 from collections.abc import Sequence
 
 import sqlalchemy as sa
-
 from alembic import op
 
 revision: str = "0006"

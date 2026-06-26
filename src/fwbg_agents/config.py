@@ -26,6 +26,16 @@ class Settings(BaseSettings):
 
     # Web research
     tavily_api_key: str | None = None
+    brave_api_key: str | None = None
+    researcher_fanout_n: int = Field(
+        default=2,
+        ge=1,
+        le=5,
+        description=(
+            "Parallel hypothesis candidates per /research/brief call; "
+            "first to pass validate_hypothesis wins."
+        ),
+    )
 
     # fwbg
     fwbg_api_url: str = Field(default="http://localhost:8420")
@@ -35,7 +45,9 @@ class Settings(BaseSettings):
     )
     fwbg_strategies_dir: Path = Field(
         default=Path.home() / "fwbg" / "strategies" / "configs",
-        description="fwbg's strategies dir; Runner copies strategy.json here as <slug>__itNNN.json.",
+        description=(
+            "fwbg's strategies dir; Runner copies strategy.json here as <slug>__itNNN.json."
+        ),
     )
     fwbg_repo_root: Path = Field(
         default=Path.home() / "Projekte" / "fwbg",

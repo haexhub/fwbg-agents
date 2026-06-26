@@ -14,7 +14,6 @@ from __future__ import annotations
 
 import json
 from datetime import UTC, datetime
-from pathlib import Path
 
 import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
@@ -114,7 +113,9 @@ async def test_post_run_creates_agent_run_and_returns_202(runs_client, monkeypat
     assert "agent_run_id" in body
 
     # AgentRun row exists in PENDING/RUNNING
-    ar = (await session.execute(select(AgentRun).where(AgentRun.id == body["agent_run_id"]))).scalar_one()
+    ar = (
+        await session.execute(select(AgentRun).where(AgentRun.id == body["agent_run_id"]))
+    ).scalar_one()
     assert ar.agent_name == "runner"
     assert ar.strategy_id == proposed_id
 
@@ -128,7 +129,7 @@ async def test_post_run_unknown_strategy_404(runs_client):
 
 
 async def test_post_analyze_returns_202_when_results_present(runs_client, monkeypatch):
-    client, session, _, backtested_id, _ = runs_client
+    client, _session, _, backtested_id, _ = runs_client
     captured = []
 
     async def fake_run_analyst(strategy_id: int):

@@ -100,7 +100,7 @@ class PluginPlan(BaseModel):
     expected_test_names: list[str] = Field(min_length=3)
 
 
-class PluginPlannerFailed(RuntimeError):
+class PluginPlannerError(RuntimeError):
     """PluginPlanner cannot produce a valid PluginPlan (phase mismatch, slug
     collision, schema validation, or wrapper errors)."""
 
@@ -185,7 +185,7 @@ class PluginPlanner:
     ) -> PlannerRunResult:
         sidecar_phase = sidecar.get("phase")
         if sidecar_phase not in _PHASE_MAPPING:
-            raise PluginPlannerFailed(
+            raise PluginPlannerError(
                 f"unknown sidecar phase: {sidecar_phase!r}; "
                 f"expected one of {sorted(_PHASE_MAPPING)}"
             )
@@ -194,7 +194,7 @@ class PluginPlanner:
         try:
             system_prompt = self.prompt_path.read_text(encoding="utf-8")
         except OSError as exc:
-            raise PluginPlannerFailed(
+            raise PluginPlannerError(
                 f"prompt-doc not readable at {self.prompt_path}: {exc}"
             ) from exc
 
@@ -217,19 +217,19 @@ class PluginPlanner:
         try:
             result = await agent.run(user_prompt)
         except (ValidationError, UnexpectedModelBehavior) as exc:
-            raise PluginPlannerFailed(f"plan schema validation failed: {exc}") from exc
+            raise PluginPlannerError(f"plan schema validation failed: {exc}") from exc
         latency_ms = int((time.monotonic() - t0) * 1000)
 
         plan = result.output
 
         if plan.phase != expected_phase:
-            raise PluginPlannerFailed(
+            raise PluginPlannerError(
                 f"phase mismatch: sidecar phase {sidecar_phase!r} maps to "
                 f"{expected_phase!r}, plan emitted {plan.phase!r}"
             )
 
         if _slug_in_catalog(plan.slug, catalog):
-            raise PluginPlannerFailed(
+            raise PluginPlannerError(
                 f"slug collision: {plan.slug!r} already exists in the catalog"
             )
 

@@ -4,7 +4,7 @@ Covers:
 - happy path round 1
 - recover-from-syntax-error round 1 → success round 2
 - recover-from-contract-error round 1 → success round 2
-- exhaust max_rounds → PluginImplementerFailed with last_code + last_err
+- exhaust max_rounds → PluginImplementerError with last_code + last_err
 - last_err appears in round-N prompt
 - last_code appears in round-N prompt
 - max_rounds respects settings env override
@@ -21,9 +21,8 @@ from pydantic_ai.messages import ModelResponse, ToolCallPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 
 from fwbg_agents.agents.plugin_implementer import (
-    ContractCheck,
     PluginImplementer,
-    PluginImplementerFailed,
+    PluginImplementerError,
     _render_implementer_prompt,
     contract_check,
     implementer_model,
@@ -286,7 +285,7 @@ async def test_implementer_exhausts_max_rounds():
     bad = _result_args(code=_WRONG_CLASS_CODE)
     impl = PluginImplementer(model=_stateful_model(bad, bad, bad), max_rounds=3)
 
-    with pytest.raises(PluginImplementerFailed) as exc_info:
+    with pytest.raises(PluginImplementerError) as exc_info:
         await impl.run_implement(plan=plan)
 
     err = exc_info.value
@@ -362,7 +361,7 @@ async def test_implementer_respects_settings_max_rounds(monkeypatch):
     impl = PluginImplementer(model=_stateful_model(bad, bad))
     assert impl.max_rounds == 2
 
-    with pytest.raises(PluginImplementerFailed) as exc_info:
+    with pytest.raises(PluginImplementerError) as exc_info:
         await impl.run_implement(plan=plan)
 
     assert len(exc_info.value.llm_calls) == 2

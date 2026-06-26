@@ -39,6 +39,14 @@ from fwbg_agents.orchestrator.plugin_catalog import (
     PluginManifest,
     _load_fwbg_cached,
 )
+from fwbg_agents.persistence.database import Base
+from fwbg_agents.persistence.models import (
+    AgentRun,
+    AgentRunStatus,
+    LlmCall,
+    Strategy,
+    StrategyState,
+)
 
 
 def _stub_model(tool_name: str, args: dict) -> FunctionModel:
@@ -48,14 +56,6 @@ def _stub_model(tool_name: str, args: dict) -> FunctionModel:
         return ModelResponse(parts=[ToolCallPart(tool_name, args)])
 
     return FunctionModel(handler)
-from fwbg_agents.persistence.database import Base
-from fwbg_agents.persistence.models import (
-    AgentRun,
-    AgentRunStatus,
-    LlmCall,
-    Strategy,
-    StrategyState,
-)
 
 
 @pytest_asyncio.fixture
@@ -116,7 +116,11 @@ async def test_analyst_returns_promote(db_and_backtested):
     SessionMaker, strategy_id, _ = db_and_backtested
     test_model = _stub_model(
         "final_result_Promote",
-        {"kind": "promote", "confidence": 0.9, "reasoning": "metrics clear the criteria across the board"},
+        {
+            "kind": "promote",
+            "confidence": 0.9,
+            "reasoning": "metrics clear the criteria across the board",
+        },
     )
     async with SessionMaker() as session:
         s = (await session.execute(select(Strategy).where(Strategy.id == strategy_id))).scalar_one()

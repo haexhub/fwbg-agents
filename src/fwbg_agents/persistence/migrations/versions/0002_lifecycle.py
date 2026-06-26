@@ -12,7 +12,6 @@ additions (per design section 5) do not require schema migrations.
 from collections.abc import Sequence
 
 import sqlalchemy as sa
-
 from alembic import op
 
 revision: str = "0002"

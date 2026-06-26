@@ -21,12 +21,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from fwbg_agents.agents.plugin_evaluator import PluginEvaluator
 from fwbg_agents.agents.plugin_implementer import (
     PluginImplementer,
-    PluginImplementerFailed,
+    PluginImplementerError,
 )
 from fwbg_agents.agents.plugin_planner import (
     LlmCallMeta,
     PluginPlanner,
-    PluginPlannerFailed,
+    PluginPlannerError,
 )
 from fwbg_agents.agents.translator import Translator
 from fwbg_agents.config import settings
@@ -50,8 +50,8 @@ class AuthorPluginPreconditionError(RuntimeError):
     """422 from POST /strategies/{id}/author-plugin."""
 
 
-class PluginAuthorFailed(RuntimeError):
-    """Wraps PluginPlannerFailed or PluginImplementerFailed for the API layer."""
+class PluginAuthorError(RuntimeError):
+    """Wraps PluginPlannerError or PluginImplementerError for the API layer."""
 
 
 class EvaluatePluginPreconditionError(RuntimeError):
@@ -164,7 +164,7 @@ async def author_plugin_from_strategy(
     Persists two AgentRun rows ("plugin_planner", "plugin_implementer") with N
     LlmCall children under the implementer-run for the refinement loop.
 
-    Returns the new plugin.id on success; raises PluginAuthorFailed on
+    Returns the new plugin.id on success; raises PluginAuthorError on
     planner or implementer failure (both AgentRuns are marked FAILED with
     appropriate error messages so the post-mortem trail is intact).
     """
@@ -208,11 +208,11 @@ async def author_plugin_from_strategy(
         planner_result = await planner.run_plan(
             parent_strategy=strategy, sidecar=sidecar, catalog=catalog
         )
-    except PluginPlannerFailed as exc:
+    except PluginPlannerError as exc:
         await _finish_agent_run(
             session, planner_ar, status=AgentRunStatus.FAILED, error=str(exc)
         )
-        raise PluginAuthorFailed(f"planner failed: {exc}") from exc
+        raise PluginAuthorError(f"planner failed: {exc}") from exc
     except Exception as exc:  # belt-and-suspenders for unexpected
         await _finish_agent_run(
             session, planner_ar, status=AgentRunStatus.FAILED, error=str(exc)
@@ -238,7 +238,7 @@ async def author_plugin_from_strategy(
     try:
         implementer = PluginImplementer(model=implementer_model)
         impl_result = await implementer.run_implement(plan=plan)
-    except PluginImplementerFailed as exc:
+    except PluginImplementerError as exc:
         for meta in exc.llm_calls:
             await _persist_llm_call(session, impl_ar, meta)
         # Stash last attempted code on disk for post-mortem.
@@ -255,7 +255,7 @@ async def author_plugin_from_strategy(
             error=exc.last_err or str(exc),
             output_artifact_path=last_code_path,
         )
-        raise PluginAuthorFailed(f"implementer failed: {exc}") from exc
+        raise PluginAuthorError(f"implementer failed: {exc}") from exc
     except Exception as exc:
         await _finish_agent_run(
             session, impl_ar, status=AgentRunStatus.FAILED, error=str(exc)
@@ -280,7 +280,7 @@ async def author_plugin_from_strategy(
             status=AgentRunStatus.FAILED,
             error=f"slug {output.slug!r} already taken by plugin id={existing.id}",
         )
-        raise PluginAuthorFailed(
+        raise PluginAuthorError(
             f"slug {output.slug!r} already exists as plugin id={existing.id}"
         )
 
@@ -459,7 +459,7 @@ async def lookup_plugin_capability(
 __all__ = [
     "AuthorPluginPreconditionError",
     "EvaluatePluginPreconditionError",
-    "PluginAuthorFailed",
+    "PluginAuthorError",
     "ReiterateWithPluginPreconditionError",
     "author_plugin_from_strategy",
     "evaluate_plugin",

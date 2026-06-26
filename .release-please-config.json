@@ -10,13 +10,7 @@
       "package-name": "",
       "changelog-path": "CHANGELOG.md",
       "draft": false,
-      "prerelease": false,
-      "extra-files": [
-        {
-          "type": "python",
-          "path": "src/fwbg_agents/__init__.py"
-        }
-      ]
+      "prerelease": false
     }
   }
 }

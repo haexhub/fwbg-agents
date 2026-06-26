@@ -24,7 +24,7 @@ async def healthz_db() -> dict[str, object]:
             result = await conn.execute(text("SELECT 1"))
             row = result.scalar_one()
         return {"status": "ok", "result": row}
-    except Exception as e:  # noqa: BLE001
+    except Exception as e:
         return {"status": "error", "error": str(e)}
 
 
@@ -34,5 +34,5 @@ async def healthz_proxy() -> dict[str, object]:
     try:
         result = await llm_ping()
         return {"status": "ok", **result}
-    except Exception as e:  # noqa: BLE001
+    except Exception as e:
         return {"status": "error", "error": str(e)}

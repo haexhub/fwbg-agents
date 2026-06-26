@@ -17,7 +17,6 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from fwbg_agents.main import app
 from fwbg_agents.persistence.database import Base, get_session
 from fwbg_agents.persistence.models import (
-    EntityType,
     Strategy,
     StrategyState,
     StrategyTag,
@@ -66,7 +65,7 @@ _BASE_BODY = {
 
 
 async def test_post_strategy_creates_row_in_proposed(client_with_db):
-    client, session, tmp_path = client_with_db
+    client, session, _tmp_path = client_with_db
     r = await client.post("/strategies", json=_BASE_BODY)
     assert r.status_code == 201, r.text
     body = r.json()
@@ -74,7 +73,9 @@ async def test_post_strategy_creates_row_in_proposed(client_with_db):
     assert body["current_state"] == StrategyState.PROPOSED.value
     assert body["iteration_dir"].endswith("iteration_001")
 
-    row = (await session.execute(select(Strategy).where(Strategy.slug == "demo_orb_v1"))).scalar_one()
+    row = (
+        await session.execute(select(Strategy).where(Strategy.slug == "demo_orb_v1"))
+    ).scalar_one()
     assert row.current_state == StrategyState.PROPOSED.value
     assert row.asset_class == "INDEX"
     assert row.strategy_family == "ORB"
