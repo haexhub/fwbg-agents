@@ -93,8 +93,10 @@ class _TranslatorOutput(BaseModel):
     optimization: dict = {}
 
 
-def _render_prompt(template: str, *, hypothesis_json: str) -> str:
-    return template.replace("{{ hypothesis_json }}", hypothesis_json)
+def _render_prompt(template: str, *, hypothesis_json: str, known_plugins_json: str) -> str:
+    return template.replace("{{ hypothesis_json }}", hypothesis_json).replace(
+        "{{ known_plugins_json }}", known_plugins_json
+    )
 
 
 def _known_plugins_dict() -> dict[str, list[str]]:
@@ -176,7 +178,9 @@ class Translator:
 
             template = self.prompt_path.read_text()
             system_prompt = _render_prompt(
-                template, hypothesis_json=json.dumps(hypothesis_data, indent=2)
+                template,
+                hypothesis_json=json.dumps(hypothesis_data, indent=2),
+                known_plugins_json=json.dumps(_known_plugins_dict(), indent=2),
             )
 
             agent: Agent[None, _TranslatorOutput] = Agent(
