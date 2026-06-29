@@ -32,7 +32,7 @@ from pydantic_ai.models import Model
 
 from fwbg_agents.orchestrator.criteria_paper import CriteriaEvalResult
 from fwbg_agents.tools.fwbg_paper_reader import PaperPositions, PaperTradeSummary
-from fwbg_agents.tools.llm import default_model
+from fwbg_agents.tools.llm import model_for, prompt_path_for
 
 # ---------------------------------------------------------------------------
 # Discriminated-union output schema
@@ -79,8 +79,10 @@ class PaperAnalyst:
         model: Model | None = None,
         prompt_path: Path | None = None,
     ):
-        self.model = model if model is not None else default_model()
-        self.prompt_path = prompt_path if prompt_path is not None else _PROMPT_PATH
+        self.model = model if model is not None else model_for("paper_analyst")
+        self.prompt_path = (
+            prompt_path if prompt_path is not None else prompt_path_for("paper_analyst", _PROMPT_PATH)
+        )
 
     def analyze_sync(
         self,

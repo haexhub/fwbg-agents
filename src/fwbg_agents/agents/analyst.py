@@ -36,7 +36,7 @@ from fwbg_agents.persistence.models import (
     LlmCall,
     Strategy,
 )
-from fwbg_agents.tools.llm import default_model
+from fwbg_agents.tools.llm import model_for, prompt_path_for
 
 log = logging.getLogger(__name__)
 
@@ -182,8 +182,8 @@ class Analyst:
         prompt_path: Path | None = None,
     ):
         self.session = session
-        self.model = model if model is not None else default_model()
-        self.prompt_path = prompt_path or _PROMPT_PATH
+        self.model = model if model is not None else model_for("analyst")
+        self.prompt_path = prompt_path or prompt_path_for("analyst", _PROMPT_PATH)
 
     async def analyze(self, strategy: Strategy) -> AnalystRecommendation:
         now = datetime.now(UTC)
