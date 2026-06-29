@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.3.1](https://github.com/haexhub/fwbg-agents/compare/v0.3.0...v0.3.1) (2026-06-29)
+
+
+### Bug Fixes
+
+* slim agents Docker image (1.47 GB → 877 MB) ([1a836d4](https://github.com/haexhub/fwbg-agents/commit/1a836d40df5739ea4972c92377f09265c5ae912b))
+* slim agents Docker image via multi-stage build + uv cache mount ([a9bcf1d](https://github.com/haexhub/fwbg-agents/commit/a9bcf1d88b24aa5dd1648c10fa7c0ad50edb25ae))
+
 ## [0.3.0](https://github.com/haexhub/fwbg-agents/compare/v0.2.0...v0.3.0) (2026-06-29)
 
 
