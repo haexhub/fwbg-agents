@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.3.0](https://github.com/haexhub/fwbg-agents/compare/v0.2.0...v0.3.0) (2026-06-29)
+
+
+### Features
+
+* per-agent LLM model + persona configuration ([#13](https://github.com/haexhub/fwbg-agents/issues/13)) ([c404ed9](https://github.com/haexhub/fwbg-agents/commit/c404ed9c9be8c4dc6245d79a725828a8f204ec24))
+
+
+### Bug Fixes
+
+* surface plugin catalog + model-knowledge source fallback in prompts ([#12](https://github.com/haexhub/fwbg-agents/issues/12)) ([5b14cfe](https://github.com/haexhub/fwbg-agents/commit/5b14cfef506fd4bc0d3a425a7f9efdc4ef4ee7f3))
+
 ## [0.2.0](https://github.com/haexhub/fwbg-agents/compare/v0.1.0...v0.2.0) (2026-06-26)
 
 
