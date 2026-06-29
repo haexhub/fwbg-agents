@@ -30,6 +30,7 @@ from fwbg_agents.agents.plugin_authoring_shared import (
 from fwbg_agents.config import settings
 from fwbg_agents.orchestrator.plugin_catalog import PluginCatalog
 from fwbg_agents.persistence.models import Strategy
+from fwbg_agents.tools.llm import model_for, prompt_path_for
 
 log = logging.getLogger(__name__)
 
@@ -173,8 +174,8 @@ class PluginPlanner:
         model: Model | None = None,
         prompt_path: Path | None = None,
     ) -> None:
-        self.model = model if model is not None else planner_model()
-        self.prompt_path = prompt_path or _PROMPT_PATH
+        self.model = model if model is not None else model_for("plugin_planner")
+        self.prompt_path = prompt_path or prompt_path_for("plugin_planner", _PROMPT_PATH)
 
     async def run_plan(
         self,

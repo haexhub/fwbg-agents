@@ -50,7 +50,7 @@ from fwbg_agents.persistence.models import (
     StrategyTag,
     Transition,
 )
-from fwbg_agents.tools.llm import default_model
+from fwbg_agents.tools.llm import model_for, prompt_path_for
 
 log = logging.getLogger(__name__)
 
@@ -93,8 +93,10 @@ class _TranslatorOutput(BaseModel):
     optimization: dict = {}
 
 
-def _render_prompt(template: str, *, hypothesis_json: str) -> str:
-    return template.replace("{{ hypothesis_json }}", hypothesis_json)
+def _render_prompt(template: str, *, hypothesis_json: str, known_plugins_json: str) -> str:
+    return template.replace("{{ hypothesis_json }}", hypothesis_json).replace(
+        "{{ known_plugins_json }}", known_plugins_json
+    )
 
 
 def _known_plugins_dict() -> dict[str, list[str]]:
@@ -148,8 +150,8 @@ class Translator:
         prompt_path: Path | None = None,
     ):
         self.session = session
-        self.model = model if model is not None else default_model()
-        self.prompt_path = prompt_path or _PROMPT_PATH
+        self.model = model if model is not None else model_for("translator")
+        self.prompt_path = prompt_path or prompt_path_for("translator", _PROMPT_PATH)
 
     async def run_fresh(self, strategy: Strategy) -> Path:
         now = datetime.now(UTC)
@@ -176,7 +178,9 @@ class Translator:
 
             template = self.prompt_path.read_text()
             system_prompt = _render_prompt(
-                template, hypothesis_json=json.dumps(hypothesis_data, indent=2)
+                template,
+                hypothesis_json=json.dumps(hypothesis_data, indent=2),
+                known_plugins_json=json.dumps(_known_plugins_dict(), indent=2),
             )
 
             agent: Agent[None, _TranslatorOutput] = Agent(

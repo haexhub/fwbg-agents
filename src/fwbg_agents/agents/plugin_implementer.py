@@ -33,6 +33,7 @@ from fwbg_agents.agents.plugin_authoring_shared import (
 )
 from fwbg_agents.agents.plugin_planner import LlmCallMeta, PluginPlan
 from fwbg_agents.config import settings
+from fwbg_agents.tools.llm import model_for, prompt_path_for
 
 log = logging.getLogger(__name__)
 
@@ -245,11 +246,11 @@ class PluginImplementer:
         max_rounds: int | None = None,
         prompt_path: Path | None = None,
     ) -> None:
-        self.model = model if model is not None else implementer_model()
+        self.model = model if model is not None else model_for("plugin_implementer")
         self.max_rounds = (
             max_rounds if max_rounds is not None else settings.plugin_impl_max_rounds
         )
-        self.prompt_path = prompt_path or _PROMPT_PATH
+        self.prompt_path = prompt_path or prompt_path_for("plugin_implementer", _PROMPT_PATH)
 
     async def run_implement(self, *, plan: PluginPlan) -> ImplementerRunResult:
         try:
