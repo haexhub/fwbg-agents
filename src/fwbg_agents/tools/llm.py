@@ -6,19 +6,67 @@ Other providers (OpenAI, Gemini) can be plugged in per-agent when cost or
 capability tradeoffs justify it.
 """
 
+from pathlib import Path
+
 from pydantic_ai.models.anthropic import AnthropicModel
 from pydantic_ai.providers.anthropic import AnthropicProvider
 
 from fwbg_agents.config import settings
 
+# Claude models selectable per agent via /agents/config. All route through the
+# same haex-claude-proxy, so no extra API keys are needed to switch between them.
+AVAILABLE_CLAUDE_MODELS: tuple[str, ...] = (
+    "claude-opus-4-8",
+    "claude-opus-4-7",
+    "claude-sonnet-4-6",
+    "claude-haiku-4-5",
+)
 
-def default_model() -> AnthropicModel:
-    """Claude via haex-claude-proxy."""
+
+def _build_model(model_name: str) -> AnthropicModel:
     provider = AnthropicProvider(
         base_url=settings.anthropic_base_url,
         api_key=settings.anthropic_api_key,
     )
-    return AnthropicModel(model_name=settings.anthropic_model, provider=provider)
+    return AnthropicModel(model_name=model_name, provider=provider)
+
+
+def role_default_model(agent_name: str) -> str:
+    """Built-in default model for an agent, before any runtime override.
+
+    Preserves the historical per-role split (Planner stronger, Implementer
+    weaker); everything else falls back to the global ``anthropic_model``.
+    """
+    if agent_name == "plugin_planner":
+        return settings.plugin_planner_model
+    if agent_name == "plugin_implementer":
+        return settings.plugin_implementer_model
+    return settings.anthropic_model
+
+
+def model_name_for(agent_name: str) -> str:
+    """Effective model name: runtime override if set, else the role default."""
+    from fwbg_agents.tools import agent_config
+
+    return agent_config.get_model_override(agent_name) or role_default_model(agent_name)
+
+
+def model_for(agent_name: str) -> AnthropicModel:
+    """Anthropic model for a given agent, honoring its runtime override."""
+    return _build_model(model_name_for(agent_name))
+
+
+def prompt_path_for(agent_name: str, default_path: Path) -> Path:
+    """Override persona file if one exists on disk, else the bundled default."""
+    from fwbg_agents.tools import agent_config
+
+    override = agent_config.prompt_override_path(agent_name)
+    return override if override.is_file() else default_path
+
+
+def default_model() -> AnthropicModel:
+    """Claude via haex-claude-proxy (global default model)."""
+    return _build_model(settings.anthropic_model)
 
 
 async def ping() -> dict[str, object]:

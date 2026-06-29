@@ -188,15 +188,18 @@ def _stub_implementer_model() -> FunctionModel:
 
 
 def _patch_factories_to_use_stubs() -> None:
-    """Monkey-patch the M5d planner+implementer model factories so the smoke
-    drives the real Planner -> Implementer flow without an LLM."""
+    """Monkey-patch the planner+implementer model resolver so the smoke
+    drives the real Planner -> Implementer flow without an LLM.
+
+    The agents resolve their model via ``tools.llm.model_for()``, imported into
+    each agent module's namespace; patch that seam so the stub reaches them."""
     from fwbg_agents.agents import plugin_implementer as pi
     from fwbg_agents.agents import plugin_planner as pp
 
     planner_stub = _stub_planner_model()
     implementer_stub = _stub_implementer_model()
-    pp.planner_model = lambda: planner_stub
-    pi.implementer_model = lambda: implementer_stub
+    pp.model_for = lambda _agent_name: planner_stub
+    pi.model_for = lambda _agent_name: implementer_stub
 
 
 async def _wait_for_run(agent_run_id: int, deadline_s: float = DEADLINE_S) -> AgentRun:

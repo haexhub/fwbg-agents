@@ -36,7 +36,7 @@ from fwbg_agents.persistence.models import (
     AgentRunStatus,
     LlmCall,
 )
-from fwbg_agents.tools.llm import default_model
+from fwbg_agents.tools.llm import model_for, prompt_path_for
 from fwbg_agents.tools.search import SearchProvider, SearchResult, SearchUnavailableError
 
 log = logging.getLogger(__name__)
@@ -72,9 +72,9 @@ class Researcher:
         prompt_path: Path | None = None,
     ):
         self.session = session
-        self.model = model if model is not None else default_model()
+        self.model = model if model is not None else model_for("researcher")
         self.search_client = search_client
-        self.prompt_path = prompt_path or _PROMPT_PATH
+        self.prompt_path = prompt_path or prompt_path_for("researcher", _PROMPT_PATH)
 
     async def run(self, input: ResearcherInput) -> ResearcherHypothesis:
         now = datetime.now(UTC)

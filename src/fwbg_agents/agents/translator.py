@@ -50,7 +50,7 @@ from fwbg_agents.persistence.models import (
     StrategyTag,
     Transition,
 )
-from fwbg_agents.tools.llm import default_model
+from fwbg_agents.tools.llm import model_for, prompt_path_for
 
 log = logging.getLogger(__name__)
 
@@ -150,8 +150,8 @@ class Translator:
         prompt_path: Path | None = None,
     ):
         self.session = session
-        self.model = model if model is not None else default_model()
-        self.prompt_path = prompt_path or _PROMPT_PATH
+        self.model = model if model is not None else model_for("translator")
+        self.prompt_path = prompt_path or prompt_path_for("translator", _PROMPT_PATH)
 
     async def run_fresh(self, strategy: Strategy) -> Path:
         now = datetime.now(UTC)

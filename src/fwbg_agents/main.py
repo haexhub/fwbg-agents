@@ -7,7 +7,16 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from fwbg_agents import __version__
-from fwbg_agents.api import criteria, events, health, plugins, research, runs, strategies
+from fwbg_agents.api import (
+    agents_config,
+    criteria,
+    events,
+    health,
+    plugins,
+    research,
+    runs,
+    strategies,
+)
 from fwbg_agents.config import settings
 from fwbg_agents.persistence.database import engine
 
@@ -46,3 +55,4 @@ app.include_router(strategies.router)
 app.include_router(plugins.router)
 app.include_router(runs.router)
 app.include_router(research.router)
+app.include_router(agents_config.router)
