@@ -81,7 +81,9 @@ class PaperAnalyst:
     ):
         self.model = model if model is not None else model_for("paper_analyst")
         self.prompt_path = (
-            prompt_path if prompt_path is not None else prompt_path_for("paper_analyst", _PROMPT_PATH)
+            prompt_path
+            if prompt_path is not None
+            else prompt_path_for("paper_analyst", _PROMPT_PATH)
         )
 
     def analyze_sync(
