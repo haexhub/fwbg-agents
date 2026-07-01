@@ -275,6 +275,30 @@ async def test_runner_falls_back_when_symbol_has_no_data(runner_env):
     assert starts[0][2]["asset_classes"] == ["FOREX"]
 
 
+async def test_runner_keeps_class_when_symbol_of_same_rung_has_no_data(runner_env):
+    # A "suggested" rung naming both a symbol and a class should still run on
+    # the class when the symbol has no data — not skip the whole rung.
+    SessionMaker, make_strategy, _tmp = runner_env
+    sid = await make_strategy(
+        asset_class="INDEX",
+        suggested_universe=[
+            {"scope": "symbol", "value": "XYZ", "rationale": "x"},
+            {"scope": "asset_class", "value": "FOREX", "rationale": "y"},
+        ],
+    )
+    fake = FakeFwbgClient(
+        ensure_responses={"XYZ": FwbgClientError(404, "No data available for 'XYZ'")},
+    )
+
+    result = await _run(SessionMaker, sid, fake)
+
+    assert result.universe["label"] == "suggested"
+    starts = fake.calls_of("start_run")
+    assert len(starts) == 1
+    assert starts[0][2]["assets"] is None          # dataless symbol dropped
+    assert starts[0][2]["asset_classes"] == ["FOREX"]  # class portion still ran
+
+
 async def test_runner_falls_back_on_empty_metrics(runner_env):
     SessionMaker, make_strategy, _tmp = runner_env
     sid = await make_strategy(

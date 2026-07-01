@@ -153,13 +153,15 @@ class Runner:
 
             for attempt in attempts:
                 assets = await self._resolve_assets(attempt, tf_by_symbol)
-                if assets is None and attempt.assets:
-                    # Attempt was symbol-only and no symbol had data — broaden.
+                asset_classes = list(attempt.asset_classes) if attempt.asset_classes else None
+                if assets is None and attempt.assets and asset_classes is None:
+                    # Rung was symbol-only and no symbol had data — nothing to
+                    # run, so broaden. (A rung that also names classes still runs
+                    # on those, dropping only the dataless symbols.)
                     last_reason = f"no data for suggested symbols {list(attempt.assets)}"
                     log.info("runner: %s; falling back", last_reason)
                     continue
 
-                asset_classes = list(attempt.asset_classes) if attempt.asset_classes else None
                 log.info(
                     "runner: attempt %r for %s (assets=%s, asset_classes=%s)",
                     attempt.label, strategy.slug, assets, asset_classes,
