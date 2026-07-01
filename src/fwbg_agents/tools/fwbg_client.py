@@ -76,3 +76,13 @@ class FwbgClient:
 
     async def get_run(self, run_id: str) -> dict[str, Any]:
         return await self._get(f"/api/runs/{run_id}")
+
+    async def get_asset_classes(self) -> list[str]:
+        """Return the list of known asset class strings from fwbg's registry."""
+        data = await self._get("/api/assets/classes")
+        return data.get("classes", [])
+
+    async def get_assets(self) -> list[dict[str, Any]]:
+        """Return all assets with symbol/asset_class/currencies from fwbg's registry."""
+        data = await self._get("/api/assets")
+        return data.get("assets", [])

@@ -31,7 +31,9 @@ from fwbg_agents.persistence.models import (
     Strategy,
     StrategyState,
 )
+from fwbg_agents.tools.fwbg_client import FwbgClient, FwbgClientError
 from fwbg_agents.tools.search import BraveClient, FallbackSearchClient, TavilyClient
+from fwbg_agents.tools.secrets import get_secret
 
 log = logging.getLogger(__name__)
 
@@ -50,8 +52,8 @@ async def _run_research_background(input: ResearcherInput, agent_run_id: int) ->
         ).scalar_one()
         ar.status = AgentRunStatus.RUNNING.value
         await session.commit()
-        tavily = TavilyClient(api_key=settings.tavily_api_key)
-        brave = BraveClient(api_key=settings.brave_api_key)
+        tavily = TavilyClient(api_key=get_secret("tavily"))
+        brave = BraveClient(api_key=get_secret("brave"))
         search_client = FallbackSearchClient([tavily, brave])
         try:
             strategy_id = await research_and_translate(
@@ -118,7 +120,28 @@ async def post_research_brief(
     background_tasks: BackgroundTasks,
     session: AsyncSession = Depends(get_session),
 ) -> dict[str, Any]:
-    """Kick off Researcher → Translator. Returns the orchestration AgentRun id."""
+    """Kick off Researcher → Translator. Returns the orchestration AgentRun id.
+
+    If `asset_class` is provided it is validated against fwbg's asset registry
+    (GET /api/assets/classes). Unknown values are rejected with 422 so the
+    constrained vocabulary is enforced at intake, not at LLM time.
+    """
+    if body.asset_class is not None:
+        client = FwbgClient(base_url=settings.fwbg_api_url)
+        try:
+            known_classes = await client.get_asset_classes()
+        except FwbgClientError as exc:
+            raise HTTPException(502, f"could not reach fwbg asset registry: {exc}") from exc
+        finally:
+            await client.aclose()
+        if body.asset_class not in known_classes:
+            raise HTTPException(
+                422,
+                f"asset_class {body.asset_class!r} is not in fwbg's registry; "
+                f"valid values: {sorted(known_classes)}",
+            )
+
+    scope = body.asset_class if body.asset_class else "asset-agnostic"
     now = datetime.now(UTC)
     ar = AgentRun(
         agent_name="research_flow",
@@ -134,7 +157,7 @@ async def post_research_brief(
     return {
         "agent_run_id": ar.id,
         "status": "scheduled",
-        "message": f"researching {body.asset_class}; poll /agents/runs/{ar.id}",
+        "message": f"researching {scope}; poll /agents/runs/{ar.id}",
     }
 
 
@@ -216,6 +239,8 @@ async def list_hypotheses(
                 "parent_strategy_id": s.parent_strategy_id,
                 "hypothesis_path": s.hypothesis_path,
                 "spec_path": s.spec_path,
+                "suggested_universe": s.suggested_universe,
+                "model_knowledge_only": s.model_knowledge_only,
                 "created_at": s.created_at.isoformat() if s.created_at else None,
             }
             for s in rows

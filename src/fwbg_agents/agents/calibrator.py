@@ -36,27 +36,6 @@ from fwbg_agents.agents.criteria_defaults import (
 log = logging.getLogger(__name__)
 
 
-# Symbol -> asset class. Mirrors fwbg.data.assets.AssetRegistry.DEFAULT_ASSETS so
-# fwbg-agents does not need a runtime dependency on fwbg. Unknown symbols fall
-# back to FOREX (same behavior as AssetRegistry.get).
-SYMBOL_ASSET_CLASS: dict[str, str] = {
-    # FOREX - Majors
-    "EURUSD": "FOREX", "GBPUSD": "FOREX", "USDJPY": "FOREX", "USDCHF": "FOREX",
-    "USDCAD": "FOREX", "AUDUSD": "FOREX", "NZDUSD": "FOREX",
-    # FOREX - Crosses
-    "EURGBP": "FOREX", "EURCAD": "FOREX", "EURCHF": "FOREX", "EURNZD": "FOREX",
-    # Indices
-    "DAX": "INDEX", "DOW30": "INDEX", "SPX500": "INDEX", "NAS100": "INDEX",
-    "FTSE100": "INDEX", "EU50": "INDEX", "CAC40": "INDEX", "JP225": "INDEX",
-    "ASX200": "INDEX", "HK50": "INDEX",
-    # Commodities
-    "XAUUSD": "COMMODITY", "GOLD": "COMMODITY", "XAGUSD": "COMMODITY",
-    "SILVER": "COMMODITY", "BRENT": "COMMODITY",
-    # Crypto
-    "BTCUSD": "CRYPTO", "ETHUSD": "CRYPTO",
-}
-
-
 @dataclass
 class CalibrationResult:
     """Outcome of a single Calibrator pass."""
@@ -70,9 +49,9 @@ class CalibrationResult:
     preserved_criteria_files: list[Path] = field(default_factory=list)
 
 
-def classify_symbol(symbol: str) -> str:
-    """Return the asset class for `symbol`, defaulting to FOREX for unknowns."""
-    return SYMBOL_ASSET_CLASS.get(symbol.upper(), "FOREX")
+def _classify_symbol(symbol: str, asset_map: dict[str, str]) -> str:
+    """Return the asset class for `symbol` from fwbg's registry, defaulting to FOREX."""
+    return asset_map.get(symbol.upper(), "FOREX")
 
 
 def _safe_float(value: Any) -> float | None:
@@ -252,6 +231,7 @@ def _scan_run(run_dir: Path) -> list[dict[str, Any]]:
 
 def _build_baseline(
     test_results_dir: Path,
+    symbol_asset_class: dict[str, str],
 ) -> tuple[dict[str, dict[str, dict[str, float]]], int, int, dict[str, int]]:
     """Scan all runs, return per-class per-metric quantiles + counters."""
     per_class_metric_values: dict[str, dict[str, list[float]]] = {}
@@ -275,7 +255,7 @@ def _build_baseline(
             symbol = elite.get("symbol")
             if not isinstance(symbol, str):
                 continue
-            asset_class = classify_symbol(symbol)
+            asset_class = _classify_symbol(symbol, symbol_asset_class)
             elite_counts[asset_class] = elite_counts.get(asset_class, 0) + 1
             metrics = _extract_metrics(elite, run_dir=run_dir)
             bucket = per_class_metric_values.setdefault(asset_class, {})
@@ -323,8 +303,13 @@ def _seed_criteria_yaml(asset_class: str, path: Path) -> None:
 def calibrate(
     test_results_dir: Path | None = None,
     criteria_dir: Path | None = None,
+    symbol_asset_class: dict[str, str] | None = None,
 ) -> CalibrationResult:
     """Run one calibration pass.
+
+    `symbol_asset_class` is a symbol→asset_class map fetched from fwbg's
+    /api/assets endpoint before calling this function. When None (e.g. fwbg
+    unreachable), classification falls back to "FOREX" for every symbol.
 
     Effects:
     - Always refreshes `<criteria_dir>/_calibration_baseline.json` from the
@@ -340,7 +325,7 @@ def calibrate(
     criteria_dir.mkdir(parents=True, exist_ok=True)
 
     quantiles_by_class, runs_scanned, runs_with_elite, elite_counts = _build_baseline(
-        test_results_dir
+        test_results_dir, symbol_asset_class or {}
     )
 
     ran_at = datetime.now(UTC)
