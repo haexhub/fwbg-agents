@@ -180,10 +180,17 @@ async def trigger_calibration() -> dict[str, Any]:
     client = FwbgClient(base_url=settings.fwbg_api_url)
     try:
         assets = await client.get_assets()
-        symbol_asset_class = {a["symbol"].upper(): a["asset_class"] for a in assets if "symbol" in a and "asset_class" in a}
+        symbol_asset_class = {
+            a["symbol"].upper(): a["asset_class"]
+            for a in assets
+            if "symbol" in a and "asset_class" in a
+        }
         log.info("calibrate: loaded %d symbol→class mappings from fwbg", len(symbol_asset_class))
     except FwbgClientError as exc:
-        log.warning("calibrate: could not reach fwbg asset registry (%s); classifying all as FOREX", exc)
+        log.warning(
+            "calibrate: could not reach fwbg asset registry (%s); classifying all as FOREX",
+            exc,
+        )
     finally:
         await client.aclose()
 

@@ -6,8 +6,6 @@ The API never returns actual key values, only set/not-set status.
 
 from __future__ import annotations
 
-from typing import Optional
-
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
@@ -21,8 +19,8 @@ class SecretsStatus(BaseModel):
 
 
 class SecretsUpdate(BaseModel):
-    tavily: Optional[str] = None
-    brave: Optional[str] = None
+    tavily: str | None = None
+    brave: str | None = None
 
 
 @router.get("/agents/secrets", response_model=SecretsStatus)
