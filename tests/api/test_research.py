@@ -68,6 +68,14 @@ async def test_post_research_brief_schedules_and_returns_202(research_client, mo
 
     monkeypatch.setattr(research_api, "_run_research_background", fake_run_research)
 
+    # Stub fwbg asset-registry — no live server needed.
+    class _FakeFwbgClient:
+        def __init__(self, base_url): pass
+        async def get_asset_classes(self): return ["FOREX", "INDEX", "COMMODITY", "CRYPTO"]
+        async def aclose(self): pass
+
+    monkeypatch.setattr(research_api, "FwbgClient", _FakeFwbgClient)
+
     r = await client.post(
         "/research/brief",
         json={"asset_class": "FOREX", "strategy_family_hint": "ORB"},

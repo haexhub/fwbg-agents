@@ -7,6 +7,7 @@ slug generator can be imported without pulling in pydantic-ai or LLM clients.
 from __future__ import annotations
 
 import re
+from typing import Literal
 
 from pydantic import BaseModel, Field
 from sqlalchemy import select
@@ -26,6 +27,20 @@ class Source(BaseModel):
     url: str
     title: str
     why_relevant: str
+    key_points: list[str] = Field(default_factory=list)
+
+
+class SuggestedUniverse(BaseModel):
+    """One entry in the Researcher's asset recommendation.
+
+    scope="asset_class" covers the whole class; scope="symbol" pins to one
+    instrument. `value` is validated against fwbg's vocabulary at persist time.
+    """
+
+    scope: Literal["symbol", "asset_class"]
+    value: str
+    timeframe: str | None = None
+    rationale: str
 
 
 class ResearcherHypothesis(BaseModel):
@@ -34,16 +49,24 @@ class ResearcherHypothesis(BaseModel):
     `differentiates_from` lists slugs of prior strategies this hypothesis
     deliberately deviates from. Required by `validate_hypothesis` whenever
     `lookup_prior_art` returned matches.
+
+    `asset_class` is optional — None means asset-agnostic research. When set,
+    it must match fwbg's controlled vocabulary (validated at API intake).
+
+    `model_knowledge_only` must be True when no web-search was available and
+    all sources come from training knowledge (url="n/a (model knowledge)").
     """
 
     title: str
-    asset_class: str
+    asset_class: str | None = None
     strategy_family: str
     hypothesis: str
     expected_edge_explanation: str
     key_indicators: list[str] = Field(min_length=1)
     tags: list[str] = Field(min_length=1)
     sources: list[Source] = Field(min_length=1)
+    suggested_universe: list[SuggestedUniverse] = Field(default_factory=list)
+    model_knowledge_only: bool = False
     differentiates_from: list[str] = Field(default_factory=list)
 
 
@@ -92,15 +115,16 @@ def _sanitize_asset_class(asset_class: str) -> str:
 async def generate_slug(
     session: AsyncSession,
     strategy_family: str,
-    asset_class: str,
+    asset_class: str | None,
 ) -> str:
     """Return next available `<family>__<asset>__<NNN>` slug, deterministically.
 
     Scans existing strategies for the same (family, asset_class) pair, finds the
     max NNN suffix, returns max+1 (or 001 if none). Unrelated slugs are ignored.
+    `asset_class=None` uses the segment "agnostic".
     """
     family = _sanitize_family(strategy_family)
-    asset = _sanitize_asset_class(asset_class)
+    asset = _sanitize_asset_class(asset_class) if asset_class else "agnostic"
     prefix = f"{family}__{asset}__"
 
     rows = (

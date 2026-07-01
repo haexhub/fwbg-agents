@@ -88,16 +88,35 @@ async def _generate_valid_hypothesis(
 
 
 def _render_research_notes(hypothesis: ResearcherHypothesis) -> str:
-    sources_md = "\n".join(
-        f"- [{s.title}]({s.url}) — {s.why_relevant}" for s in hypothesis.sources
-    )
+    def _source_md(s) -> str:
+        lines = [f"- [{s.title}]({s.url}) — {s.why_relevant}"]
+        for kp in s.key_points:
+            lines.append(f"  - {kp}")
+        return "\n".join(lines)
+
+    sources_md = "\n".join(_source_md(s) for s in hypothesis.sources)
     diff_md = (
         "\n".join(f"- {slug}" for slug in hypothesis.differentiates_from)
         or "_(no prior art surfaced)_"
     )
+    universe_md = (
+        "\n".join(
+            f"- **{u.scope}** `{u.value}`"
+            + (f" ({u.timeframe})" if u.timeframe else "")
+            + f" — {u.rationale}"
+            for u in hypothesis.suggested_universe
+        )
+        or "_(no specific universe suggested)_"
+    )
+    model_kb_note = (
+        "\n> ⚠️ Model-knowledge only — no live web search was available.\n"
+        if hypothesis.model_knowledge_only
+        else ""
+    )
     return (
         f"# Research Notes — {hypothesis.title}\n\n"
-        "## Hypothesis\n\n"
+        + model_kb_note
+        + "\n## Hypothesis\n\n"
         f"{hypothesis.hypothesis.strip()}\n\n"
         "## Expected Edge\n\n"
         f"{hypothesis.expected_edge_explanation.strip()}\n\n"
@@ -107,6 +126,8 @@ def _render_research_notes(hypothesis: ResearcherHypothesis) -> str:
         "## Tags\n\n"
         + ", ".join(f"`{t}`" for t in hypothesis.tags)
         + "\n\n"
+        "## Suggested Universe\n\n"
+        f"{universe_md}\n\n"
         "## Differentiates From\n\n"
         f"{diff_md}\n\n"
         "## Sources\n\n"
@@ -146,6 +167,8 @@ async def research_and_translate(
         iteration_count=1,
         asset_class=hypothesis.asset_class,
         strategy_family=hypothesis.strategy_family,
+        suggested_universe=[u.model_dump() for u in hypothesis.suggested_universe],
+        model_knowledge_only=hypothesis.model_knowledge_only,
         created_at=now,
         updated_at=now,
     )

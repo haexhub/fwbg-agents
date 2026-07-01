@@ -18,12 +18,10 @@ import pytest
 import yaml
 
 from fwbg_agents.agents.calibrator import (
-    SYMBOL_ASSET_CLASS,
     _compute_sortino,
     _extract_metrics,
     _quantiles,
     calibrate,
-    classify_symbol,
 )
 from fwbg_agents.agents.criteria_defaults import (
     default_criteria,
@@ -109,32 +107,12 @@ def fake_test_results(tmp_path: Path) -> Path:
 # ----- helpers / pure functions ----------------------------------------------
 
 
-def test_classify_symbol_known_and_unknown() -> None:
-    assert classify_symbol("EURUSD") == "FOREX"
-    assert classify_symbol("NAS100") == "INDEX"
-    assert classify_symbol("BTCUSD") == "CRYPTO"
-    assert classify_symbol("XAUUSD") == "COMMODITY"
-    # Unknown symbol falls back to FOREX (matches AssetRegistry.get default).
-    assert classify_symbol("WIBBLE") == "FOREX"
-    assert classify_symbol("eurusd") == "FOREX"
-
-
 def test_quantiles_distribution() -> None:
     q = _quantiles([1.0, 2.0, 3.0, 4.0])
     assert q is not None
     assert q["min"] == 1.0
     assert q["max"] == 4.0
     assert q["p50"] == pytest.approx(2.5)
-
-
-def test_known_asset_classes_match_symbol_table() -> None:
-    """Every asset class that appears in the symbol table must have defaults,
-    and vice versa — otherwise the seeding silently skips classes."""
-    classes_in_symbols = set(SYMBOL_ASSET_CLASS.values())
-    classes_in_defaults = set(known_asset_classes())
-    assert classes_in_symbols == classes_in_defaults, (
-        f"mismatch: symbols={classes_in_symbols} defaults={classes_in_defaults}"
-    )
 
 
 # ----- defaults shape --------------------------------------------------------
@@ -232,7 +210,13 @@ def test_calibrate_always_refreshes_baseline(fake_test_results: Path, tmp_path: 
     for ac in known_asset_classes():
         (criteria_dir / f"{ac}.yaml").write_text("backtest_to_paper: {}\npaper_to_live: {}\n")
 
-    result = calibrate(test_results_dir=fake_test_results, criteria_dir=criteria_dir)
+    # Provide the symbol→class map that fwbg would normally supply at runtime.
+    sym_map = {"EURUSD": "FOREX", "GBPUSD": "FOREX", "NAS100": "INDEX"}
+    result = calibrate(
+        test_results_dir=fake_test_results,
+        criteria_dir=criteria_dir,
+        symbol_asset_class=sym_map,
+    )
     assert result.seeded_criteria_files == []
     assert len(result.preserved_criteria_files) == len(known_asset_classes())
 

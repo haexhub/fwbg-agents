@@ -15,6 +15,7 @@ from datetime import datetime
 
 from sqlalchemy import (
     JSON,
+    Boolean,
     DateTime,
     ForeignKey,
     Integer,
@@ -128,7 +129,7 @@ class Strategy(Base):
     parent_strategy_id: Mapped[int | None] = mapped_column(
         Integer, ForeignKey("strategy.id"), nullable=True
     )
-    asset_class: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
+    asset_class: Mapped[str | None] = mapped_column(String(32), nullable=True, index=True)
     strategy_family: Mapped[str] = mapped_column(String(64), nullable=False)
     hypothesis_path: Mapped[str | None] = mapped_column(String(512), nullable=True)
     spec_path: Mapped[str | None] = mapped_column(String(512), nullable=True)
@@ -144,6 +145,10 @@ class Strategy(Base):
     )
     metadata_json: Mapped[dict] = mapped_column(
         "metadata_json", JSON, nullable=False, server_default="{}", default=dict
+    )
+    suggested_universe: Mapped[list | None] = mapped_column(JSON, nullable=True, default=None)
+    model_knowledge_only: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, server_default="0", default=False
     )
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
