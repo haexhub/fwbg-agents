@@ -200,7 +200,8 @@ async def test_runner_happy_path_transitions_to_backtested(runner_env):
     # artifacts on disk
     assert (tmp_path / "fwbg_strategies" / "demo_orb_v1__it001.json").is_file()
     results_path = (
-        tmp_path / "agents_data" / "strategies" / "demo_orb_v1" / "iteration_001" / "fwbg_results.json"
+        tmp_path / "agents_data" / "strategies" / "demo_orb_v1"
+        / "iteration_001" / "fwbg_results.json"
     )
     assert json.loads(results_path.read_text())["status"] == "completed"
 
@@ -359,7 +360,7 @@ async def test_runner_timeout_no_transition(runner_env, monkeypatch):
 
 
 async def test_runner_missing_strategy_json_raises(runner_env):
-    SessionMaker, make_strategy, tmp_path = runner_env
+    SessionMaker, make_strategy, _tmp = runner_env
     sid = await make_strategy(seed_json=False)
 
     async with SessionMaker() as session:

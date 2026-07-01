@@ -9,7 +9,7 @@ The ladder, most-specific first:
 
     1. "suggested"     — exactly the researcher's symbols + asset classes
     2. "class"         — drop the specific symbols, keep the classes
-                         (∪ the strategy's own asset_class if set)
+                         (plus the strategy's own asset_class if set)
     3. "unconstrained" — pass nothing; fwbg picks its default universe
 
 Levels that would duplicate an earlier one are skipped, so a strategy with no
@@ -89,7 +89,7 @@ def plan_universe_attempts(strategy) -> list[UniverseAttempt]:
     if symbols or classes:
         add(symbols, classes, "suggested")
 
-    # 2. broaden: drop specific symbols, keep classes ∪ the strategy's class
+    # 2. broaden: drop specific symbols, keep classes plus the strategy's class
     broadened = list(classes)
     if strategy.asset_class and strategy.asset_class not in broadened:
         broadened.append(strategy.asset_class)
