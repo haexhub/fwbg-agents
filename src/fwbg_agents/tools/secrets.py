@@ -12,6 +12,7 @@ Env-variable fallback mapping:
 
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 from pathlib import Path
@@ -45,6 +46,10 @@ def _save(data: dict[str, str]) -> None:
     path = _secrets_file()
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(data, indent=2, sort_keys=True), encoding="utf-8")
+    # Secrets file: restrict to owner read/write. Best-effort (no-op on
+    # filesystems that don't support POSIX permissions).
+    with contextlib.suppress(OSError):
+        path.chmod(0o600)
 
 
 def get_secret(key: str) -> str | None:

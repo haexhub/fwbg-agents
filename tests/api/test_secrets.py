@@ -115,3 +115,17 @@ async def test_get_secret_function_returns_none_when_unset(tmp_path, monkeypatch
     monkeypatch.delenv("BRAVE_API_KEY", raising=False)
 
     assert sec_mod.get_secret("brave") is None
+
+
+async def test_secrets_file_is_owner_only(tmp_path, monkeypatch):
+    """The secrets file must not be world-/group-readable."""
+    import stat
+
+    from fwbg_agents.config import settings
+    from fwbg_agents.tools import secrets as sec_mod
+
+    monkeypatch.setattr(settings, "data_dir", tmp_path)
+    sec_mod.set_secret("tavily", "tv-secret")
+
+    mode = stat.S_IMODE((tmp_path / "secrets.json").stat().st_mode)
+    assert mode == 0o600
