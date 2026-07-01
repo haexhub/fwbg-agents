@@ -65,6 +65,13 @@ class Settings(BaseSettings):
     runner_poll_interval_seconds: float = 5.0
     runner_poll_timeout_seconds: float = 60 * 60 * 2  # 2h hard cap per backtest
 
+    # On-demand data provisioning (fwbg POST /api/data/ensure, Phase 1c).
+    # The adaptive Runner ensures data for its suggested symbols before a
+    # backtest; a cold Dukascopy download can take a few minutes.
+    data_ensure_poll_interval_seconds: float = 2.0
+    data_ensure_timeout_seconds: float = 60 * 15  # 15 min per symbol download
+    default_timeframe: str = "HOUR_1"
+
     # Plugin authoring (M5d: Planner/Implementer split)
     plugin_planner_model: str = Field(
         default="claude-opus-4-8",
