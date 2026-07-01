@@ -15,6 +15,7 @@ from fwbg_agents.api import (
     plugins,
     research,
     runs,
+    secrets,
     strategies,
 )
 from fwbg_agents.config import settings
@@ -56,3 +57,4 @@ app.include_router(plugins.router)
 app.include_router(runs.router)
 app.include_router(research.router)
 app.include_router(agents_config.router)
+app.include_router(secrets.router)
