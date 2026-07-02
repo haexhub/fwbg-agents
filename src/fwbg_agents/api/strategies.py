@@ -12,6 +12,7 @@ import json
 import logging
 import re
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
@@ -72,6 +73,8 @@ def _serialize_strategy(s: Strategy, tags: list[str] | None = None) -> dict[str,
         "hypothesis_path": s.hypothesis_path,
         "spec_path": s.spec_path,
         "post_mortem_path": s.post_mortem_path,
+        "suggested_universe": s.suggested_universe,
+        "model_knowledge_only": s.model_knowledge_only,
         "tags": tags or [],
         "created_at": s.created_at.isoformat() if s.created_at else None,
         "updated_at": s.updated_at.isoformat() if s.updated_at else None,
@@ -193,6 +196,57 @@ async def get_strategy(
         "strategy": _serialize_strategy(s, tags=list(tags)),
         "transitions": [_serialize_transition(t) for t in transitions],
     }
+
+
+@router.get("/strategies/{strategy_id}/hypothesis")
+async def get_strategy_hypothesis(
+    strategy_id: int, session: AsyncSession = Depends(get_session)
+) -> dict[str, Any]:
+    """Return the researcher hypothesis JSON (sources, suggested_universe, ...).
+
+    The full hypothesis — including first-class ``sources`` with ``key_points``
+    and the ``suggested_universe`` rationale — is written to disk at
+    ``hypothesis_path`` by the research flow, not stored in the DB. This reads
+    and returns it so the dashboard can surface an edge's provenance.
+
+    404 if the strategy has no hypothesis on record or the file is gone. The
+    stored path is confined to the agents data dir before reading (defence
+    against a tampered DB row), even though it is system-written.
+    """
+    s = (
+        await session.execute(select(Strategy).where(Strategy.id == strategy_id))
+    ).scalar_one_or_none()
+    if s is None:
+        raise HTTPException(status_code=404, detail=f"strategy {strategy_id} not found")
+    if not s.hypothesis_path:
+        raise HTTPException(
+            status_code=404,
+            detail=f"strategy {strategy_id} has no hypothesis on record",
+        )
+
+    path = Path(s.hypothesis_path)
+    data_root = settings.data_dir.resolve()
+    try:
+        resolved = path.resolve()
+        resolved.relative_to(data_root)
+    except (ValueError, OSError) as exc:
+        raise HTTPException(
+            status_code=404,
+            detail="hypothesis path is outside the agents data directory",
+        ) from exc
+    if not resolved.is_file():
+        raise HTTPException(
+            status_code=404,
+            detail=f"hypothesis file missing on disk: {s.hypothesis_path}",
+        )
+    try:
+        content = json.loads(resolved.read_text())
+    except (OSError, ValueError) as exc:
+        raise HTTPException(
+            status_code=500, detail=f"could not read hypothesis file: {exc}"
+        ) from exc
+
+    return {"strategy_id": strategy_id, "slug": s.slug, "hypothesis": content}
 
 
 @router.get("/strategies/{strategy_id}/transitions")

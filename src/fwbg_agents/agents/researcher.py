@@ -49,14 +49,14 @@ class ResearcherError(RuntimeError):
 
 
 class ResearcherInput(BaseModel):
-    asset_class: str
+    asset_class: str | None = None
     strategy_family_hint: str | None = None
     free_text_brief: str | None = None
 
 
 def _render_prompt(template: str, *, input: ResearcherInput) -> str:
     out = template
-    out = out.replace("{{ asset_class }}", input.asset_class)
+    out = out.replace("{{ asset_class }}", input.asset_class or "(asset-agnostic)")
     out = out.replace("{{ strategy_family_hint }}", input.strategy_family_hint or "(none)")
     out = out.replace("{{ free_text_brief }}", input.free_text_brief or "(none)")
     return out

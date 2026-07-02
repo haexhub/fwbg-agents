@@ -22,6 +22,7 @@ from fwbg_agents.agents.calibrator import CalibrationResult, calibrate
 from fwbg_agents.config import settings
 from fwbg_agents.persistence.database import SessionLocal
 from fwbg_agents.persistence.models import CalibrationRun
+from fwbg_agents.tools.fwbg_client import FwbgClient, FwbgClientError
 
 log = logging.getLogger(__name__)
 
@@ -171,9 +172,31 @@ async def trigger_calibration() -> dict[str, Any]:
     deterministic — there is no progress to stream yet."""
     started_at = datetime.now(UTC)
     log.info("calibrate: starting at %s", started_at.isoformat())
+
+    # Fetch symbol→asset_class map from fwbg (single source of truth).
+    # If fwbg is unreachable we log a warning and proceed with an empty map
+    # (all symbols fall back to "FOREX") so calibration still runs.
+    symbol_asset_class: dict[str, str] = {}
+    client = FwbgClient(base_url=settings.fwbg_api_url)
+    try:
+        assets = await client.get_assets()
+        symbol_asset_class = {
+            a["symbol"].upper(): a["asset_class"]
+            for a in assets
+            if "symbol" in a and "asset_class" in a
+        }
+        log.info("calibrate: loaded %d symbol→class mappings from fwbg", len(symbol_asset_class))
+    except FwbgClientError as exc:
+        log.warning(
+            "calibrate: could not reach fwbg asset registry (%s); classifying all as FOREX",
+            exc,
+        )
+    finally:
+        await client.aclose()
+
     # Calibrator does plain file I/O; run it on the threadpool to keep the
     # event loop free if the test_results dir is large.
-    result = await asyncio.to_thread(calibrate)
+    result = await asyncio.to_thread(calibrate, symbol_asset_class=symbol_asset_class)
     run_id = await _persist_calibration(result)
     log.info(
         "calibrate: id=%d runs_scanned=%d runs_with_elite=%d asset_classes=%s",

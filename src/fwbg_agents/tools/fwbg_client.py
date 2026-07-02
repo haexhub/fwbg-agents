@@ -10,6 +10,10 @@ fwbg's API (see ~/Projekte/fwbg/src/fwbg/api/runs.py):
 - GET  /api/runs/{run_id}/progress
                                returns: {status, progress?, phase?, ...}
 - GET  /api/runs/{run_id}      returns: {run_id, status, assets, ...}
+- POST /api/data/ensure        body: {symbol, timeframe?, ...}
+                               returns: {status: ready|downloading, task_id?}
+- GET  /api/data/ensure/{task_id}
+                               returns: {status, ...}
 
 Strategy bodies are NOT accepted inline by fwbg — strategies must live on
 disk in fwbg's strategies_dir as `<strategy_name>.json`. The Runner writes
@@ -76,3 +80,40 @@ class FwbgClient:
 
     async def get_run(self, run_id: str) -> dict[str, Any]:
         return await self._get(f"/api/runs/{run_id}")
+
+    async def ensure_data(
+        self,
+        symbol: str,
+        *,
+        timeframe: str | None = None,
+        date_from: str | None = None,
+        date_to: str | None = None,
+    ) -> dict[str, Any]:
+        """Ask fwbg to guarantee OHLCV data for a symbol (POST /api/data/ensure).
+
+        Returns {"status": "ready", ...} if cached, or {"status": "downloading",
+        "task_id": ...} if a background download was started. Raises
+        FwbgClientError for an unknown/undownloadable symbol (404) or when no
+        CSV datasource is configured (503).
+        """
+        body: dict[str, Any] = {"symbol": symbol}
+        if timeframe is not None:
+            body["timeframe"] = timeframe
+        if date_from is not None:
+            body["date_from"] = date_from
+        if date_to is not None:
+            body["date_to"] = date_to
+        return await self._post("/api/data/ensure", body)
+
+    async def get_ensure_status(self, task_id: str) -> dict[str, Any]:
+        return await self._get(f"/api/data/ensure/{task_id}")
+
+    async def get_asset_classes(self) -> list[str]:
+        """Return the list of known asset class strings from fwbg's registry."""
+        data = await self._get("/api/assets/classes")
+        return data.get("classes", [])
+
+    async def get_assets(self) -> list[dict[str, Any]]:
+        """Return all assets with symbol/asset_class/currencies from fwbg's registry."""
+        data = await self._get("/api/assets")
+        return data.get("assets", [])
