@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.5.0](https://github.com/haexhub/fwbg-agents/compare/v0.4.0...v0.5.0) (2026-07-02)
+
+
+### Features
+
+* **events:** real SSE event bus + researcher progress events ([a775c4f](https://github.com/haexhub/fwbg-agents/commit/a775c4f5d81734d54b973d38b749fccc4106cef7))
+* **events:** real SSE event bus + researcher progress events ([412c657](https://github.com/haexhub/fwbg-agents/commit/412c657777a7eca83eaa2a723a66af9388d5fbd1))
+
+
+### Bug Fixes
+
+* **lint:** ruff E501/I001/SIM105/UP041 in events + researcher ([72271c7](https://github.com/haexhub/fwbg-agents/commit/72271c79493ea42dc93afc598562d71b3fa5a7ab))
+
 ## [0.4.0](https://github.com/haexhub/fwbg-agents/compare/v0.3.1...v0.4.0) (2026-07-02)
 
 
