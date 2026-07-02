@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.6.0](https://github.com/haexhub/fwbg-agents/compare/v0.5.0...v0.6.0) (2026-07-02)
+
+
+### Features
+
+* **research:** auto-start backtest after research_and_translate completes ([#31](https://github.com/haexhub/fwbg-agents/issues/31)) ([3143600](https://github.com/haexhub/fwbg-agents/commit/314360097c6f8684d30971a370c19412486bbf76))
+
 ## [0.5.0](https://github.com/haexhub/fwbg-agents/compare/v0.4.0...v0.5.0) (2026-07-02)
 
 
