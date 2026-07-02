@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.7.0](https://github.com/haexhub/fwbg-agents/compare/v0.6.0...v0.7.0) (2026-07-02)
+
+
+### Features
+
+* **research:** add cancel + retry for stuck/failed research_flow runs ([637bd4f](https://github.com/haexhub/fwbg-agents/commit/637bd4fa8a72cc289a44990e3ac4e2eab202472f))
+* **research:** cancel + retry for stuck/failed research_flow runs ([73939ef](https://github.com/haexhub/fwbg-agents/commit/73939efc7d4420944a4d1c80794550eb451b6eb7))
+
 ## [0.6.0](https://github.com/haexhub/fwbg-agents/compare/v0.5.0...v0.6.0) (2026-07-02)
 
 
