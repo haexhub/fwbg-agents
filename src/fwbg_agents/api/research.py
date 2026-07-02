@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import logging
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
@@ -34,6 +35,12 @@ from fwbg_agents.persistence.models import (
 from fwbg_agents.tools.fwbg_client import FwbgClient, FwbgClientError
 from fwbg_agents.tools.search import BraveClient, FallbackSearchClient, TavilyClient
 from fwbg_agents.tools.secrets import get_secret
+
+
+def _research_input_path(agent_run_id: int) -> Path:
+    p = settings.data_dir / "research_inputs"
+    p.mkdir(parents=True, exist_ok=True)
+    return p / f"{agent_run_id}.json"
 
 log = logging.getLogger(__name__)
 
@@ -153,6 +160,11 @@ async def post_research_brief(
     await session.commit()
     await session.refresh(ar)
 
+    input_path = _research_input_path(ar.id)
+    input_path.write_text(body.model_dump_json())
+    ar.input_artifact_path = str(input_path)
+    await session.commit()
+
     background_tasks.add_task(_run_research_background, body, ar.id)
     return {
         "agent_run_id": ar.id,
@@ -209,6 +221,79 @@ async def post_strategy_reiterate(
         "parent_strategy_id": parent.id,
         "status": "scheduled",
         "message": f"re-iterating {parent.slug}; poll /agents/runs/{ar.id}",
+    }
+
+
+@router.post("/agents/runs/{agent_run_id}/cancel", status_code=200)
+async def cancel_agent_run(
+    agent_run_id: int,
+    session: AsyncSession = Depends(get_session),
+) -> dict[str, Any]:
+    """Cancel a stuck PENDING or RUNNING research run by marking it FAILED."""
+    ar = (
+        await session.execute(select(AgentRun).where(AgentRun.id == agent_run_id))
+    ).scalar_one_or_none()
+    if ar is None:
+        raise HTTPException(404, f"agent_run {agent_run_id} not found")
+    if ar.status not in (AgentRunStatus.PENDING.value, AgentRunStatus.RUNNING.value):
+        raise HTTPException(
+            409,
+            f"agent_run {agent_run_id} is already in terminal state {ar.status!r}",
+        )
+    ar.status = AgentRunStatus.FAILED.value
+    ar.ended_at = datetime.now(UTC)
+    ar.error = "Cancelled by user"
+    await session.commit()
+    return {"id": agent_run_id, "status": ar.status}
+
+
+@router.post("/agents/runs/{agent_run_id}/retry", status_code=202)
+async def retry_agent_run(
+    agent_run_id: int,
+    background_tasks: BackgroundTasks,
+    session: AsyncSession = Depends(get_session),
+) -> dict[str, Any]:
+    """Re-schedule a failed or stuck research_flow run with the original input."""
+    ar = (
+        await session.execute(select(AgentRun).where(AgentRun.id == agent_run_id))
+    ).scalar_one_or_none()
+    if ar is None:
+        raise HTTPException(404, f"agent_run {agent_run_id} not found")
+    if ar.agent_name != "research_flow":
+        raise HTTPException(422, "retry is only supported for research_flow runs")
+    if not ar.input_artifact_path:
+        raise HTTPException(
+            409,
+            f"agent_run {agent_run_id} has no stored input; cannot retry "
+            "(run was created before retry support was added)",
+        )
+    input_path = Path(ar.input_artifact_path)
+    if not input_path.exists():
+        raise HTTPException(409, f"input file not found at {ar.input_artifact_path}")
+
+    original_input = ResearcherInput.model_validate_json(input_path.read_text())
+    now = datetime.now(UTC)
+    new_ar = AgentRun(
+        agent_name="research_flow",
+        status=AgentRunStatus.PENDING.value,
+        started_at=now,
+        created_at=now,
+    )
+    session.add(new_ar)
+    await session.commit()
+    await session.refresh(new_ar)
+
+    new_input_path = _research_input_path(new_ar.id)
+    new_input_path.write_text(original_input.model_dump_json())
+    new_ar.input_artifact_path = str(new_input_path)
+    await session.commit()
+
+    background_tasks.add_task(_run_research_background, original_input, new_ar.id)
+    return {
+        "agent_run_id": new_ar.id,
+        "retried_from": agent_run_id,
+        "status": "scheduled",
+        "message": f"retrying run {agent_run_id} as run {new_ar.id}",
     }
 
 
