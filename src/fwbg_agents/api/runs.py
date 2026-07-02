@@ -17,7 +17,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
-from sqlalchemy import select
+from sqlalchemy import desc, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from fwbg_agents.agents.analyst import Analyst
@@ -165,6 +165,22 @@ async def post_strategy_analyze(
 
     background_tasks.add_task(_run_analyst_background, strategy_id)
     return {"strategy_id": strategy_id, "agent_run_id": ar.id, "status": "scheduled"}
+
+
+@router.get("/agents/runs")
+async def list_agent_runs(
+    status: str | None = None,
+    limit: int = 20,
+    session: AsyncSession = Depends(get_session),
+) -> dict[str, Any]:
+    """List agent runs, newest first. `status` is a comma-separated filter."""
+    limit = max(1, min(limit, 100))
+    q = select(AgentRun).order_by(desc(AgentRun.created_at)).limit(limit)
+    if status:
+        statuses = [s.strip() for s in status.split(",")]
+        q = q.where(AgentRun.status.in_(statuses))
+    rows = (await session.execute(q)).scalars().all()
+    return {"runs": [_serialize_agent_run(r) for r in rows]}
 
 
 @router.get("/agents/runs/{agent_run_id}")
