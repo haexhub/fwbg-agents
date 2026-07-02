@@ -1,5 +1,25 @@
 # Changelog
 
+## [0.4.0](https://github.com/haexhub/fwbg-agents/compare/v0.3.1...v0.4.0) (2026-07-02)
+
+
+### Features
+
+* **api:** expose hypothesis sources + suggested_universe on strategy endpoints ([dfa1ed6](https://github.com/haexhub/fwbg-agents/commit/dfa1ed6cf6a1e2f8d486cb49ba5dac0420ef16f1))
+* **research:** strategy-first researcher (asset-agnostic + suggested_universe) ([7fe2920](https://github.com/haexhub/fwbg-agents/commit/7fe2920f0ffb921f04cd4e952d91e6e0c8b81421))
+* **runner:** adaptive universe with on-demand data + fallback expansion ([4bb1daa](https://github.com/haexhub/fwbg-agents/commit/4bb1daad55b42707c91fa6a8a7734397b1a3f48d))
+* **runner:** adaptive universe with on-demand data + fallback expansion ([063215a](https://github.com/haexhub/fwbg-agents/commit/063215a09599f4330a5d8f43cad20903cb720473))
+* **secrets:** file-backed API-key store with runtime reads ([d39eae6](https://github.com/haexhub/fwbg-agents/commit/d39eae69f10ad3bd0c073690e9b69587219a6ec6))
+* strategy-first research (asset-agnostic researcher, secrets store, hypothesis API) ([3216f58](https://github.com/haexhub/fwbg-agents/commit/3216f587140cb46c99c4afd74c6fc6d99ef547fb))
+
+
+### Bug Fixes
+
+* **lint:** fix ruff E501/UP045/F401 errors in criteria, secrets, test_secrets ([ab2755b](https://github.com/haexhub/fwbg-agents/commit/ab2755bd6b72665588b1e0cdd8096aab307a03d2))
+* **lint:** satisfy ruff (ambiguous unicode, line length, unused var) ([0e8a4a1](https://github.com/haexhub/fwbg-agents/commit/0e8a4a1fa2468b30a54d4bf084cbadff508a9b67))
+* **runner:** keep a rung's asset classes when its symbols have no data ([dea39dc](https://github.com/haexhub/fwbg-agents/commit/dea39dcf13e987240c979d741a41f9f17ecbd723))
+* **secrets:** restrict secrets.json to owner-only (0600) ([596dcdf](https://github.com/haexhub/fwbg-agents/commit/596dcdfe043ed47b57f9631f7dda9b3fe603a528))
+
 ## [0.3.1](https://github.com/haexhub/fwbg-agents/compare/v0.3.0...v0.3.1) (2026-06-29)
 
 
