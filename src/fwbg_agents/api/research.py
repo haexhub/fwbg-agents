@@ -18,6 +18,7 @@ from sqlalchemy import desc, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from fwbg_agents.agents.researcher import ResearcherInput
+from fwbg_agents.agents.runner import Runner
 from fwbg_agents.config import settings
 from fwbg_agents.orchestrator.lifecycle import strategy_dir
 from fwbg_agents.orchestrator.research_flow import (
@@ -77,6 +78,37 @@ async def _run_research_background(input: ResearcherInput, agent_run_id: int) ->
                 / "strategy.json"
             )
             await session.commit()
+
+            # Auto-start backtest — runs independently in its own session.
+            log.info(
+                "research_flow %s: auto-starting backtest for strategy %s",
+                agent_run_id,
+                strategy_id,
+            )
+            backtest_client = FwbgClient(base_url=settings.fwbg_api_url)
+            try:
+                async with SessionLocal() as runner_session:
+                    s = (
+                        await runner_session.execute(
+                            select(Strategy).where(Strategy.id == strategy_id)
+                        )
+                    ).scalar_one()
+                    runner = Runner(backtest_client, runner_session)
+                    await runner.run(s)
+                log.info(
+                    "research_flow %s: backtest completed for strategy %s",
+                    agent_run_id,
+                    strategy_id,
+                )
+            except Exception:
+                log.exception(
+                    "research_flow %s: auto-backtest failed for strategy %s (non-fatal)",
+                    agent_run_id,
+                    strategy_id,
+                )
+            finally:
+                await backtest_client.aclose()
+
         except Exception as exc:
             log.exception("research background task failed (agent_run %s)", agent_run_id)
             ar.status = AgentRunStatus.FAILED.value
