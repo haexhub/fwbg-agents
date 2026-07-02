@@ -8,6 +8,7 @@ inside a tool callback). Slow consumers are silently dropped (QueueFull).
 from __future__ import annotations
 
 import asyncio
+import contextlib
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime
 
@@ -22,10 +23,8 @@ def emit(event: dict) -> None:
     if "ts" not in event:
         event = {**event, "ts": datetime.now(UTC).isoformat()}
     for q in _subscribers:
-        try:
+        with contextlib.suppress(asyncio.QueueFull):
             q.put_nowait(event)
-        except asyncio.QueueFull:
-            pass
 
 
 async def subscribe() -> AsyncIterator[dict]:
@@ -36,7 +35,7 @@ async def subscribe() -> AsyncIterator[dict]:
         while True:
             try:
                 yield await asyncio.wait_for(q.get(), timeout=_HEARTBEAT_INTERVAL)
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 yield {"type": "heartbeat", "ts": datetime.now(UTC).isoformat()}
     finally:
         _subscribers.discard(q)

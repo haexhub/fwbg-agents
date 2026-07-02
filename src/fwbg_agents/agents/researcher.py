@@ -25,6 +25,7 @@ from pydantic_ai import Agent
 from pydantic_ai.models import Model
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from fwbg_agents import events as event_bus
 from fwbg_agents.orchestrator.hypotheses import (
     HypothesisRejectedError,
     ResearcherHypothesis,
@@ -36,7 +37,6 @@ from fwbg_agents.persistence.models import (
     AgentRunStatus,
     LlmCall,
 )
-from fwbg_agents import events as event_bus
 from fwbg_agents.tools.llm import model_for, prompt_path_for
 from fwbg_agents.tools.search import SearchProvider, SearchResult, SearchUnavailableError
 
@@ -89,7 +89,11 @@ class Researcher:
         await self.session.commit()
         await self.session.refresh(ar)
 
-        event_bus.emit({"type": "agent_run_started", "agent_run_id": ar.id, "agent_name": "researcher"})
+        event_bus.emit({
+            "type": "agent_run_started",
+            "agent_run_id": ar.id,
+            "agent_name": "researcher",
+        })
         prior_art_seen: list[PriorArtMatch] = []
 
         try:
@@ -121,7 +125,11 @@ class Researcher:
             @agent.tool_plain
             async def search_web_tool(query: str) -> list[dict]:
                 """Search the web for recent literature on a trading-strategy idea."""
-                event_bus.emit({"type": "research_search", "agent_run_id": agent_run_id, "query": query})
+                event_bus.emit({
+                    "type": "research_search",
+                    "agent_run_id": agent_run_id,
+                    "query": query,
+                })
                 if search_client is None:
                     log.info(
                         "researcher: no search_client configured; skipping search_web('%s')",
@@ -177,7 +185,11 @@ class Researcher:
             ar.status = AgentRunStatus.DONE.value
             ar.ended_at = datetime.now(UTC)
             await self.session.commit()
-            event_bus.emit({"type": "agent_run_done", "agent_run_id": ar.id, "agent_name": "researcher"})
+            event_bus.emit({
+                "type": "agent_run_done",
+                "agent_run_id": ar.id,
+                "agent_name": "researcher",
+            })
 
             return result.output
         except Exception as exc:
@@ -185,5 +197,10 @@ class Researcher:
             ar.ended_at = datetime.now(UTC)
             ar.error = str(exc)
             await self.session.commit()
-            event_bus.emit({"type": "agent_run_failed", "agent_run_id": ar.id, "agent_name": "researcher", "error": str(exc)})
+            event_bus.emit({
+                "type": "agent_run_failed",
+                "agent_run_id": ar.id,
+                "agent_name": "researcher",
+                "error": str(exc),
+            })
             raise
