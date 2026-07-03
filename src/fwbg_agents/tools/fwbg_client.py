@@ -15,16 +15,24 @@ fwbg's API (see ~/Projekte/fwbg/src/fwbg/api/runs.py):
 - GET  /api/data/ensure/{task_id}
                                returns: {status, ...}
 
-Strategy bodies are NOT accepted inline by fwbg — strategies must live on
-disk in fwbg's strategies_dir as `<strategy_name>.json`. The Runner writes
-that file before calling `start_run`.
+Strategy bodies are NOT accepted inline by fwbg's run endpoints — strategies
+must exist in fwbg's strategies_dir as `<strategy_name>.json`. They are
+created there via POST /api/strategies (`create_strategy`), which refuses to
+overwrite an existing file (409).
 """
 
 from __future__ import annotations
 
+import re
 from typing import Any
 
 import httpx
+
+
+def safe_fwbg_strategy_name(slug: str, iteration: int) -> str:
+    """fwbg validates names against [\\w\\-]; keep ASCII + drop punctuation."""
+    cleaned = re.sub(r"[^A-Za-z0-9_]", "_", slug)
+    return f"{cleaned}__it{iteration:03d}"
 
 
 class FwbgClientError(RuntimeError):
@@ -74,6 +82,15 @@ class FwbgClient:
         if description is not None:
             body["description"] = description
         return await self._post("/api/runs/start", body)
+
+    async def create_strategy(self, name: str, data: dict[str, Any]) -> dict[str, Any]:
+        """Create a NEW strategy file in fwbg (POST /api/strategies).
+
+        fwbg answers 409 (FwbgClientError.status == 409) when a strategy with
+        that name already exists — it never overwrites. Returns
+        {"filename", "name", "status": "created"} on success.
+        """
+        return await self._post("/api/strategies", {"name": name, "data": data})
 
     async def get_progress(self, run_id: str) -> dict[str, Any]:
         return await self._get(f"/api/runs/{run_id}/progress")

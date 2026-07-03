@@ -63,12 +63,14 @@ async def _run_research_background(input: ResearcherInput, agent_run_id: int) ->
         tavily = TavilyClient(api_key=get_secret("tavily"))
         brave = BraveClient(api_key=get_secret("brave"))
         search_client = FallbackSearchClient([tavily, brave])
+        fwbg = FwbgClient(base_url=settings.fwbg_api_url)
         try:
             strategy_id = await research_and_translate(
                 session,
                 input,
                 search_client=search_client,
                 fanout_n=settings.researcher_fanout_n,
+                fwbg_client=fwbg,
             )
             ar.status = AgentRunStatus.DONE.value
             ar.strategy_id = strategy_id
@@ -92,7 +94,6 @@ async def _run_research_background(input: ResearcherInput, agent_run_id: int) ->
                 agent_run_id,
                 strategy_id,
             )
-            backtest_client = FwbgClient(base_url=settings.fwbg_api_url)
             try:
                 async with SessionLocal() as runner_session:
                     s = (
@@ -100,7 +101,7 @@ async def _run_research_background(input: ResearcherInput, agent_run_id: int) ->
                             select(Strategy).where(Strategy.id == strategy_id)
                         )
                     ).scalar_one()
-                    runner = Runner(backtest_client, runner_session)
+                    runner = Runner(fwbg, runner_session)
                     await runner.run(s)
                 log.info(
                     "research_flow %s: backtest completed for strategy %s",
@@ -113,8 +114,6 @@ async def _run_research_background(input: ResearcherInput, agent_run_id: int) ->
                     agent_run_id,
                     strategy_id,
                 )
-            finally:
-                await backtest_client.aclose()
 
         except Exception as exc:
             log.exception("research background task failed (agent_run %s)", agent_run_id)
@@ -123,6 +122,7 @@ async def _run_research_background(input: ResearcherInput, agent_run_id: int) ->
             ar.error = str(exc)
             await session.commit()
         finally:
+            await fwbg.aclose()
             await tavily.aclose()
             await brave.aclose()
 
@@ -134,8 +134,9 @@ async def _run_reiterate_background(parent_id: int, agent_run_id: int) -> None:
         ).scalar_one()
         ar.status = AgentRunStatus.RUNNING.value
         await session.commit()
+        fwbg = FwbgClient(base_url=settings.fwbg_api_url)
         try:
-            child_id = await reiterate(session, parent_id)
+            child_id = await reiterate(session, parent_id, fwbg_client=fwbg)
             ar.status = AgentRunStatus.DONE.value
             ar.strategy_id = child_id
             ar.ended_at = datetime.now(UTC)
@@ -146,6 +147,8 @@ async def _run_reiterate_background(parent_id: int, agent_run_id: int) -> None:
             ar.ended_at = datetime.now(UTC)
             ar.error = str(exc)
             await session.commit()
+        finally:
+            await fwbg.aclose()
 
 
 # ---------------------------------------------------------------------------
