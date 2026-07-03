@@ -75,6 +75,9 @@ def _serialize_strategy(s: Strategy, tags: list[str] | None = None) -> dict[str,
         "post_mortem_path": s.post_mortem_path,
         "suggested_universe": s.suggested_universe,
         "model_knowledge_only": s.model_knowledge_only,
+        # Set once the strategy was published into fwbg (research flow or
+        # runner) — the dashboard links to /strategy/<name> with it.
+        "fwbg_strategy_name": (s.metadata_json or {}).get("fwbg_strategy_name"),
         "tags": tags or [],
         "created_at": s.created_at.isoformat() if s.created_at else None,
         "updated_at": s.updated_at.isoformat() if s.updated_at else None,

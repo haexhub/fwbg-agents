@@ -315,3 +315,95 @@ def test_no_catalog_means_lax_membership_for_list_fields():
     payload["preprocessing"] = ["whatever"]
     payload["extra_filters"] = ["nope"]
     validate_strategy_json(payload)
+
+
+# ──────────────────────────────────────────────
+# M7: inline composition (pipeline/model/filters as dicts) + live presets
+# ──────────────────────────────────────────────
+
+INLINE_FIXTURE = {
+    **VALID_FIXTURE,
+    "pipeline": {
+        "indicators": [{"name": "opening_range", "params": {"range_bars": [1, 2]}}],
+        "preprocessing": [{"name": "fractional_diff", "params": {}}],
+    },
+    "model": {
+        "type": "xgboost",
+        "architecture": "unified",
+        "trade_directions": ["long", "short"],
+        "hyperparameters": {"max_depth": 3},
+    },
+    "filters": {"min_trades": 50, "min_sharpe": 0.5},
+}
+
+_INLINE_CATALOG = _catalog({
+    "indicators": ["opening_range", "atr"],
+    "preprocessing": ["fractional_diff"],
+    "models": ["xgboost", "signal"],
+    "exit_strategies": ["orb_based"],
+})
+
+
+def test_inline_composition_passes_with_catalog():
+    validate_strategy_json(dict(INLINE_FIXTURE), catalog=_INLINE_CATALOG)
+
+
+def test_inline_pipeline_requires_indicators():
+    bad = {**INLINE_FIXTURE, "pipeline": {"preprocessing": []}}
+    with pytest.raises(StrategyValidationError, match="indicators"):
+        validate_strategy_json(bad, catalog=_INLINE_CATALOG)
+
+
+def test_inline_pipeline_rejects_unknown_phase():
+    bad = {**INLINE_FIXTURE, "pipeline": {**INLINE_FIXTURE["pipeline"], "exits": []}}
+    with pytest.raises(StrategyValidationError, match="unknown phase"):
+        validate_strategy_json(bad, catalog=_INLINE_CATALOG)
+
+
+def test_inline_pipeline_rejects_unknown_plugin_name():
+    bad = {
+        **INLINE_FIXTURE,
+        "pipeline": {"indicators": [{"name": "made_up_indicator", "params": {}}]},
+    }
+    with pytest.raises(StrategyValidationError, match="made_up_indicator"):
+        validate_strategy_json(bad, catalog=_INLINE_CATALOG)
+
+
+def test_inline_pipeline_names_lax_without_catalog():
+    # No catalog → shape-checked only (offline fallback keeps research working).
+    validate_strategy_json(dict(INLINE_FIXTURE), catalog=None)
+
+
+def test_inline_model_rejects_unknown_type():
+    bad = {**INLINE_FIXTURE, "model": {"type": "phantom_model"}}
+    with pytest.raises(StrategyValidationError, match="phantom_model"):
+        validate_strategy_json(bad, catalog=_INLINE_CATALOG)
+
+
+def test_inline_model_rejects_bad_architecture():
+    bad = {**INLINE_FIXTURE, "model": {"type": "xgboost", "architecture": "tri_leg"}}
+    with pytest.raises(StrategyValidationError, match="architecture"):
+        validate_strategy_json(bad, catalog=_INLINE_CATALOG)
+
+
+def test_inline_model_rejects_bad_trade_directions():
+    bad = {**INLINE_FIXTURE, "model": {"type": "xgboost", "trade_directions": ["up"]}}
+    with pytest.raises(StrategyValidationError, match="trade_directions"):
+        validate_strategy_json(bad, catalog=_INLINE_CATALOG)
+
+
+def test_validation_preset_checked_against_live_presets():
+    presets = {"validations": ["walk_forward_exploration_v1"], "resources": ["standard_v1"]}
+    good = {**INLINE_FIXTURE, "validation": "walk_forward_exploration_v1"}
+    validate_strategy_json(good, catalog=_INLINE_CATALOG, presets=presets)
+    with pytest.raises(StrategyValidationError, match="validation"):
+        # walk_forward_intraday_v1 is NOT in the live preset list above.
+        validate_strategy_json(dict(INLINE_FIXTURE), catalog=_INLINE_CATALOG, presets=presets)
+
+
+def test_legacy_pipeline_string_checked_against_live_presets():
+    presets = {"pipelines": ["my_custom_pipeline_v2"]}
+    good = {**VALID_FIXTURE, "pipeline": "my_custom_pipeline_v2"}
+    validate_strategy_json(good, presets=presets)
+    with pytest.raises(StrategyValidationError, match="pipeline"):
+        validate_strategy_json(dict(VALID_FIXTURE), presets=presets)

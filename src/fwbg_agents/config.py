@@ -43,12 +43,6 @@ class Settings(BaseSettings):
         default=Path.home() / "fwbg" / "test_results",
         description="Where fwbg writes per-run output directories. Scanned by Calibrator.",
     )
-    fwbg_strategies_dir: Path = Field(
-        default=Path.home() / "fwbg" / "strategies" / "configs",
-        description=(
-            "fwbg's strategies dir; Runner copies strategy.json here as <slug>__itNNN.json."
-        ),
-    )
     fwbg_repo_root: Path = Field(
         default=Path.home() / "Projekte" / "fwbg",
         description="Root of the fwbg source tree; scanned for plugin manifests by PluginCatalog.",

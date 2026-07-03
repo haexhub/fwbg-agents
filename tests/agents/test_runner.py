@@ -1,7 +1,8 @@
 """Runner agent tests (adaptive, Phase 2).
 
 The Runner is deterministic (no LLM). It owns the choreography:
-- copy strategy.json into fwbg's strategies_dir
+- ensure the strategy exists in fwbg via POST /api/strategies (409 = already
+  published, leave untouched)
 - for each universe rung (suggested symbols -> class -> unconstrained):
     - ensure data for the rung's symbols (drop unavailable ones)
     - POST /api/runs/start -> job_id, poll until completed/failed/timeout
@@ -79,7 +80,9 @@ class FakeFwbgClient:
         run_responses: list[dict[str, Any]] | None = None,
         ensure_responses: dict[str, Any] | None = None,
         ensure_status_responses: list[dict[str, Any]] | None = None,
+        create_strategy_error: Exception | None = None,
     ):
+        self.create_strategy_error = create_strategy_error
         self.start_response = start_response or {"job_id": "job_test_42", "status": "running"}
         self._progress_q = list(progress_responses or [{"status": "completed"}])
         self._last_progress = {"status": "completed"}
@@ -91,6 +94,12 @@ class FakeFwbgClient:
 
     def calls_of(self, name: str) -> list[tuple[str, tuple, dict]]:
         return [c for c in self.calls if c[0] == name]
+
+    async def create_strategy(self, name, data):
+        self.calls.append(("create_strategy", (name,), {"data": data}))
+        if self.create_strategy_error is not None:
+            raise self.create_strategy_error
+        return {"filename": name, "name": name, "status": "created"}
 
     async def start_run(self, strategy_name, *, assets=None, asset_classes=None, **kwargs):
         self.calls.append(
@@ -132,7 +141,6 @@ async def runner_env(tmp_path, monkeypatch):
     from fwbg_agents.config import settings
 
     monkeypatch.setattr(settings, "data_dir", tmp_path / "agents_data")
-    monkeypatch.setattr(settings, "fwbg_strategies_dir", tmp_path / "fwbg_strategies")
     # Make poll loops fast so tests take ~ms.
     monkeypatch.setattr(settings, "runner_poll_interval_seconds", 0.001)
     monkeypatch.setattr(settings, "runner_poll_timeout_seconds", 5.0)
@@ -197,13 +205,50 @@ async def test_runner_happy_path_transitions_to_backtested(runner_env):
     start = fake.calls_of("start_run")[0]
     assert start[2]["asset_classes"] == ["FOREX"]
     assert start[2]["assets"] is None
-    # artifacts on disk
-    assert (tmp_path / "fwbg_strategies" / "demo_orb_v1__it001.json").is_file()
+    # strategy was published to fwbg via POST /api/strategies (no file copy)
+    create = fake.calls_of("create_strategy")[0]
+    assert create[1] == ("demo_orb_v1__it001",)
+    assert create[2]["data"] == {"name": "demo_orb_v1"}
     results_path = (
         tmp_path / "agents_data" / "strategies" / "demo_orb_v1"
         / "iteration_001" / "fwbg_results.json"
     )
     assert json.loads(results_path.read_text())["status"] == "completed"
+
+
+async def test_runner_leaves_existing_fwbg_strategy_untouched(runner_env):
+    """409 from create_strategy = the strategy is already in fwbg (research
+    flow published it, user may have edited it) — the run must proceed on the
+    existing file, not overwrite it."""
+    SessionMaker, make_strategy, _ = runner_env
+    sid = await make_strategy()
+    fake = FakeFwbgClient(
+        create_strategy_error=FwbgClientError(409, "Strategy already exists"),
+    )
+
+    result = await _run(SessionMaker, sid, fake)
+
+    assert result.fwbg_run_id == "job_test_42"
+    assert fake.calls_of("start_run")[0][1] == ("demo_orb_v1__it001",)
+
+
+async def test_runner_prefers_published_fwbg_name_from_metadata(runner_env):
+    """When the research flow had to publish under a suffixed name (collision),
+    the runner must backtest that exact fwbg strategy."""
+    SessionMaker, make_strategy, _ = runner_env
+    sid = await make_strategy()
+    async with SessionMaker() as setup:
+        s = (await setup.execute(select(Strategy).where(Strategy.id == sid))).scalar_one()
+        s.metadata_json = {"fwbg_strategy_name": "demo_orb_v1__it001_v2"}
+        await setup.commit()
+    fake = FakeFwbgClient(
+        create_strategy_error=FwbgClientError(409, "Strategy already exists"),
+    )
+
+    await _run(SessionMaker, sid, fake)
+
+    assert fake.calls_of("create_strategy")[0][1] == ("demo_orb_v1__it001_v2",)
+    assert fake.calls_of("start_run")[0][1] == ("demo_orb_v1__it001_v2",)
 
     async with SessionMaker() as v:
         s = (await v.execute(select(Strategy).where(Strategy.id == sid))).scalar_one()
