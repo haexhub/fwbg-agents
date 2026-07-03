@@ -15,6 +15,7 @@ Researcher cannot bypass this — it is the equivalent of the Analyst's
 
 from __future__ import annotations
 
+import json
 import logging
 import time
 from datetime import UTC, datetime
@@ -55,11 +56,24 @@ class ResearcherInput(BaseModel):
     free_text_brief: str | None = None
 
 
-def _render_prompt(template: str, *, input: ResearcherInput) -> str:
+def _render_prompt(
+    template: str,
+    *,
+    input: ResearcherInput,
+    available_plugins: dict | None = None,
+) -> str:
     out = template
     out = out.replace("{{ asset_class }}", input.asset_class or "(asset-agnostic)")
     out = out.replace("{{ strategy_family_hint }}", input.strategy_family_hint or "(none)")
     out = out.replace("{{ free_text_brief }}", input.free_text_brief or "(none)")
+    out = out.replace(
+        "{{ available_plugins_json }}",
+        json.dumps(
+            available_plugins
+            or {"note": "catalog unavailable — name indicators freely"},
+            indent=2,
+        ),
+    )
     return out
 
 
@@ -71,11 +85,15 @@ class Researcher:
         model: Model | None = None,
         search_client: SearchProvider | None = None,
         prompt_path: Path | None = None,
+        available_plugins: dict | None = None,
     ):
         self.session = session
         self.model = model if model is not None else model_for("researcher")
         self.search_client = search_client
         self.prompt_path = prompt_path or prompt_path_for("researcher", _PROMPT_PATH)
+        # Current fwbg building blocks (fetched by the orchestrator per run) —
+        # rendered into the prompt so hypotheses reference real capabilities.
+        self.available_plugins = available_plugins
 
     async def run(self, input: ResearcherInput) -> ResearcherHypothesis:
         now = datetime.now(UTC)
@@ -98,7 +116,9 @@ class Researcher:
 
         try:
             template = self.prompt_path.read_text()
-            system_prompt = _render_prompt(template, input=input)
+            system_prompt = _render_prompt(
+                template, input=input, available_plugins=self.available_plugins
+            )
 
             agent: Agent[None, ResearcherHypothesis] = Agent(
                 self.model,

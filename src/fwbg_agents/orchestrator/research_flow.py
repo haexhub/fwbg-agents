@@ -37,6 +37,7 @@ from fwbg_agents.orchestrator.hypotheses import (
     generate_slug,
 )
 from fwbg_agents.orchestrator.lifecycle import strategy_dir
+from fwbg_agents.orchestrator.live_catalog import fetch_live_catalog, researcher_summary
 from fwbg_agents.persistence.database import SessionLocal
 from fwbg_agents.persistence.models import (
     Strategy,
@@ -70,6 +71,7 @@ async def _generate_valid_hypothesis(
     model: Model | None,
     search_client: SearchProvider | None,
     fanout_n: int,
+    available_plugins: dict | None = None,
 ) -> ResearcherHypothesis:
     """Run up to `fanout_n` Researcher candidates concurrently, each in its
     own session (decision C — AsyncSession isn't safe to share across
@@ -80,7 +82,12 @@ async def _generate_valid_hypothesis(
 
     async def _one_candidate() -> ResearcherHypothesis:
         async with SessionLocal() as candidate_session:
-            researcher = Researcher(candidate_session, model=model, search_client=search_client)
+            researcher = Researcher(
+                candidate_session,
+                model=model,
+                search_client=search_client,
+                available_plugins=available_plugins,
+            )
             return await researcher.run(input)
 
     results = await asyncio.gather(
@@ -218,8 +225,41 @@ async def research_and_translate(
     caller is responsible for wrapping bookkeeping (e.g. the API
     background task).
     """
+    client = fwbg_client if fwbg_client is not None else FwbgClient(
+        base_url=settings.fwbg_api_url
+    )
+    try:
+        return await _research_and_translate(
+            session,
+            input,
+            model=model,
+            search_client=search_client,
+            fanout_n=fanout_n,
+            fwbg_client=client,
+        )
+    finally:
+        if fwbg_client is None:
+            await client.aclose()
+
+
+async def _research_and_translate(
+    session: AsyncSession,
+    input: ResearcherInput,
+    *,
+    model: Model | None,
+    search_client: SearchProvider | None,
+    fanout_n: int,
+    fwbg_client: FwbgClient,
+) -> int:
+    # One live-catalog fetch per research run: the Researcher must see the
+    # CURRENT plugin set (it grows as plugins are adopted), not a frozen list.
+    live = await fetch_live_catalog(session, fwbg_client)
     hypothesis = await _generate_valid_hypothesis(
-        input, model=model, search_client=search_client, fanout_n=fanout_n
+        input,
+        model=model,
+        search_client=search_client,
+        fanout_n=fanout_n,
+        available_plugins=researcher_summary(live),
     )
 
     slug = await generate_slug(
@@ -273,7 +313,7 @@ async def research_and_translate(
     await session.commit()
     await session.refresh(strategy)
 
-    translator = Translator(session, model=model)
+    translator = Translator(session, model=model, fwbg_client=fwbg_client)
     strategy_path = await translator.run_fresh(strategy)
 
     # Register the finished strategy in fwbg right away so it shows up on the
@@ -319,10 +359,17 @@ async def reiterate(
             f"at {sidecar}; run /strategies/{parent_id}/analyze first"
         )
 
-    translator = Translator(session, model=model)
-    child = await translator.run_reiterate(parent)
+    client = fwbg_client if fwbg_client is not None else FwbgClient(
+        base_url=settings.fwbg_api_url
+    )
+    try:
+        translator = Translator(session, model=model, fwbg_client=client)
+        child = await translator.run_reiterate(parent)
 
-    child_path = strategy_dir(child.slug) / "iteration_001" / "strategy.json"
-    await publish_strategy_to_fwbg(session, child, child_path, fwbg_client=fwbg_client)
+        child_path = strategy_dir(child.slug) / "iteration_001" / "strategy.json"
+        await publish_strategy_to_fwbg(session, child, child_path, fwbg_client=client)
+    finally:
+        if fwbg_client is None:
+            await client.aclose()
 
     return child.id

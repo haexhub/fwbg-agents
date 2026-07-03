@@ -12,8 +12,11 @@ from pydantic_ai.models.function import AgentInfo, FunctionModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
+from fwbg_agents.agents import translator as translator_module
 from fwbg_agents.agents.translator import Translator, TranslatorError
 from fwbg_agents.orchestrator.hypotheses import ResearcherHypothesis, Source
+from fwbg_agents.orchestrator.live_catalog import LiveCatalog
+from fwbg_agents.orchestrator.plugin_catalog import PluginCatalog, PluginManifest
 from fwbg_agents.persistence.database import Base
 from fwbg_agents.persistence.models import (
     AgentRun,
@@ -22,15 +25,70 @@ from fwbg_agents.persistence.models import (
     StrategyState,
 )
 
+
+def make_live_catalog(
+    categories: dict[str, list[str]] | None = None,
+    presets: dict[str, list[str]] | None = None,
+) -> LiveCatalog:
+    """Canned LiveCatalog for tests — replaces the live fwbg API fetch."""
+    categories = categories if categories is not None else {
+        "indicators": ["opening_range", "atr"],
+        "models": ["signal_orb_v1"],
+        "exit_strategies": ["orb_based", "atr_trailing_sl"],
+    }
+    by_category = {
+        category: {
+            slug: PluginManifest(
+                name=slug, category=category, provenance="fwbg-core",
+                version="1", source_path=".",
+            )
+            for slug in slugs
+        }
+        for category, slugs in categories.items()
+    }
+    details = {
+        category: [{"name": slug, "description": "", "default_params": {}}
+                   for slug in slugs]
+        for category, slugs in categories.items()
+    }
+    return LiveCatalog(
+        catalog=PluginCatalog(by_category=by_category),
+        plugin_details=details,
+        presets=presets or {},
+    )
+
+
+@pytest.fixture(autouse=True)
+def canned_live_catalog(monkeypatch):
+    """Hermetic tests: never hit the fwbg API or scan the real fwbg repo."""
+    live = make_live_catalog()
+
+    async def _fetch(_session, _client):
+        return live
+
+    monkeypatch.setattr(translator_module, "fetch_live_catalog", _fetch)
+    return live
+
+
 VALID_OUTPUT = {
     "name": "will_be_overwritten",
     "description": "ORB rule-based on FOREX majors",
     "hypothesis": "Opening range breakouts on EURUSD M15 produce a momentum edge.",
     "expected_outcome": "sharpe > 1.0 with PBO < 0.5",
     "datasource": "forexsb",
-    "pipeline": "orb_simple_v1",
-    "model": "signal_orb_v1",
-    "filters": "orb_scalping_v1",
+    "pipeline": {
+        "indicators": [
+            {"name": "opening_range", "params": {"range_bars": [1, 2, 4]}},
+            {"name": "atr", "params": {"period": 14}},
+        ],
+    },
+    "model": {
+        "type": "signal_orb_v1",
+        "architecture": "unified",
+        "trade_directions": ["long", "short"],
+        "hyperparameters": {},
+    },
+    "filters": {"min_trades": 50, "min_sharpe": 0.5},
     "validation": "walk_forward_intraday_v1",
     "resources": "standard_v1",
     "timeframe": "MINUTE_15",
@@ -111,7 +169,8 @@ async def test_fresh_writes_strategy_json_and_spec_md(db_with_strategy):
     assert result_path.is_file()
     data = json.loads(result_path.read_text())
     assert data["name"] == slug  # overwritten with canonical slug
-    assert data["pipeline"] == "orb_simple_v1"
+    assert data["pipeline"]["indicators"][0]["name"] == "opening_range"
+    assert data["model"]["type"] == "signal_orb_v1"
 
     spec_md = it_dir / "spec.md"
     assert spec_md.is_file()
@@ -148,12 +207,30 @@ async def test_fresh_invalid_structure_fails_translator_run(db_with_strategy):
 async def test_fresh_unknown_plugin_slug_fails(db_with_strategy):
     SessionMaker, strategy_id, *_ = db_with_strategy
     bad = dict(VALID_OUTPUT)
-    bad["pipeline"] = "totally_made_up_pipeline_v77"
+    bad["pipeline"] = {
+        "indicators": [{"name": "totally_made_up_indicator_v77", "params": {}}]
+    }
     async with SessionMaker() as session:
         s = (await session.execute(select(Strategy).where(Strategy.id == strategy_id))).scalar_one()
         translator = Translator(session, model=_stub_model(bad))
         with pytest.raises(TranslatorError):
             await translator.run_fresh(s)
+
+
+@pytest.mark.asyncio
+async def test_fresh_legacy_preset_string_pipeline_still_validates(db_with_strategy):
+    """Pre-M7 payloads reference presets by name — still accepted, checked
+    against the workspace preset list from the live catalog."""
+    SessionMaker, strategy_id, *_ = db_with_strategy
+    legacy = dict(VALID_OUTPUT)
+    legacy["pipeline"] = "orb_simple_v1"
+    legacy["model"] = "signal_orb_v1"
+    legacy["filters"] = "orb_scalping_v1"
+    async with SessionMaker() as session:
+        s = (await session.execute(select(Strategy).where(Strategy.id == strategy_id))).scalar_one()
+        translator = Translator(session, model=_stub_model(legacy))
+        result_path = await translator.run_fresh(s)
+    assert json.loads(result_path.read_text())["pipeline"] == "orb_simple_v1"
 
 
 @pytest.mark.asyncio

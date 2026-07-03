@@ -83,6 +83,35 @@ class FwbgClient:
             body["description"] = description
         return await self._post("/api/runs/start", body)
 
+    async def get_plugins(self) -> list[dict[str, Any]]:
+        """Return all registered plugins (GET /api/plugins).
+
+        Each entry carries name/fqn/phase/description/param_schema/defaults.
+        Phases include indicators, preprocessing, feature_selection,
+        data_loading, exit_strategies, risk_management and model.
+        """
+        data = await self._get("/api/plugins")
+        return data if isinstance(data, list) else data.get("plugins", [])
+
+    async def get_exit_modifiers(self) -> list[dict[str, Any]]:
+        """Return available exit modifiers (GET /api/exit-modifiers)."""
+        data = await self._get("/api/exit-modifiers")
+        return data if isinstance(data, list) else data.get("exit_modifiers", [])
+
+    async def get_entry_modifiers(self) -> list[dict[str, Any]]:
+        """Return available entry modifiers (GET /api/entry-modifiers)."""
+        data = await self._get("/api/entry-modifiers")
+        return data if isinstance(data, list) else data.get("entry_modifiers", [])
+
+    async def get_presets(self, section: str) -> list[dict[str, Any]]:
+        """Return workspace presets for a section (GET /api/presets/{section}).
+
+        Sections: pipelines, models, validations, filters, resources,
+        exit_params, regime_filters, risk_params. Each entry: {id, meta, content}.
+        """
+        data = await self._get(f"/api/presets/{section}")
+        return data if isinstance(data, list) else data.get("presets", [])
+
     async def create_strategy(self, name: str, data: dict[str, Any]) -> dict[str, Any]:
         """Create a NEW strategy file in fwbg (POST /api/strategies).
 
