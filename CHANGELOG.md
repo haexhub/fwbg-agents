@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.8.0](https://github.com/haexhub/fwbg-agents/compare/v0.7.0...v0.8.0) (2026-07-03)
+
+
+### Features
+
+* **catalog:** live plugin catalog + inline strategy composition ([0f47112](https://github.com/haexhub/fwbg-agents/commit/0f471122408ffa0125eedbcaa8dcd979556feff0))
+* **catalog:** live plugin catalog + inline strategy composition ([5719df7](https://github.com/haexhub/fwbg-agents/commit/5719df747960411d5dd37b0f09438e26de65e253))
+* **research:** publish translated strategies into fwbg immediately ([42be524](https://github.com/haexhub/fwbg-agents/commit/42be5243e5aad215f338648bc6f900709c1859b6))
+* **research:** publish translated strategies into fwbg immediately ([2e5896f](https://github.com/haexhub/fwbg-agents/commit/2e5896fd20cf062e3f03e05ca3dc172b428a03d4))
+
 ## [0.7.0](https://github.com/haexhub/fwbg-agents/compare/v0.6.0...v0.7.0) (2026-07-02)
 
 
