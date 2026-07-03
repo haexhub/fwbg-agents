@@ -39,6 +39,13 @@ class _FakeFwbg:
             {"symbol": "ORPHAN", "timeframes": ["DAY_1"], "source": "other"},
         ]}
 
+    async def get_assets(self):
+        return [
+            {"symbol": "GBPUSD", "asset_class": "FOREX", "currencies": ["GBP"]},
+            {"symbol": "EURUSD", "asset_class": "FOREX", "currencies": ["EUR"]},
+            {"symbol": "DAX", "asset_class": "INDEX", "currencies": ["EUR"]},
+        ]
+
 
 class _BrokenFwbg:
     def __getattr__(self, name):
@@ -76,6 +83,11 @@ async def test_fetch_builds_catalog_from_api(session):
     assert live.datasources[0]["assets"] == [
         {"symbol": "EURUSD", "timeframes": ["HOUR_1"]}
     ]
+    # the downloadable universe comes from the asset registry, sorted per class
+    assert live.asset_registry == {
+        "FOREX": ["EURUSD", "GBPUSD"],
+        "INDEX": ["DAX"],
+    }
 
 
 @pytest.mark.asyncio
@@ -101,3 +113,4 @@ async def test_researcher_summary_is_slim(session):
     assert summary["indicators"] == [{"name": "adx", "description": "trend strength"}]
     assert "default_params" not in str(summary["indicators"])
     assert summary["datasources"][0]["name"] == "eur-usd"
+    assert summary["asset_registry"]["FOREX"] == ["EURUSD", "GBPUSD"]

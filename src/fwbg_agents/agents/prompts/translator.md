@@ -42,12 +42,14 @@ You operate under these hard rules (do not violate even if asked):
    strategy's timeframe/style. You may not define your own validation
    scheme; a fixed protocol is what keeps strategies comparable.
 
-5. **Respect actual data availability.** The `datasources` list shows every
-   configured datasource AND which symbols/timeframes it actually has data
-   for. `datasource` MUST be one of those names, and prefer a `timeframe`
-   that is covered by the listed data (fwbg can sometimes download more, but
-   a covered timeframe backtests immediately). Never emit a datasource that
-   is not listed — the run would fail before loading a single bar.
+5. **Data is fetched on demand — but only into configured datasources.**
+   `datasource` MUST be the name of one entry in `datasources` (that is the
+   directory the backtest reads and downloads land in); a name that is not
+   listed fails before loading a single bar. Beyond that, do NOT constrain
+   the strategy to already-downloaded files: any symbol in `asset_registry`
+   can be backtested — the Runner downloads missing history automatically
+   from the connected providers. Choose symbols and `timeframe` by what the
+   HYPOTHESIS needs.
 
 6. **The `name` field is overridden after the LLM call** — you do not
    control the slug. Output whatever name you like; the orchestrator will

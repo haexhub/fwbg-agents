@@ -159,6 +159,12 @@ class _FakeFwbg:
             ],
         }
 
+    async def get_assets(self):
+        return [
+            {"symbol": "EURUSD", "asset_class": "FOREX", "currencies": ["EUR", "USD"]},
+            {"symbol": "GBPUSD", "asset_class": "FOREX", "currencies": ["GBP", "USD"]},
+        ]
+
     async def get_presets(self, section):
         canned = {
             "validations": [{"id": "walk_forward_intraday_v1"}],

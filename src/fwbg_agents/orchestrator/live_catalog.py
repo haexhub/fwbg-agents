@@ -68,7 +68,13 @@ class LiveCatalog(BaseModel):
     presets: dict[str, list[str]] = Field(default_factory=dict)
     # Datasources actually configured in fwbg — a strategy referencing any
     # other name cannot be backtested. [{name, assets: [{symbol, timeframes}]}]
+    # The per-source asset lists are CURRENT downloads only; anything from
+    # `asset_registry` can be fetched on demand (POST /api/data/ensure).
     datasources: list[dict[str, Any]] = Field(default_factory=list)
+    # fwbg's asset registry: asset_class → known symbols. Historical data for
+    # these is downloaded on demand from the connected providers — the
+    # research universe is NOT limited to already-downloaded files.
+    asset_registry: dict[str, list[str]] = Field(default_factory=dict)
     # True when fwbg answered; False on the offline/filesystem fallback.
     from_api: bool = True
 
@@ -94,7 +100,9 @@ def researcher_summary(live: LiveCatalog) -> dict[str, Any]:
     } | {
         "exit_modifiers": _slim(live.exit_modifiers),
         "entry_modifiers": _slim(live.entry_modifiers),
-        # What data exists — grounds suggested_universe in testable symbols.
+        # The testable universe: every registry symbol can be backtested —
+        # historical data is fetched on demand from the connected providers.
+        "asset_registry": live.asset_registry,
         "datasources": live.datasources,
     }
 
@@ -167,6 +175,12 @@ async def _fetch_from_api(session: AsyncSession, fwbg: FwbgClient) -> LiveCatalo
 
     datasources = await _fetch_datasources(fwbg)
 
+    registry: dict[str, list[str]] = {}
+    for asset in await fwbg.get_assets():
+        cls, symbol = asset.get("asset_class"), asset.get("symbol")
+        if cls and symbol:
+            registry.setdefault(cls, []).append(symbol)
+
     return LiveCatalog(
         catalog=catalog,
         plugin_details=details,
@@ -174,6 +188,7 @@ async def _fetch_from_api(session: AsyncSession, fwbg: FwbgClient) -> LiveCatalo
         entry_modifiers=entry_modifiers,
         presets=presets,
         datasources=datasources,
+        asset_registry={k: sorted(v) for k, v in registry.items()},
     )
 
 
