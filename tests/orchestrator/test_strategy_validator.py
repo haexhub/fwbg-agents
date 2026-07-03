@@ -13,7 +13,6 @@ from fwbg_agents.orchestrator.strategy_validator import (
     KNOWN_MODELS,
     KNOWN_PIPELINES,
     KNOWN_RESOURCES,
-    KNOWN_TIMEFRAMES,
     KNOWN_VALIDATIONS,
     StrategyValidationError,
     validate_strategy_json,
@@ -113,11 +112,20 @@ def test_unknown_model_slug_fails():
         validate_strategy_json(payload)
 
 
-def test_unknown_timeframe_fails():
+def test_unknown_timeframe_fails_against_live_list():
     payload = dict(VALID_FIXTURE)
     payload["timeframe"] = "MINUTE_3"
     with pytest.raises(StrategyValidationError):
-        validate_strategy_json(payload)
+        validate_strategy_json(payload, timeframes=["MINUTE_15", "HOUR_1", "DAY_1"])
+
+
+def test_daily_timeframe_is_allowed():
+    """The old frozen intraday set silently forbade DAY_1 although fwbg
+    supports it — daily strategies must be expressible."""
+    payload = dict(VALID_FIXTURE)
+    payload["timeframe"] = "DAY_1"
+    validate_strategy_json(payload)  # offline: lax
+    validate_strategy_json(payload, timeframes=["MINUTE_15", "HOUR_1", "DAY_1"])
 
 
 def test_empty_exit_strategies_fails():
@@ -155,7 +163,6 @@ def test_known_constants_are_non_empty():
     assert KNOWN_FILTERS
     assert KNOWN_VALIDATIONS
     assert KNOWN_RESOURCES
-    assert KNOWN_TIMEFRAMES
 
 
 # ---------------------------------------------------------------------------

@@ -32,7 +32,6 @@ from fwbg_agents.orchestrator.lifecycle import strategy_dir
 from fwbg_agents.orchestrator.live_catalog import LiveCatalog, fetch_live_catalog
 from fwbg_agents.orchestrator.strategy_validator import (
     KNOWN_RESOURCES,
-    KNOWN_TIMEFRAMES,
     KNOWN_VALIDATIONS,
     StrategyValidationError,
     validate_strategy_json,
@@ -120,7 +119,7 @@ def _catalog_prompt_dict(live: LiveCatalog) -> dict:
         # is fetched on demand) plus the full downloadable asset registry.
         "datasources": live.datasources,
         "asset_registry": live.asset_registry,
-        "timeframes": sorted(KNOWN_TIMEFRAMES),
+        "timeframes": live.timeframes,
     }
 
 
@@ -240,6 +239,7 @@ class Translator:
                     catalog=live.catalog,
                     presets=live.presets,
                     datasources=live.datasource_names() or None,
+                    timeframes=live.timeframes or None,
                 )
             except StrategyValidationError as exc:
                 raise TranslatorError(str(exc)) from exc
@@ -351,6 +351,7 @@ class Translator:
                     catalog=live.catalog,
                     presets=live.presets,
                     datasources=live.datasource_names() or None,
+                    timeframes=live.timeframes or None,
                 )
             except StrategyValidationError as exc:
                 raise TranslatorError(str(exc)) from exc
@@ -520,6 +521,7 @@ class Translator:
                     catalog=live.catalog,
                     presets=live.presets,
                     datasources=live.datasource_names() or None,
+                    timeframes=live.timeframes or None,
                 )
             except StrategyValidationError as exc:
                 raise TranslatorError(str(exc)) from exc

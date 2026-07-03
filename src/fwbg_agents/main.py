@@ -1,5 +1,6 @@
 """FastAPI application entry point."""
 
+import asyncio
 import logging
 from contextlib import asynccontextmanager
 
@@ -19,6 +20,7 @@ from fwbg_agents.api import (
     strategies,
 )
 from fwbg_agents.config import settings
+from fwbg_agents.orchestrator import auto_runner
 from fwbg_agents.persistence.database import engine
 
 logging.basicConfig(level=settings.log_level)
@@ -29,7 +31,9 @@ log = logging.getLogger("fwbg_agents")
 async def lifespan(_app: FastAPI):
     settings.data_dir.mkdir(parents=True, exist_ok=True)
     log.info("fwbg-agents starting (version=%s)", __version__)
+    auto_runner_task = asyncio.create_task(auto_runner.run_loop())
     yield
+    auto_runner_task.cancel()
     await engine.dispose()
     log.info("fwbg-agents shut down")
 

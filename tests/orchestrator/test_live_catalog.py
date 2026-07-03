@@ -46,6 +46,16 @@ class _FakeFwbg:
             {"symbol": "DAX", "asset_class": "INDEX", "currencies": ["EUR"]},
         ]
 
+    async def get_timeframes(self):
+        return ["MINUTE_1", "MINUTE_15", "HOUR_1", "DAY_1"]
+
+    async def get_dukascopy_instruments(self):
+        return [
+            {"symbol": "EURUSD", "group": "Forex",
+             "historyStart": {"minute": "2003-05-04", "hourly": "2003-05-04",
+                              "daily": "1973-03-01"}},
+        ]
+
 
 class _BrokenFwbg:
     def __getattr__(self, name):
@@ -83,11 +93,18 @@ async def test_fetch_builds_catalog_from_api(session):
     assert live.datasources[0]["assets"] == [
         {"symbol": "EURUSD", "timeframes": ["HOUR_1"]}
     ]
-    # the downloadable universe comes from the asset registry, sorted per class
+    # the downloadable universe comes from the asset registry, sorted per
+    # class, with history depth where the Dukascopy catalogue knows it
     assert live.asset_registry == {
-        "FOREX": ["EURUSD", "GBPUSD"],
-        "INDEX": ["DAX"],
+        "FOREX": [
+            {"symbol": "EURUSD",
+             "history_start": {"minute": "2003-05-04", "hourly": "2003-05-04",
+                               "daily": "1973-03-01"}},
+            {"symbol": "GBPUSD"},
+        ],
+        "INDEX": [{"symbol": "DAX"}],
     }
+    assert live.timeframes == ["MINUTE_1", "MINUTE_15", "HOUR_1", "DAY_1"]
 
 
 @pytest.mark.asyncio
@@ -113,4 +130,4 @@ async def test_researcher_summary_is_slim(session):
     assert summary["indicators"] == [{"name": "adx", "description": "trend strength"}]
     assert "default_params" not in str(summary["indicators"])
     assert summary["datasources"][0]["name"] == "eur-usd"
-    assert summary["asset_registry"]["FOREX"] == ["EURUSD", "GBPUSD"]
+    assert [e["symbol"] for e in summary["asset_registry"]["FOREX"]] == ["EURUSD", "GBPUSD"]

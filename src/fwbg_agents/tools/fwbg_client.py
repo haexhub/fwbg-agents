@@ -103,6 +103,18 @@ class FwbgClient:
         data = await self._get("/api/entry-modifiers")
         return data if isinstance(data, list) else data.get("entry_modifiers", [])
 
+    async def get_timeframes(self) -> list[str]:
+        """Supported OHLCV timeframes (GET /api/data/timeframes)."""
+        data = await self._get("/api/data/timeframes")
+        return data.get("timeframes", [])
+
+    async def get_dukascopy_instruments(self) -> list[dict[str, Any]]:
+        """Downloadable instruments + per-granularity history starts
+        (GET /api/dukascopy/instruments): [{symbol, description, group,
+        historyStart: {minute, hourly, daily}}]."""
+        data = await self._get("/api/dukascopy/instruments")
+        return data if isinstance(data, list) else data.get("instruments", [])
+
     async def get_datasources(self) -> list[dict[str, Any]]:
         """Return the datasources configured in fwbg (GET /api/datasources).
 
