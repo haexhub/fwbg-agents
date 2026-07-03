@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.9.2](https://github.com/haexhub/fwbg-agents/compare/v0.9.1...v0.9.2) (2026-07-03)
+
+
+### Bug Fixes
+
+* **db:** WAL mode + busy_timeout for SQLite — concurrent writers died with "database is locked" ([83023de](https://github.com/haexhub/fwbg-agents/commit/83023dea6740f8ef6bf86fd45d17dbf15f1d2327))
+* **runs:** fail orphaned agent runs at startup + operator abandon endpoint ([f0f11f8](https://github.com/haexhub/fwbg-agents/commit/f0f11f8d6230f261680691ae619a7df778fa5b8d))
+* **runs:** fail orphaned agent runs at startup + operator abandon endpoint ([18ec9dd](https://github.com/haexhub/fwbg-agents/commit/18ec9dd40486dc313fe013e8ec5407c13a666612))
+
 ## [0.9.1](https://github.com/haexhub/fwbg-agents/compare/v0.9.0...v0.9.1) (2026-07-03)
 
 
