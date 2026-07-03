@@ -22,7 +22,11 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from fwbg_agents.config import settings
-from fwbg_agents.orchestrator.lifecycle import strategy_dir, transition_strategy
+from fwbg_agents.orchestrator.lifecycle import (
+    InvalidTransitionError,
+    strategy_dir,
+    transition_strategy,
+)
 from fwbg_agents.orchestrator.paper_flow import paper_analyze
 from fwbg_agents.persistence.database import SessionLocal, get_session
 from fwbg_agents.persistence.models import (
@@ -528,4 +532,65 @@ async def post_strategy_promote_live(
         strategy_id=s.id,
         new_state=StrategyState.LIVE_TRADING.value,
         agent_run_id=ar.id,
+    )
+
+
+class AbandonBody(BaseModel):
+    reason: str = Field(min_length=1, max_length=2000)
+
+
+class AbandonResponse(BaseModel):
+    strategy_id: int
+    slug: str
+    new_state: str
+
+
+@router.post(
+    "/strategies/{strategy_id}/abandon",
+    response_model=AbandonResponse,
+    status_code=200,
+)
+async def post_strategy_abandon(
+    strategy_id: int,
+    body: AbandonBody,
+    session: AsyncSession = Depends(get_session),
+) -> AbandonResponse:
+    """Retire a strategy via the ABANDONED terminal state.
+
+    Rows are never deleted (append-only design); abandoning keeps the audit
+    trail and removes the strategy from every active queue — in particular the
+    auto-runner only ever picks PROPOSED strategies. The operator's reason is
+    written as the post-mortem the abandon guard requires. A strategy already
+    published to fwbg is intentionally left untouched there.
+    """
+    s = (
+        await session.execute(select(Strategy).where(Strategy.id == strategy_id))
+    ).scalar_one_or_none()
+    if s is None:
+        raise HTTPException(status_code=404, detail=f"strategy {strategy_id} not found")
+
+    post_mortem = strategy_dir(s.slug) / "post_mortem.md"
+    post_mortem.parent.mkdir(parents=True, exist_ok=True)
+    post_mortem.write_text(
+        f"# Post-mortem: {s.slug}\n\n"
+        f"Abandoned by operator at {datetime.now(UTC).isoformat()} "
+        f"(state was {s.current_state!r}).\n\n{body.reason.strip()}\n"
+    )
+
+    try:
+        await transition_strategy(
+            session,
+            s,
+            StrategyState.ABANDONED,
+            reason=body.reason.strip(),
+            payload={"post_mortem_path": str(post_mortem)},
+            created_by="operator",
+        )
+    except InvalidTransitionError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+    return AbandonResponse(
+        strategy_id=s.id,
+        slug=s.slug,
+        new_state=StrategyState.ABANDONED.value,
     )
