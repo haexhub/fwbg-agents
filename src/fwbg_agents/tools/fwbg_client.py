@@ -23,10 +23,22 @@ overwrite an existing file (409).
 
 from __future__ import annotations
 
+import asyncio
+import logging
 import re
 from typing import Any
 
 import httpx
+
+log = logging.getLogger(__name__)
+
+# Transient transport errors on idempotent GETs are retried. Observed live:
+# uvicorn's default keep-alive timeout (5s) races the Runner's 5s poll
+# interval — the server closes the idle connection exactly as the client
+# reuses it (httpx.RemoteProtocolError / ReadError), and a single such blip
+# used to kill a backtest that was still running fine on the fwbg side.
+_GET_RETRIES = 3
+_GET_RETRY_BACKOFF_SECONDS = 1.0
 
 
 def safe_fwbg_strategy_name(slug: str, iteration: int) -> str:
@@ -55,10 +67,24 @@ class FwbgClient:
             await self._http.aclose()
 
     async def _get(self, path: str) -> dict[str, Any]:
-        r = await self._http.get(path)
-        if r.status_code // 100 != 2:
-            raise FwbgClientError(r.status_code, r.text)
-        return r.json()
+        # GETs are idempotent — retry transient transport errors instead of
+        # letting one dropped keep-alive connection abort a running backtest.
+        for attempt in range(1, _GET_RETRIES + 1):
+            try:
+                r = await self._http.get(path)
+            except httpx.TransportError as exc:
+                if attempt == _GET_RETRIES:
+                    raise
+                log.warning(
+                    "GET %s failed with %s (attempt %d/%d), retrying",
+                    path, type(exc).__name__, attempt, _GET_RETRIES,
+                )
+                await asyncio.sleep(_GET_RETRY_BACKOFF_SECONDS * attempt)
+                continue
+            if r.status_code // 100 != 2:
+                raise FwbgClientError(r.status_code, r.text)
+            return r.json()
+        raise AssertionError("unreachable")
 
     async def _post(self, path: str, body: dict[str, Any]) -> dict[str, Any]:
         r = await self._http.post(path, json=body)

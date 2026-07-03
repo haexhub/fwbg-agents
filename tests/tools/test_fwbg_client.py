@@ -135,3 +135,90 @@ async def test_default_constructor_makes_its_own_client(monkeypatch):
     client = FwbgClient(base_url="http://fwbg-test")
     assert client._http is not None
     await client.aclose()
+
+
+# ---------------------------------------------------------------------------
+# Transient-transport-error retry on idempotent GETs.
+#
+# Observed live: uvicorn's 5s keep-alive timeout races the Runner's 5s poll
+# interval; a single dropped connection (ReadError / RemoteProtocolError)
+# used to abort a backtest that was still running fine on the fwbg side.
+# ---------------------------------------------------------------------------
+
+
+async def test_get_retries_transient_transport_errors(monkeypatch):
+    from fwbg_agents.tools import fwbg_client as mod
+
+    monkeypatch.setattr(mod, "_GET_RETRY_BACKOFF_SECONDS", 0.0)
+    attempts = {"n": 0}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        attempts["n"] += 1
+        if attempts["n"] < 3:
+            raise httpx.ReadError("server dropped keep-alive", request=request)
+        return httpx.Response(200, json={"status": "running"})
+
+    http = _mock_client(handler)
+    client = FwbgClient(base_url="http://fwbg-test", http=http)
+
+    progress = await client.get_progress("job_1")
+
+    assert progress == {"status": "running"}
+    assert attempts["n"] == 3
+    await http.aclose()
+
+
+async def test_get_gives_up_after_max_retries(monkeypatch):
+    from fwbg_agents.tools import fwbg_client as mod
+
+    monkeypatch.setattr(mod, "_GET_RETRY_BACKOFF_SECONDS", 0.0)
+    attempts = {"n": 0}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        attempts["n"] += 1
+        raise httpx.RemoteProtocolError(
+            "Server disconnected without sending a response.", request=request
+        )
+
+    http = _mock_client(handler)
+    client = FwbgClient(base_url="http://fwbg-test", http=http)
+
+    with pytest.raises(httpx.RemoteProtocolError):
+        await client.get_progress("job_1")
+
+    assert attempts["n"] == 3
+    await http.aclose()
+
+
+async def test_get_does_not_retry_http_error_statuses():
+    attempts = {"n": 0}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        attempts["n"] += 1
+        return httpx.Response(404, text="not found")
+
+    http = _mock_client(handler)
+    client = FwbgClient(base_url="http://fwbg-test", http=http)
+
+    with pytest.raises(FwbgClientError):
+        await client.get_progress("job_1")
+
+    assert attempts["n"] == 1  # non-2xx is a real answer, not a transport blip
+    await http.aclose()
+
+
+async def test_post_is_not_retried():
+    attempts = {"n": 0}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        attempts["n"] += 1
+        raise httpx.ReadError("boom", request=request)
+
+    http = _mock_client(handler)
+    client = FwbgClient(base_url="http://fwbg-test", http=http)
+
+    with pytest.raises(httpx.ReadError):
+        await client.create_strategy("s1", {"name": "s1"})
+
+    assert attempts["n"] == 1  # POSTs are not idempotent — never auto-retry
+    await http.aclose()
