@@ -79,6 +79,16 @@ your `suggested_universe` is NOT limited to already-downloaded files. Pick
 assets and timeframes because the edge lives there, not because data
 happens to be cached.
 
+Choosing the timeframe: let the MECHANISM of the edge decide. Session/open
+effects, liquidity sweeps and scalping edges live on minute charts
+(MINUTE_1–MINUTE_30); intraday momentum and breakout persistence on
+MINUTE_15–HOUR_4; regime, carry and multi-day trend effects work on DAY_1.
+Each registry entry's `history_start` shows how deep the data reaches per
+granularity (daily often decades, minute data typically since ~2003) — a
+higher timeframe buys far more history and thus more robust validation, so
+prefer the HIGHEST timeframe on which the edge is still expressible. The
+full available history is downloaded automatically for backtests.
+
 # Output
 
 Return EXACTLY ONE `ResearcherHypothesis` with:

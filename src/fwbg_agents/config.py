@@ -61,10 +61,17 @@ class Settings(BaseSettings):
 
     # On-demand data provisioning (fwbg POST /api/data/ensure, Phase 1c).
     # The adaptive Runner ensures data for its suggested symbols before a
-    # backtest; a cold Dukascopy download can take a few minutes.
+    # backtest. Ensure now defaults to the FULL available history (e.g. FX
+    # minute data since ~2003) — a cold download can take a while.
     data_ensure_poll_interval_seconds: float = 2.0
-    data_ensure_timeout_seconds: float = 60 * 15  # 15 min per symbol download
+    data_ensure_timeout_seconds: float = 60 * 60  # 1h per symbol download
     default_timeframe: str = "HOUR_1"
+
+    # Runner auto mode: when enabled (persisted flag, see
+    # orchestrator/auto_runner.py), waiting PROPOSED strategies are
+    # backtested automatically, one at a time.
+    runner_auto_poll_seconds: float = 60.0
+    runner_auto_max_attempts: int = 2
 
     # Plugin authoring (M5d: Planner/Implementer split)
     plugin_planner_model: str = Field(

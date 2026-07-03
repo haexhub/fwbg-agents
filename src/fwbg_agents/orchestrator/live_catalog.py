@@ -71,10 +71,15 @@ class LiveCatalog(BaseModel):
     # The per-source asset lists are CURRENT downloads only; anything from
     # `asset_registry` can be fetched on demand (POST /api/data/ensure).
     datasources: list[dict[str, Any]] = Field(default_factory=list)
-    # fwbg's asset registry: asset_class → known symbols. Historical data for
-    # these is downloaded on demand from the connected providers — the
-    # research universe is NOT limited to already-downloaded files.
-    asset_registry: dict[str, list[str]] = Field(default_factory=dict)
+    # fwbg's asset registry: asset_class → [{symbol, history_start?}].
+    # Historical data is downloaded on demand from the connected providers —
+    # the research universe is NOT limited to already-downloaded files.
+    # history_start (per granularity: minute/hourly/daily) shows how deep the
+    # available history goes, e.g. EURUSD daily since 1973, minute since 2003.
+    asset_registry: dict[str, list[dict[str, Any]]] = Field(default_factory=dict)
+    # Timeframes fwbg supports (MINUTE_1 … DAY_1), fetched live. Empty when
+    # the endpoint is unavailable — validation is then lax.
+    timeframes: list[str] = Field(default_factory=list)
     # True when fwbg answered; False on the offline/filesystem fallback.
     from_api: bool = True
 
@@ -175,11 +180,31 @@ async def _fetch_from_api(session: AsyncSession, fwbg: FwbgClient) -> LiveCatalo
 
     datasources = await _fetch_datasources(fwbg)
 
-    registry: dict[str, list[str]] = {}
+    # History depth per symbol from the Dukascopy catalogue; tolerated as
+    # missing (older fwbg without the endpoint, or catalogue unavailable).
+    history_by_symbol: dict[str, dict[str, Any]] = {}
+    try:
+        for inst in await fwbg.get_dukascopy_instruments():
+            if inst.get("symbol") and inst.get("historyStart"):
+                history_by_symbol[inst["symbol"]] = inst["historyStart"]
+    except Exception:
+        log.warning("could not fetch instrument catalogue; omitting history depth")
+
+    registry: dict[str, list[dict[str, Any]]] = {}
     for asset in await fwbg.get_assets():
         cls, symbol = asset.get("asset_class"), asset.get("symbol")
-        if cls and symbol:
-            registry.setdefault(cls, []).append(symbol)
+        if not cls or not symbol:
+            continue
+        entry: dict[str, Any] = {"symbol": symbol}
+        if symbol in history_by_symbol:
+            entry["history_start"] = history_by_symbol[symbol]
+        registry.setdefault(cls, []).append(entry)
+
+    try:
+        timeframes = await fwbg.get_timeframes()
+    except Exception:
+        log.warning("could not fetch timeframes; validation will be lax")
+        timeframes = []
 
     return LiveCatalog(
         catalog=catalog,
@@ -188,7 +213,10 @@ async def _fetch_from_api(session: AsyncSession, fwbg: FwbgClient) -> LiveCatalo
         entry_modifiers=entry_modifiers,
         presets=presets,
         datasources=datasources,
-        asset_registry={k: sorted(v) for k, v in registry.items()},
+        asset_registry={
+            k: sorted(v, key=lambda e: e["symbol"]) for k, v in registry.items()
+        },
+        timeframes=timeframes,
     )
 
 

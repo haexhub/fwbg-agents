@@ -36,9 +36,6 @@ KNOWN_MODELS: frozenset[str] = frozenset({"signal_orb_v1"})
 KNOWN_FILTERS: frozenset[str] = frozenset({"orb_scalping_v1"})
 KNOWN_VALIDATIONS: frozenset[str] = frozenset({"walk_forward_intraday_v1"})
 KNOWN_RESOURCES: frozenset[str] = frozenset({"standard_v1"})
-KNOWN_TIMEFRAMES: frozenset[str] = frozenset(
-    {"MINUTE_5", "MINUTE_15", "MINUTE_30", "HOUR_1"}
-)
 
 REQUIRED_TOP_LEVEL: tuple[str, ...] = (
     "name",
@@ -291,6 +288,7 @@ def validate_strategy_json(
     catalog: PluginCatalog | None = None,
     presets: dict[str, list[str]] | None = None,
     datasources: list[str] | None = None,
+    timeframes: list[str] | None = None,
 ) -> None:
     """Structural validation. Pass `catalog` to route plugin-name lookups
     through the runtime PluginCatalog, `presets` (section → names, from the
@@ -319,10 +317,13 @@ def validate_strategy_json(
             f"datasource={data['datasource']!r} is not configured in fwbg "
             f"({datasources}).{_suggest(data['datasource'], list(datasources))}"
         )
-    if data["timeframe"] not in KNOWN_TIMEFRAMES:
+    # Timeframe membership only against the live fwbg list (no hardcoded set:
+    # the old frozen one silently forbade MINUTE_1/HOUR_4/DAY_1 which fwbg
+    # supports). Offline the ref stays unchecked — fwbg 422s bad values.
+    if timeframes and data["timeframe"] not in timeframes:
         raise StrategyValidationError(
-            f"timeframe={data['timeframe']!r} is not in the known catalog "
-            f"({sorted(KNOWN_TIMEFRAMES)})."
+            f"timeframe={data['timeframe']!r} is not supported by fwbg "
+            f"({timeframes}).{_suggest(data['timeframe'], list(timeframes))}"
         )
 
     # pipeline/model/filters: inline composition (dict) or legacy preset ref
