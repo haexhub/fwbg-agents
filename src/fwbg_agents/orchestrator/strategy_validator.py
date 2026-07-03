@@ -8,10 +8,18 @@ ultimate validator when fwbg starts the backtest.
 
 M5a refactor: `validate_strategy_json` accepts an optional `catalog`
 (PluginCatalog) kwarg. When provided AND the relevant catalog category has
-at least one entry, the `model` field and each `exit_strategies[i].name`
-are looked up in the catalog. Otherwise the M4 frozenset fallback applies —
-existing call sites and tests work unchanged. M5b's PluginAuthor extends
-the catalog without touching this file.
+at least one entry, plugin names are looked up in the catalog. Otherwise the
+M4 frozenset fallback applies — existing call sites and tests work unchanged.
+M5b's PluginAuthor extends the catalog without touching this file.
+
+Inline composition (M7): `pipeline`, `model` and `filters` are composed
+inline by the Translator from the live plugin catalog — a `pipeline` dict
+holds per-phase plugin entries, `model` is a ModelConfig-shaped dict,
+`filters` a FilterConfig-shaped dict. Legacy string preset refs remain valid
+(checked against `presets` when provided, else the frozensets) so strategies
+written before M7 still re-validate during reiterate. `validation` and
+`resources` stay preset-string-only by design: the validation protocol is
+operator policy, deliberately NOT per-strategy agent output.
 """
 
 from __future__ import annotations
@@ -47,16 +55,27 @@ REQUIRED_TOP_LEVEL: tuple[str, ...] = (
     "hypothesis",
 )
 
-# Fields that stay frozenset-only — they're fwbg-internal identifiers, not
-# plugin slugs.
-_FROZEN_FIELD_CATALOGS: tuple[tuple[str, frozenset[str]], ...] = (
-    ("datasource", KNOWN_DATASOURCES),
-    ("pipeline", KNOWN_PIPELINES),
-    ("filters", KNOWN_FILTERS),
-    ("validation", KNOWN_VALIDATIONS),
-    ("resources", KNOWN_RESOURCES),
-    ("timeframe", KNOWN_TIMEFRAMES),
+# Preset-section fallbacks for legacy string refs. When a live `presets`
+# mapping is provided (fetched from fwbg's workspace), it wins.
+_PRESET_STRING_FIELDS: tuple[tuple[str, str, frozenset[str]], ...] = (
+    ("pipeline", "pipelines", KNOWN_PIPELINES),
+    ("model", "models", KNOWN_MODELS),
+    ("filters", "filters", KNOWN_FILTERS),
+    ("validation", "validations", KNOWN_VALIDATIONS),
+    ("resources", "resources", KNOWN_RESOURCES),
 )
+
+# fwbg pipeline phases valid inside an inline pipeline dict, mapped to the
+# catalog category their plugin names are validated against.
+_PIPELINE_PHASES: tuple[tuple[str, str], ...] = (
+    ("data_loading", "data_loading"),
+    ("preprocessing", "preprocessing"),
+    ("indicators", "indicators"),
+    ("feature_selection", "feature_selection"),
+)
+
+_MODEL_ARCHITECTURES = frozenset({"unified", "long_short_separate"})
+_TRADE_DIRECTIONS = frozenset({"long", "short"})
 
 
 class StrategyValidationError(ValueError):
@@ -169,6 +188,96 @@ def _check_exit_strategies(items: Any, *, catalog: PluginCatalog | None) -> None
                 )
 
 
+def _check_preset_string(
+    field: str,
+    value: str,
+    *,
+    section: str,
+    presets: dict[str, list[str]] | None,
+    frozen_fallback: frozenset[str],
+) -> None:
+    """Legacy preset-ref check: live workspace preset list first, frozenset
+    fallback when none was provided (offline / M4 call sites)."""
+    allowed = (presets or {}).get(section) or sorted(frozen_fallback)
+    if value not in allowed:
+        raise StrategyValidationError(
+            f"{field}={value!r} is not an available preset in section "
+            f"{section!r} ({allowed}).{_suggest(value, list(allowed))}"
+        )
+
+
+def _check_inline_pipeline(value: dict, *, catalog: PluginCatalog | None) -> None:
+    """Inline pipeline dict: per-phase lists of {name, params} plugin entries."""
+    valid_phases = {phase for phase, _ in _PIPELINE_PHASES}
+    unknown = set(value) - valid_phases
+    if unknown:
+        raise StrategyValidationError(
+            f"pipeline has unknown phase keys {sorted(unknown)}; "
+            f"valid: {sorted(valid_phases)}"
+        )
+    if not value.get("indicators"):
+        raise StrategyValidationError(
+            "pipeline.indicators must contain at least one plugin entry"
+        )
+    for phase, category in _PIPELINE_PHASES:
+        entries = value.get(phase)
+        if entries is None:
+            continue
+        if not isinstance(entries, list):
+            raise StrategyValidationError(f"pipeline.{phase} must be a list")
+        allowed = catalog.all_slugs_for(category) if catalog is not None else []
+        for i, entry in enumerate(entries):
+            if not isinstance(entry, dict):
+                raise StrategyValidationError(
+                    f"pipeline.{phase}[{i}] must be an object with name/params"
+                )
+            name = entry.get("name")
+            if not isinstance(name, str) or not name:
+                raise StrategyValidationError(
+                    f"pipeline.{phase}[{i}].name is required (str)"
+                )
+            if "params" in entry and not isinstance(entry["params"], dict):
+                raise StrategyValidationError(
+                    f"pipeline.{phase}[{i}].params must be an object"
+                )
+            if allowed and name not in allowed:
+                raise StrategyValidationError(
+                    f"pipeline.{phase}[{i}].name={name!r} is not in the catalog "
+                    f"category {category!r}.{_suggest(name, allowed)}"
+                )
+
+
+def _check_inline_model(value: dict, *, catalog: PluginCatalog | None) -> None:
+    """Inline model dict, shaped like fwbg's ModelConfig."""
+    mtype = value.get("type")
+    if not isinstance(mtype, str) or not mtype:
+        raise StrategyValidationError("model.type is required (str)")
+    if catalog is not None:
+        allowed = catalog.all_slugs_for("models")
+        if allowed and mtype not in allowed:
+            raise StrategyValidationError(
+                f"model.type={mtype!r} is not in the catalog category "
+                f"'models'.{_suggest(mtype, allowed)}"
+            )
+    arch = value.get("architecture")
+    if arch is not None and arch not in _MODEL_ARCHITECTURES:
+        raise StrategyValidationError(
+            f"model.architecture={arch!r} must be one of {sorted(_MODEL_ARCHITECTURES)}"
+        )
+    directions = value.get("trade_directions")
+    if directions is not None and (
+        not isinstance(directions, list)
+        or not directions
+        or not set(directions) <= _TRADE_DIRECTIONS
+    ):
+        raise StrategyValidationError(
+            "model.trade_directions must be a non-empty subset of "
+            f"{sorted(_TRADE_DIRECTIONS)}"
+        )
+    if "hyperparameters" in value and not isinstance(value["hyperparameters"], dict):
+        raise StrategyValidationError("model.hyperparameters must be an object")
+
+
 def _check_tags(tags: Any) -> None:
     if not isinstance(tags, list) or not tags:
         raise StrategyValidationError("tags must be a non-empty list")
@@ -178,10 +287,15 @@ def _check_tags(tags: Any) -> None:
 
 
 def validate_strategy_json(
-    data: dict, *, catalog: PluginCatalog | None = None
+    data: dict,
+    *,
+    catalog: PluginCatalog | None = None,
+    presets: dict[str, list[str]] | None = None,
 ) -> None:
-    """Structural validation. Pass `catalog` to route model/exit lookups through
-    the runtime PluginCatalog; without it the M4 frozenset fallback applies.
+    """Structural validation. Pass `catalog` to route plugin-name lookups
+    through the runtime PluginCatalog and `presets` (section → names, from the
+    fwbg workspace) for preset-string refs; without them the M4 frozenset
+    fallbacks apply.
     """
     if not isinstance(data, dict):
         raise StrategyValidationError("payload must be a JSON object")
@@ -190,23 +304,67 @@ def validate_strategy_json(
     if missing:
         raise StrategyValidationError(f"missing required keys: {missing}")
 
-    for field in ("datasource", "pipeline", "model", "filters", "validation",
-                  "resources", "timeframe"):
+    for field in ("datasource", "validation", "resources", "timeframe"):
         if not isinstance(data[field], str):
             raise StrategyValidationError(f"{field} must be a string")
 
-    for field, frozen in _FROZEN_FIELD_CATALOGS:
-        if data[field] not in frozen:
-            raise StrategyValidationError(
-                f"{field}={data[field]!r} is not in the known catalog "
-                f"({sorted(frozen)}). The Translator must keep the strategy in "
-                "PROPOSED and emit a 'needs_plugin' note instead of inventing slugs."
-            )
+    if data["datasource"] not in KNOWN_DATASOURCES:
+        raise StrategyValidationError(
+            f"datasource={data['datasource']!r} is not in the known catalog "
+            f"({sorted(KNOWN_DATASOURCES)})."
+        )
+    if data["timeframe"] not in KNOWN_TIMEFRAMES:
+        raise StrategyValidationError(
+            f"timeframe={data['timeframe']!r} is not in the known catalog "
+            f"({sorted(KNOWN_TIMEFRAMES)})."
+        )
 
-    _check_field_with_catalog(
-        "model", data["model"],
-        catalog=catalog, catalog_category="models", frozen_fallback=KNOWN_MODELS,
+    # pipeline/model/filters: inline composition (dict) or legacy preset ref
+    # (string). validation/resources: preset string only — operator policy.
+    if isinstance(data["pipeline"], dict):
+        _check_inline_pipeline(data["pipeline"], catalog=catalog)
+    elif isinstance(data["pipeline"], str):
+        _check_preset_string(
+            "pipeline", data["pipeline"],
+            section="pipelines", presets=presets, frozen_fallback=KNOWN_PIPELINES,
+        )
+    else:
+        raise StrategyValidationError("pipeline must be an object or a preset name")
+
+    if isinstance(data["model"], dict):
+        _check_inline_model(data["model"], catalog=catalog)
+    elif isinstance(data["model"], str):
+        if catalog is not None and catalog.all_slugs_for("models"):
+            _check_field_with_catalog(
+                "model", data["model"],
+                catalog=catalog, catalog_category="models",
+                frozen_fallback=KNOWN_MODELS,
+            )
+        else:
+            _check_preset_string(
+                "model", data["model"],
+                section="models", presets=presets, frozen_fallback=KNOWN_MODELS,
+            )
+    else:
+        raise StrategyValidationError("model must be an object or a preset name")
+
+    if isinstance(data["filters"], str):
+        _check_preset_string(
+            "filters", data["filters"],
+            section="filters", presets=presets, frozen_fallback=KNOWN_FILTERS,
+        )
+    elif not isinstance(data["filters"], dict):
+        raise StrategyValidationError("filters must be an object or a preset name")
+
+    _check_preset_string(
+        "validation", data["validation"],
+        section="validations", presets=presets, frozen_fallback=KNOWN_VALIDATIONS,
     )
+    _check_preset_string(
+        "resources", data["resources"],
+        section="resources", presets=presets, frozen_fallback=KNOWN_RESOURCES,
+    )
+
     _check_exit_strategies(data["exit_strategies"], catalog=catalog)
     _check_tags(data["tags"])
 

@@ -15,6 +15,7 @@ import pytest_asyncio
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
+from fwbg_agents.agents import translator as translator_module
 from fwbg_agents.agents.translator import Translator, TranslatorError
 from fwbg_agents.persistence.database import Base
 from fwbg_agents.persistence.models import (
@@ -25,6 +26,21 @@ from fwbg_agents.persistence.models import (
     StrategyTag,
     Transition,
 )
+from tests.agents.test_translator_fresh import make_live_catalog
+
+
+@pytest.fixture(autouse=True)
+def canned_live_catalog(monkeypatch):
+    """Hermetic: reiterate re-validates the child payload against the live
+    catalog — never hit the fwbg API or scan the real fwbg repo here."""
+    live = make_live_catalog()
+
+    async def _fetch(_session, _client):
+        return live
+
+    monkeypatch.setattr(translator_module, "fetch_live_catalog", _fetch)
+    return live
+
 
 PARENT_STRATEGY_JSON = {
     "name": "orb__forex__001",

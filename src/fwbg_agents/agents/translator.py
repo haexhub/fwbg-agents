@@ -29,7 +29,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from fwbg_agents.orchestrator.hypotheses import generate_slug
 from fwbg_agents.orchestrator.lifecycle import strategy_dir
-from fwbg_agents.orchestrator.plugin_catalog import load_catalog
+from fwbg_agents.orchestrator.live_catalog import LiveCatalog, fetch_live_catalog
 from fwbg_agents.orchestrator.strategy_validator import (
     KNOWN_DATASOURCES,
     KNOWN_FILTERS,
@@ -50,6 +50,7 @@ from fwbg_agents.persistence.models import (
     StrategyTag,
     Transition,
 )
+from fwbg_agents.tools.fwbg_client import FwbgClient
 from fwbg_agents.tools.llm import model_for, prompt_path_for
 
 log = logging.getLogger(__name__)
@@ -82,9 +83,11 @@ class _TranslatorOutput(BaseModel):
     hypothesis: str = ""
     expected_outcome: str = ""
     datasource: str
-    pipeline: str
-    model: str
-    filters: str
+    # Inline composition (dict) is the M7 default; string preset refs stay
+    # accepted for backwards compatibility. The validator does the strict check.
+    pipeline: dict | str
+    model: dict | str
+    filters: dict | str
     validation: str
     resources: str
     timeframe: str
@@ -108,6 +111,29 @@ def _known_plugins_dict() -> dict[str, list[str]]:
         "validation": sorted(KNOWN_VALIDATIONS),
         "resources": sorted(KNOWN_RESOURCES),
         "timeframe": sorted(KNOWN_TIMEFRAMES),
+    }
+
+
+def _catalog_prompt_dict(live: LiveCatalog) -> dict:
+    """Render the live catalog into the prompt's `known_plugins_json` blob.
+
+    Per-plugin default_params double as parameter documentation — the LLM
+    composes real params from them instead of guessing names.
+    """
+    composable = {
+        category: live.plugin_details.get(category, [])
+        for category in ("indicators", "preprocessing", "feature_selection",
+                         "data_loading", "models", "exit_strategies")
+    }
+    return {
+        **composable,
+        "exit_modifiers": live.exit_modifiers,
+        "entry_modifiers": live.entry_modifiers,
+        "validation_presets": live.presets.get("validations")
+        or sorted(KNOWN_VALIDATIONS),
+        "resources_presets": live.presets.get("resources") or sorted(KNOWN_RESOURCES),
+        "datasources": sorted(KNOWN_DATASOURCES),
+        "timeframes": sorted(KNOWN_TIMEFRAMES),
     }
 
 
@@ -148,10 +174,14 @@ class Translator:
         *,
         model: Model | None = None,
         prompt_path: Path | None = None,
+        fwbg_client: FwbgClient | None = None,
     ):
         self.session = session
         self.model = model if model is not None else model_for("translator")
         self.prompt_path = prompt_path or prompt_path_for("translator", _PROMPT_PATH)
+        # Used to fetch the CURRENT plugin/preset catalog at run time; without
+        # it fetch_live_catalog degrades to the local filesystem scan.
+        self.fwbg_client = fwbg_client
 
     async def run_fresh(self, strategy: Strategy) -> Path:
         now = datetime.now(UTC)
@@ -176,11 +206,16 @@ class Translator:
             ar.input_artifact_path = str(hypothesis_path)
             hypothesis_data = json.loads(hypothesis_path.read_text())
 
+            # Fetched fresh per run — new plugins/presets must be visible
+            # immediately, not at the next deploy.
+            live = await fetch_live_catalog(self.session, self.fwbg_client)
+            catalog_prompt = _catalog_prompt_dict(live)
+
             template = self.prompt_path.read_text()
             system_prompt = _render_prompt(
                 template,
                 hypothesis_json=json.dumps(hypothesis_data, indent=2),
-                known_plugins_json=json.dumps(_known_plugins_dict(), indent=2),
+                known_plugins_json=json.dumps(catalog_prompt, indent=2),
             )
 
             agent: Agent[None, _TranslatorOutput] = Agent(
@@ -188,9 +223,9 @@ class Translator:
             )
 
             @agent.tool_plain
-            def get_known_plugins() -> dict[str, list[str]]:
-                """Return the catalog of plugin slugs the Translator may pick from."""
-                return _known_plugins_dict()
+            def get_known_plugins() -> dict:
+                """Return the catalog of plugins the Translator may compose from."""
+                return catalog_prompt
 
             t0 = time.monotonic()
             result = await agent.run("Emit the strategy.json now.")
@@ -213,7 +248,9 @@ class Translator:
             payload["name"] = strategy.slug  # canonical slug wins
 
             try:
-                validate_strategy_json(payload)
+                validate_strategy_json(
+                    payload, catalog=live.catalog, presets=live.presets
+                )
             except StrategyValidationError as exc:
                 raise TranslatorError(str(exc)) from exc
 
@@ -318,7 +355,10 @@ class Translator:
             child_payload["name"] = child_slug
 
             try:
-                validate_strategy_json(child_payload)
+                live = await fetch_live_catalog(self.session, self.fwbg_client)
+                validate_strategy_json(
+                    child_payload, catalog=live.catalog, presets=live.presets
+                )
             except StrategyValidationError as exc:
                 raise TranslatorError(str(exc)) from exc
 
@@ -412,7 +452,7 @@ class Translator:
         Mirrors `run_reiterate` for `add_indicator` recommendations: maps the
         sidecar `phase` to one of the four M5c plugin-slot list-fields and
         appends the slug. Plugin VERIFIED check is the caller's job — we
-        validate via `validate_strategy_json(..., catalog=load_catalog())`,
+        validate via `validate_strategy_json(..., catalog=<live catalog>)`,
         which rejects any slug not visible in the catalog.
 
         Parent stays in BACKTESTED; child is a fresh PROPOSED row with
@@ -462,16 +502,29 @@ class Translator:
 
             parent_payload = json.loads(parent_strategy_path.read_text())
             child_payload = json.loads(json.dumps(parent_payload))  # deep copy
-            child_payload.setdefault(list_field, []).append(plugin_slug)
+            # Inline pipelines get the plugin spliced where fwbg actually runs
+            # it. Legacy preset-string pipelines can't be extended in place, so
+            # they keep the old top-level list-field (advisory only).
+            pipeline = child_payload.get("pipeline")
+            if isinstance(pipeline, dict) and list_field in (
+                "indicators", "preprocessing", "feature_selection"
+            ):
+                pipeline.setdefault(list_field, []).append(
+                    {"name": plugin_slug, "params": {}}
+                )
+            else:
+                child_payload.setdefault(list_field, []).append(plugin_slug)
 
             child_slug = await generate_slug(
                 self.session, parent.strategy_family, parent.asset_class
             )
             child_payload["name"] = child_slug
 
-            catalog = await load_catalog(self.session)
+            live = await fetch_live_catalog(self.session, self.fwbg_client)
             try:
-                validate_strategy_json(child_payload, catalog=catalog)
+                validate_strategy_json(
+                    child_payload, catalog=live.catalog, presets=live.presets
+                )
             except StrategyValidationError as exc:
                 raise TranslatorError(str(exc)) from exc
 

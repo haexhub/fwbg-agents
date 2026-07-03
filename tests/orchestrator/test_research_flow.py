@@ -56,9 +56,13 @@ _STRATEGY_JSON = {
     "hypothesis": "Opening range breakouts on EURUSD M15 produce a momentum edge.",
     "expected_outcome": "sharpe > 1.0 with PBO < 0.5",
     "datasource": "forexsb",
-    "pipeline": "orb_simple_v1",
-    "model": "signal_orb_v1",
-    "filters": "orb_scalping_v1",
+    "pipeline": {
+        "indicators": [
+            {"name": "opening_range", "params": {"range_bars": [1, 2, 4]}},
+        ],
+    },
+    "model": {"type": "signal_orb_v1", "architecture": "unified"},
+    "filters": {"min_trades": 50},
     "validation": "walk_forward_intraday_v1",
     "resources": "standard_v1",
     "timeframe": "MINUTE_15",
@@ -111,8 +115,9 @@ async def db(tmp_path, monkeypatch):
 
 
 class _FakeFwbg:
-    """Stand-in for FwbgClient's strategy publishing: create-only, 409 on
-    existing names — mirrors fwbg's never-overwrite contract."""
+    """Stand-in for FwbgClient: create-only strategy publishing (409 on
+    existing names — fwbg's never-overwrite contract) plus a canned live
+    catalog matching _STRATEGY_JSON's building blocks."""
 
     def __init__(self, *, existing: set[str] | None = None, error: Exception | None = None):
         self.existing = set(existing or ())
@@ -127,6 +132,28 @@ class _FakeFwbg:
         self.existing.add(name)
         self.created.append((name, data))
         return {"filename": name, "name": name, "status": "created"}
+
+    async def get_plugins(self):
+        return [
+            {"name": "opening_range", "phase": "indicators",
+             "description": "Opening range breakout levels", "defaults": {"range_bars": [1]}},
+            {"name": "atr", "phase": "indicators", "description": "ATR", "defaults": {}},
+            {"name": "signal_orb_v1", "phase": "model", "description": "", "defaults": {}},
+            {"name": "orb_based", "phase": "exit_strategies", "description": "", "defaults": {}},
+        ]
+
+    async def get_exit_modifiers(self):
+        return []
+
+    async def get_entry_modifiers(self):
+        return []
+
+    async def get_presets(self, section):
+        canned = {
+            "validations": [{"id": "walk_forward_intraday_v1"}],
+            "resources": [{"id": "standard_v1"}],
+        }
+        return canned.get(section, [])
 
     async def aclose(self):
         pass
@@ -149,7 +176,7 @@ def _make_flaky_researcher_factory(n_fail: int):
     counter = itertools.count()
 
     class _FlakyResearcher:
-        def __init__(self, session, *, model=None, search_client=None):
+        def __init__(self, session, *, model=None, search_client=None, available_plugins=None):
             self.session = session
 
         async def run(self, input):
