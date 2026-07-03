@@ -43,6 +43,7 @@ import time
 from datetime import UTC, datetime
 from typing import Any, Protocol
 
+import httpx
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -309,8 +310,28 @@ class Runner:
         deadline = time.monotonic() + settings.runner_poll_timeout_seconds
         status = "running"
         last_progress: dict[str, Any] = {}
+        # Transient outage tolerance: fwbg-api can be briefly unreachable
+        # while the backtest keeps running on its side (watchtower recreating
+        # the container, dropped keep-alive connections under load). A poll
+        # failure must not abort the run — only a sustained outage may.
+        outage_deadline: float | None = None
         while time.monotonic() < deadline:
-            last_progress = await self.fwbg.get_progress(job_id)
+            try:
+                last_progress = await self.fwbg.get_progress(job_id)
+            except (httpx.TransportError, FwbgClientError) as exc:
+                now = time.monotonic()
+                if outage_deadline is None:
+                    outage_deadline = now + settings.runner_poll_outage_tolerance_seconds
+                if now >= outage_deadline:
+                    raise RunnerError(
+                        f"fwbg unreachable for "
+                        f"{settings.runner_poll_outage_tolerance_seconds:.0f}s "
+                        f"while polling {job_id}: {exc}"
+                    ) from exc
+                log.warning("runner: poll for %s failed (%s), tolerating", job_id, exc)
+                await asyncio.sleep(settings.runner_poll_interval_seconds)
+                continue
+            outage_deadline = None
             status = last_progress.get("status", "running")
             if status in _TERMINAL_FWBG_STATUSES:
                 break

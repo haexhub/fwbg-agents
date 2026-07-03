@@ -110,7 +110,10 @@ class FakeFwbgClient:
     async def get_progress(self, run_id):
         self.calls.append(("get_progress", (run_id,), {}))
         if self._progress_q:
-            self._last_progress = self._progress_q.pop(0)
+            nxt = self._progress_q.pop(0)
+            if isinstance(nxt, Exception):
+                raise nxt
+            self._last_progress = nxt
         return self._last_progress
 
     async def get_run(self, run_id):
@@ -412,3 +415,54 @@ async def test_runner_missing_strategy_json_raises(runner_env):
         s = (await session.execute(select(Strategy).where(Strategy.id == sid))).scalar_one()
         with pytest.raises(FileNotFoundError):
             await Runner(FakeFwbgClient(), session).run(s)
+
+
+# ---------------------------------------------------------------------------
+# Poll outage tolerance: a transient fwbg outage mid-backtest (watchtower
+# recreate, dropped keep-alive) must not abort a run that is still crunching
+# on the fwbg side. Only a sustained outage may fail the attempt.
+# ---------------------------------------------------------------------------
+
+
+async def test_poll_tolerates_transient_errors_and_completes(runner_env, monkeypatch):
+    import httpx as _httpx
+
+    from fwbg_agents.config import settings
+
+    monkeypatch.setattr(settings, "runner_poll_outage_tolerance_seconds", 5.0)
+    SessionMaker, make_strategy, _ = runner_env
+    sid = await make_strategy()
+    fake = FakeFwbgClient(
+        progress_responses=[
+            {"status": "running"},
+            _httpx.ReadError("keep-alive dropped"),
+            FwbgClientError(502, "bad gateway during restart"),
+            {"status": "running"},
+            {"status": "completed"},
+        ],
+    )
+
+    result = await _run(SessionMaker, sid, fake)
+
+    assert result.fwbg_run_id == "job_test_42"
+    # All progress polls happened despite two mid-run errors.
+    assert len(fake.calls_of("get_progress")) >= 5
+
+
+async def test_poll_fails_after_sustained_outage(runner_env, monkeypatch):
+    import httpx as _httpx
+
+    from fwbg_agents.config import settings
+
+    # Zero tolerance: the first transport error immediately exceeds the
+    # outage window, so every universe attempt fails and the run is failed.
+    monkeypatch.setattr(settings, "runner_poll_outage_tolerance_seconds", 0.0)
+    SessionMaker, make_strategy, _ = runner_env
+    sid = await make_strategy()
+    errors = [_httpx.ReadError(f"down {i}") for i in range(50)]
+    fake = FakeFwbgClient(progress_responses=errors)
+
+    with pytest.raises(RunnerError) as excinfo:
+        await _run(SessionMaker, sid, fake)
+
+    assert "unreachable" in str(excinfo.value)
