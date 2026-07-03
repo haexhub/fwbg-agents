@@ -20,12 +20,13 @@ import asyncio
 import json
 import logging
 
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from fwbg_agents.agents.runner import Runner
 from fwbg_agents.config import settings
 from fwbg_agents.orchestrator.lifecycle import strategy_dir
+from fwbg_agents.orchestrator.run_janitor import ORPHAN_ERROR
 from fwbg_agents.persistence.database import SessionLocal
 from fwbg_agents.persistence.models import (
     AgentRun,
@@ -100,6 +101,10 @@ async def pick_next_strategy_id(session: AsyncSession) -> int | None:
                     AgentRun.agent_name == "runner",
                     AgentRun.strategy_id == s.id,
                     AgentRun.status == AgentRunStatus.FAILED.value,
+                    # A run failed by the startup janitor was killed by a
+                    # restart, not by the strategy — it must not eat an
+                    # attempt.
+                    or_(AgentRun.error.is_(None), AgentRun.error != ORPHAN_ERROR),
                 )
             )
         ).scalar_one()
