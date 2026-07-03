@@ -32,6 +32,7 @@ from fwbg_agents.persistence.models import (
     StrategyTag,
     Transition,
 )
+from fwbg_agents.tools.fwbg_client import FwbgClientError
 
 _HYP_ARGS = {
     "title": "ORB on FOREX majors",
@@ -107,6 +108,37 @@ async def db(tmp_path, monkeypatch):
     async with Session() as session:
         yield session, tmp_path
     await engine.dispose()
+
+
+class _FakeFwbg:
+    """Stand-in for FwbgClient's strategy publishing: create-only, 409 on
+    existing names — mirrors fwbg's never-overwrite contract."""
+
+    def __init__(self, *, existing: set[str] | None = None, error: Exception | None = None):
+        self.existing = set(existing or ())
+        self.error = error
+        self.created: list[tuple[str, dict]] = []
+
+    async def create_strategy(self, name, data):
+        if self.error is not None:
+            raise self.error
+        if name in self.existing:
+            raise FwbgClientError(409, f"Strategy already exists: {name}")
+        self.existing.add(name)
+        self.created.append((name, data))
+        return {"filename": name, "name": name, "status": "created"}
+
+    async def aclose(self):
+        pass
+
+
+@pytest.fixture(autouse=True)
+def fake_fwbg(monkeypatch):
+    """Keep every test hermetic: publish_strategy_to_fwbg must never reach a
+    real fwbg on :8420, even when no fwbg_client is passed explicitly."""
+    fake = _FakeFwbg()
+    monkeypatch.setattr(research_flow, "FwbgClient", lambda base_url=None, **kw: fake)
+    return fake
 
 
 def _make_flaky_researcher_factory(n_fail: int):
@@ -202,6 +234,49 @@ async def test_research_and_translate_persists_strategy_and_artifacts(db):
     runs = (await session.execute(select(AgentRun).order_by(AgentRun.id))).scalars().all()
     assert [r.agent_name for r in runs] == ["researcher", "translator"]
     assert all(r.status == AgentRunStatus.DONE.value for r in runs)
+
+
+@pytest.mark.asyncio
+async def test_research_publishes_strategy_to_fwbg(db, fake_fwbg):
+    session, _ = db
+    sid = await research_and_translate(
+        session, ResearcherInput(asset_class="FOREX"), model=_dispatch_model(), search_client=None
+    )
+    s = (await session.execute(select(Strategy).where(Strategy.id == sid))).scalar_one()
+
+    assert [name for name, _ in fake_fwbg.created] == ["orb__forex__001__it001"]
+    assert fake_fwbg.created[0][1]["name"] == s.slug
+    assert s.metadata_json["fwbg_strategy_name"] == "orb__forex__001__it001"
+
+
+@pytest.mark.asyncio
+async def test_publish_never_overwrites_existing_fwbg_strategy(db, fake_fwbg):
+    session, _ = db
+    fake_fwbg.existing.add("orb__forex__001__it001")  # stale leftover in fwbg
+
+    sid = await research_and_translate(
+        session, ResearcherInput(asset_class="FOREX"), model=_dispatch_model(), search_client=None
+    )
+    s = (await session.execute(select(Strategy).where(Strategy.id == sid))).scalar_one()
+
+    # A NEW strategy is created under a suffixed name; the existing one is untouched.
+    assert [name for name, _ in fake_fwbg.created] == ["orb__forex__001__it001_v2"]
+    assert s.metadata_json["fwbg_strategy_name"] == "orb__forex__001__it001_v2"
+
+
+@pytest.mark.asyncio
+async def test_publish_failure_is_non_fatal(db, fake_fwbg):
+    session, _ = db
+    fake_fwbg.error = FwbgClientError(503, "fwbg down")
+
+    sid = await research_and_translate(
+        session, ResearcherInput(asset_class="FOREX"), model=_dispatch_model(), search_client=None
+    )
+    s = (await session.execute(select(Strategy).where(Strategy.id == sid))).scalar_one()
+
+    # Research result survives; no fwbg name recorded (runner republishes later).
+    assert s.current_state == StrategyState.PROPOSED.value
+    assert (s.metadata_json or {}).get("fwbg_strategy_name") is None
 
 
 @pytest.mark.asyncio
@@ -344,7 +419,7 @@ async def test_reiterate_rejects_when_sidecar_missing(db):
 
 
 @pytest.mark.asyncio
-async def test_reiterate_returns_child_id_when_preconditions_met(db):
+async def test_reiterate_returns_child_id_when_preconditions_met(db, fake_fwbg):
     session, _ = db
     now = datetime.now(UTC)
     parent = Strategy(
@@ -381,3 +456,7 @@ async def test_reiterate_returns_child_id_when_preconditions_met(db):
     assert child.parent_strategy_id == parent.id
     assert child.slug == "orb__forex__002"
     assert child.current_state == StrategyState.PROPOSED.value
+
+    # The child is published to fwbg as a new strategy too.
+    assert [name for name, _ in fake_fwbg.created] == ["orb__forex__002__it001"]
+    assert child.metadata_json["fwbg_strategy_name"] == "orb__forex__002__it001"

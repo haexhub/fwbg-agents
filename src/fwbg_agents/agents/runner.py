@@ -12,8 +12,11 @@ symbols, triggering an on-demand download when the cache is cold.
 
 Flow:
     1. AgentRun inserted (status=running, agent_name="runner").
-    2. Read iteration_001/strategy.json, copy into fwbg's strategies_dir as
-       <slug>__it001.json (fwbg's /runs/start expects a file on disk).
+    2. Read iteration_001/strategy.json and ensure it exists in fwbg as
+       <slug>__it001 via POST /api/strategies (fwbg's /runs/start expects a
+       strategy file on its side). Normally the research flow has already
+       published it — a 409 means it's there (possibly edited by the user in
+       the dashboard) and is left untouched.
     3. For each universe attempt (most-specific first):
          a. ensure data for the attempt's symbols (drop the unavailable ones);
          b. fwbg_client.start_run(name, assets=..., asset_classes=...) → job_id;
@@ -36,8 +39,6 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-import re
-import shutil
 import time
 from datetime import UTC, datetime
 from typing import Any, Protocol
@@ -58,7 +59,7 @@ from fwbg_agents.persistence.models import (
     Strategy,
     StrategyState,
 )
-from fwbg_agents.tools.fwbg_client import FwbgClientError
+from fwbg_agents.tools.fwbg_client import FwbgClientError, safe_fwbg_strategy_name
 
 log = logging.getLogger(__name__)
 
@@ -68,6 +69,7 @@ class RunnerError(RuntimeError):
 
 
 class _FwbgClientProto(Protocol):
+    async def create_strategy(self, name: str, data: dict[str, Any]) -> dict[str, Any]: ...
     async def start_run(self, strategy_name: str, **kwargs: Any) -> dict[str, Any]: ...
     async def get_progress(self, run_id: str) -> dict[str, Any]: ...
     async def get_run(self, run_id: str) -> dict[str, Any]: ...
@@ -84,12 +86,6 @@ class RunnerResult(BaseModel):
 
 
 _TERMINAL_FWBG_STATUSES = frozenset({"completed", "failed", "error", "cancelled"})
-
-
-def _safe_fwbg_strategy_name(slug: str, iteration: int) -> str:
-    """fwbg validates names against [\\w\\-]; keep ASCII + drop punctuation."""
-    cleaned = re.sub(r"[^A-Za-z0-9_]", "_", slug)
-    return f"{cleaned}__it{iteration:03d}"
 
 
 def _best_symbol_metrics(run: dict[str, Any]) -> dict[str, float]:
@@ -141,11 +137,25 @@ class Runner:
                 raise FileNotFoundError(f"missing strategy.json at {src}")
             ar.input_artifact_path = str(src)
 
-            # Copy strategy.json into fwbg's strategies_dir (once for all attempts).
-            settings.fwbg_strategies_dir.mkdir(parents=True, exist_ok=True)
-            fwbg_name = _safe_fwbg_strategy_name(strategy.slug, 1)
-            fwbg_file = settings.fwbg_strategies_dir / f"{fwbg_name}.json"
-            shutil.copyfile(src, fwbg_file)
+            # Ensure the strategy exists in fwbg (once for all attempts). The
+            # research flow normally publishes it right after translation; a
+            # 409 means it's already there — possibly hand-edited in the
+            # dashboard — and MUST NOT be overwritten.
+            fwbg_name = (strategy.metadata_json or {}).get(
+                "fwbg_strategy_name"
+            ) or safe_fwbg_strategy_name(strategy.slug, 1)
+            try:
+                created = await self.fwbg.create_strategy(
+                    fwbg_name, json.loads(src.read_text())
+                )
+                fwbg_name = created.get("filename", fwbg_name)
+            except FwbgClientError as exc:
+                if exc.status != 409:
+                    raise
+                log.info(
+                    "runner: strategy %r already exists in fwbg; leaving it untouched",
+                    fwbg_name,
+                )
 
             attempts = plan_universe_attempts(strategy)
             tf_by_symbol = timeframes_by_symbol(strategy)

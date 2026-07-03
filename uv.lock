@@ -592,7 +592,7 @@ client = [
 
 [[package]]
 name = "fwbg-agents"
-version = "0.3.1"
+version = "0.7.0"
 source = { editable = "." }
 dependencies = [
     { name = "aiosqlite" },
