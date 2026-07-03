@@ -64,6 +64,9 @@ class Settings(BaseSettings):
     # up (watchtower recreates, keep-alive races). The backtest itself keeps
     # running on the fwbg side during such blips.
     runner_poll_outage_tolerance_seconds: float = 120.0
+    # fwbg enforces a single backtest slot (429 while busy) — how long to
+    # sleep between attempts to grab it.
+    runner_busy_wait_seconds: float = 30.0
 
     # On-demand data provisioning (fwbg POST /api/data/ensure, Phase 1c).
     # The adaptive Runner ensures data for its suggested symbols before a

@@ -173,6 +173,12 @@ class FwbgClient:
         """
         return await self._post("/api/strategies", {"name": name, "data": data})
 
+    async def list_runs(self) -> list[dict[str, Any]]:
+        """List fwbg runs (GET /api/runs). Items carry run_id, status,
+        strategy_name, is_active."""
+        resp = await self._get("/api/runs")
+        return resp.get("items", resp) if isinstance(resp, dict) else resp
+
     async def get_progress(self, run_id: str) -> dict[str, Any]:
         return await self._get(f"/api/runs/{run_id}/progress")
 

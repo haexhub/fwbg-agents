@@ -81,8 +81,12 @@ class FakeFwbgClient:
         ensure_responses: dict[str, Any] | None = None,
         ensure_status_responses: list[dict[str, Any]] | None = None,
         create_strategy_error: Exception | None = None,
+        start_errors: list[Exception] | None = None,
+        list_runs_response: list[dict[str, Any]] | None = None,
     ):
         self.create_strategy_error = create_strategy_error
+        self._start_errors = list(start_errors or [])
+        self.list_runs_response = list(list_runs_response or [])
         self.start_response = start_response or {"job_id": "job_test_42", "status": "running"}
         self._progress_q = list(progress_responses or [{"status": "completed"}])
         self._last_progress = {"status": "completed"}
@@ -105,7 +109,13 @@ class FakeFwbgClient:
         self.calls.append(
             ("start_run", (strategy_name,), {"assets": assets, "asset_classes": asset_classes})
         )
+        if self._start_errors:
+            raise self._start_errors.pop(0)
         return dict(self.start_response)
+
+    async def list_runs(self):
+        self.calls.append(("list_runs", (), {}))
+        return list(self.list_runs_response)
 
     async def get_progress(self, run_id):
         self.calls.append(("get_progress", (run_id,), {}))
@@ -466,3 +476,94 @@ async def test_poll_fails_after_sustained_outage(runner_env, monkeypatch):
         await _run(SessionMaker, sid, fake)
 
     assert "unreachable" in str(excinfo.value)
+
+
+# ---------------------------------------------------------------------------
+# Global single-flight (fwbg has ONE backtest slot, FWBG_MAX_CONCURRENT_RUNS=1):
+# - an already-active fwbg run of the same strategy is adopted, never
+#   duplicated (a lost /runs/start response + retry used to launch a copy);
+# - while the slot is taken by something else (429), the Runner waits.
+# ---------------------------------------------------------------------------
+
+
+async def test_adopts_active_run_of_same_strategy_instead_of_starting(runner_env):
+    SessionMaker, make_strategy, _ = runner_env
+    sid = await make_strategy()
+    fake = FakeFwbgClient(
+        list_runs_response=[
+            {"run_id": "job_external_7", "status": "running",
+             "strategy_name": "demo_orb_v1__it001"},
+        ],
+    )
+
+    result = await _run(SessionMaker, sid, fake)
+
+    assert result.fwbg_run_id == "job_external_7"
+    assert fake.calls_of("start_run") == []  # adopted, never started a copy
+
+
+async def test_active_run_of_other_strategy_is_not_adopted(runner_env):
+    SessionMaker, make_strategy, _ = runner_env
+    sid = await make_strategy()
+    fake = FakeFwbgClient(
+        list_runs_response=[
+            {"run_id": "job_other", "status": "running",
+             "strategy_name": "somebody_elses_strategy"},
+        ],
+    )
+
+    result = await _run(SessionMaker, sid, fake)
+
+    assert result.fwbg_run_id == "job_test_42"
+    assert len(fake.calls_of("start_run")) == 1
+
+
+async def test_waits_for_busy_slot_then_starts(runner_env, monkeypatch):
+    from fwbg_agents.config import settings
+
+    monkeypatch.setattr(settings, "runner_busy_wait_seconds", 0.001)
+    SessionMaker, make_strategy, _ = runner_env
+    sid = await make_strategy()
+    fake = FakeFwbgClient(
+        start_errors=[
+            FwbgClientError(429, "Too many active runs (limit 1)"),
+            FwbgClientError(429, "Too many active runs (limit 1)"),
+        ],
+    )
+
+    result = await _run(SessionMaker, sid, fake)
+
+    assert result.fwbg_run_id == "job_test_42"
+    assert len(fake.calls_of("start_run")) == 3  # 2x 429, then the slot
+
+
+async def test_gives_up_when_slot_stays_busy(runner_env, monkeypatch):
+    from fwbg_agents.config import settings
+
+    monkeypatch.setattr(settings, "runner_busy_wait_seconds", 0.001)
+    monkeypatch.setattr(settings, "runner_poll_timeout_seconds", 0.05)
+    SessionMaker, make_strategy, _ = runner_env
+    sid = await make_strategy()
+    fake = FakeFwbgClient(
+        start_errors=[FwbgClientError(429, "busy")] * 1000,
+    )
+
+    with pytest.raises(RunnerError) as excinfo:
+        await _run(SessionMaker, sid, fake)
+
+    assert "slot stayed busy" in str(excinfo.value)
+
+
+async def test_non_429_start_error_is_not_retried(runner_env):
+    SessionMaker, make_strategy, _ = runner_env
+    sid = await make_strategy()
+    fake = FakeFwbgClient(
+        start_errors=[FwbgClientError(500, "boom")] * 10,
+    )
+
+    # Hard errors propagate unchanged (pre-existing semantics) — only 429
+    # means "wait for the slot".
+    with pytest.raises(FwbgClientError):
+        await _run(SessionMaker, sid, fake)
+
+    assert len(fake.calls_of("start_run")) == 1
