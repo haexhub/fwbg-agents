@@ -57,7 +57,13 @@ class Settings(BaseSettings):
 
     # Runner
     runner_poll_interval_seconds: float = 5.0
-    runner_poll_timeout_seconds: float = 60 * 60 * 2  # 2h hard cap per backtest
+    # Full-history multi-asset M15 backtests legitimately run for hours —
+    # the old 2h cap killed them mid-run.
+    runner_poll_timeout_seconds: float = 60 * 60 * 8  # 8h hard cap per backtest
+    # How long fwbg may be unreachable mid-backtest before the Runner gives
+    # up (watchtower recreates, keep-alive races). The backtest itself keeps
+    # running on the fwbg side during such blips.
+    runner_poll_outage_tolerance_seconds: float = 120.0
 
     # On-demand data provisioning (fwbg POST /api/data/ensure, Phase 1c).
     # The adaptive Runner ensures data for its suggested symbols before a
