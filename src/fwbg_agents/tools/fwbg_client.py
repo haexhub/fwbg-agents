@@ -103,6 +103,20 @@ class FwbgClient:
         data = await self._get("/api/entry-modifiers")
         return data if isinstance(data, list) else data.get("entry_modifiers", [])
 
+    async def get_datasources(self) -> list[dict[str, Any]]:
+        """Return the datasources configured in fwbg (GET /api/datasources).
+
+        Each entry carries name/type/path/…; only actually-configured sources
+        can feed a backtest, so strategies must reference one of these names.
+        """
+        data = await self._get("/api/datasources")
+        return data if isinstance(data, list) else data.get("datasources", [])
+
+    async def get_datasource_assets(self) -> dict[str, Any]:
+        """Return data availability (GET /api/datasources/assets):
+        {"assets": [{symbol, timeframes, source, ...}], "by_source": {...}}."""
+        return await self._get("/api/datasources/assets")
+
     async def get_presets(self, section: str) -> list[dict[str, Any]]:
         """Return workspace presets for a section (GET /api/presets/{section}).
 

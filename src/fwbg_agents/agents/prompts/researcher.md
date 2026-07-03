@@ -73,6 +73,12 @@ You operate under these hard rules (do not violate even if asked):
 {{ available_plugins_json }}
 ```
 
+Note on data: `asset_registry` lists every symbol fwbg can backtest —
+historical data is downloaded ON DEMAND from the connected providers, so
+your `suggested_universe` is NOT limited to already-downloaded files. Pick
+assets and timeframes because the edge lives there, not because data
+happens to be cached.
+
 # Output
 
 Return EXACTLY ONE `ResearcherHypothesis` with:

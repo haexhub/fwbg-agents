@@ -9,7 +9,6 @@ import pytest
 
 from fwbg_agents.orchestrator.plugin_catalog import PluginCatalog, PluginManifest
 from fwbg_agents.orchestrator.strategy_validator import (
-    KNOWN_DATASOURCES,
     KNOWN_FILTERS,
     KNOWN_MODELS,
     KNOWN_PIPELINES,
@@ -156,7 +155,6 @@ def test_known_constants_are_non_empty():
     assert KNOWN_FILTERS
     assert KNOWN_VALIDATIONS
     assert KNOWN_RESOURCES
-    assert KNOWN_DATASOURCES
     assert KNOWN_TIMEFRAMES
 
 
@@ -407,3 +405,22 @@ def test_legacy_pipeline_string_checked_against_live_presets():
     validate_strategy_json(good, presets=presets)
     with pytest.raises(StrategyValidationError, match="pipeline"):
         validate_strategy_json(dict(VALID_FIXTURE), presets=presets)
+
+
+def test_datasource_checked_against_live_configured_sources():
+    """The frozen 'forexsb' default caused instantly-failing runs on machines
+    where only e.g. 'eur-usd' is configured — the live list must win."""
+    good = {**INLINE_FIXTURE, "datasource": "eur-usd"}
+    validate_strategy_json(good, catalog=_INLINE_CATALOG, datasources=["eur-usd"])
+    with pytest.raises(StrategyValidationError, match="datasource"):
+        # 'forexsb' is not configured on this deployment.
+        validate_strategy_json(
+            dict(INLINE_FIXTURE), catalog=_INLINE_CATALOG, datasources=["eur-usd"]
+        )
+
+
+def test_datasource_unchecked_without_live_list():
+    """No hardcoded datasource fallback exists anymore: offline (no live
+    list) the ref passes unchecked — the Runner is the ultimate validator."""
+    any_name = {**INLINE_FIXTURE, "datasource": "whatever-source"}
+    validate_strategy_json(any_name, catalog=_INLINE_CATALOG, datasources=None)
