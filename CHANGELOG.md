@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.9.1](https://github.com/haexhub/fwbg-agents/compare/v0.9.0...v0.9.1) (2026-07-03)
+
+
+### Bug Fixes
+
+* **docker:** stop ignoring prompts/ in the build context ([96264e6](https://github.com/haexhub/fwbg-agents/commit/96264e6d0f616a5ad666502e48fc4422d38510e5))
+* **docker:** stop ignoring prompts/ in the build context ([cebd45d](https://github.com/haexhub/fwbg-agents/commit/cebd45da9b5b5a7e1530c4a53bd0d8274313d03c))
+
 ## [0.9.0](https://github.com/haexhub/fwbg-agents/compare/v0.8.0...v0.9.0) (2026-07-03)
 
 
