@@ -31,12 +31,7 @@ from fwbg_agents.orchestrator.hypotheses import generate_slug
 from fwbg_agents.orchestrator.lifecycle import strategy_dir
 from fwbg_agents.orchestrator.live_catalog import LiveCatalog, fetch_live_catalog
 from fwbg_agents.orchestrator.strategy_validator import (
-    KNOWN_DATASOURCES,
-    KNOWN_FILTERS,
-    KNOWN_MODELS,
-    KNOWN_PIPELINES,
     KNOWN_RESOURCES,
-    KNOWN_TIMEFRAMES,
     KNOWN_VALIDATIONS,
     StrategyValidationError,
     validate_strategy_json,
@@ -102,18 +97,6 @@ def _render_prompt(template: str, *, hypothesis_json: str, known_plugins_json: s
     )
 
 
-def _known_plugins_dict() -> dict[str, list[str]]:
-    return {
-        "datasource": sorted(KNOWN_DATASOURCES),
-        "pipeline": sorted(KNOWN_PIPELINES),
-        "model": sorted(KNOWN_MODELS),
-        "filters": sorted(KNOWN_FILTERS),
-        "validation": sorted(KNOWN_VALIDATIONS),
-        "resources": sorted(KNOWN_RESOURCES),
-        "timeframe": sorted(KNOWN_TIMEFRAMES),
-    }
-
-
 def _catalog_prompt_dict(live: LiveCatalog) -> dict:
     """Render the live catalog into the prompt's `known_plugins_json` blob.
 
@@ -132,8 +115,11 @@ def _catalog_prompt_dict(live: LiveCatalog) -> dict:
         "validation_presets": live.presets.get("validations")
         or sorted(KNOWN_VALIDATIONS),
         "resources_presets": live.presets.get("resources") or sorted(KNOWN_RESOURCES),
-        "datasources": sorted(KNOWN_DATASOURCES),
-        "timeframes": sorted(KNOWN_TIMEFRAMES),
+        # Configured datasources (their asset lists = CURRENT downloads; more
+        # is fetched on demand) plus the full downloadable asset registry.
+        "datasources": live.datasources,
+        "asset_registry": live.asset_registry,
+        "timeframes": live.timeframes,
     }
 
 
@@ -249,7 +235,11 @@ class Translator:
 
             try:
                 validate_strategy_json(
-                    payload, catalog=live.catalog, presets=live.presets
+                    payload,
+                    catalog=live.catalog,
+                    presets=live.presets,
+                    datasources=live.datasource_names() or None,
+                    timeframes=live.timeframes or None,
                 )
             except StrategyValidationError as exc:
                 raise TranslatorError(str(exc)) from exc
@@ -357,7 +347,11 @@ class Translator:
             try:
                 live = await fetch_live_catalog(self.session, self.fwbg_client)
                 validate_strategy_json(
-                    child_payload, catalog=live.catalog, presets=live.presets
+                    child_payload,
+                    catalog=live.catalog,
+                    presets=live.presets,
+                    datasources=live.datasource_names() or None,
+                    timeframes=live.timeframes or None,
                 )
             except StrategyValidationError as exc:
                 raise TranslatorError(str(exc)) from exc
@@ -523,7 +517,11 @@ class Translator:
             live = await fetch_live_catalog(self.session, self.fwbg_client)
             try:
                 validate_strategy_json(
-                    child_payload, catalog=live.catalog, presets=live.presets
+                    child_payload,
+                    catalog=live.catalog,
+                    presets=live.presets,
+                    datasources=live.datasource_names() or None,
+                    timeframes=live.timeframes or None,
                 )
             except StrategyValidationError as exc:
                 raise TranslatorError(str(exc)) from exc

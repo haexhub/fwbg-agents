@@ -17,12 +17,14 @@ from datetime import UTC, datetime
 from typing import Any
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
+from pydantic import BaseModel
 from sqlalchemy import desc, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from fwbg_agents.agents.analyst import Analyst
 from fwbg_agents.agents.runner import Runner
 from fwbg_agents.config import settings
+from fwbg_agents.orchestrator import auto_runner
 from fwbg_agents.orchestrator.lifecycle import strategy_dir
 from fwbg_agents.orchestrator.recommendations import validate_and_apply
 from fwbg_agents.persistence.database import SessionLocal, get_session
@@ -102,6 +104,24 @@ async def _run_analyst_background(strategy_id: int) -> None:
 # ---------------------------------------------------------------------------
 # Endpoints
 # ---------------------------------------------------------------------------
+
+
+@router.get("/runner/auto")
+async def get_runner_auto() -> dict[str, Any]:
+    """Current state of the Runner auto mode (persisted flag)."""
+    return {"enabled": auto_runner.is_enabled()}
+
+
+class RunnerAutoUpdate(BaseModel):
+    enabled: bool
+
+
+@router.put("/runner/auto")
+async def put_runner_auto(body: RunnerAutoUpdate) -> dict[str, Any]:
+    """Enable/disable the Runner auto mode. Takes effect on the next poll
+    cycle of the background loop — no restart needed."""
+    auto_runner.set_enabled(body.enabled)
+    return {"enabled": auto_runner.is_enabled()}
 
 
 @router.post("/strategies/{strategy_id}/run", status_code=202)

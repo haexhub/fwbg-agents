@@ -25,6 +25,10 @@ ENV PYTHONUNBUFFERED=1 \
 # source must live at the same location here as in the builder.
 COPY --from=builder /app/.venv /app/.venv
 COPY src/ src/
+# plugin_planner/plugin_implementer load their persona from the repo-root
+# prompts/ dir (see tools/agent_config.DEFAULT_PROMPT_PATHS) — without it
+# /agents/config 500s and plugin authoring cannot start.
+COPY prompts/ prompts/
 COPY alembic.ini ./
 
 # Persisted via the agents-data volume (sqlite state.db + criteria files)

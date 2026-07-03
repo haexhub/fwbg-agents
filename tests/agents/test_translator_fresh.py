@@ -29,6 +29,7 @@ from fwbg_agents.persistence.models import (
 def make_live_catalog(
     categories: dict[str, list[str]] | None = None,
     presets: dict[str, list[str]] | None = None,
+    datasources: list[dict] | None = None,
 ) -> LiveCatalog:
     """Canned LiveCatalog for tests — replaces the live fwbg API fetch."""
     categories = categories if categories is not None else {
@@ -55,6 +56,7 @@ def make_live_catalog(
         catalog=PluginCatalog(by_category=by_category),
         plugin_details=details,
         presets=presets or {},
+        datasources=datasources or [],
     )
 
 
@@ -214,6 +216,26 @@ async def test_fresh_unknown_plugin_slug_fails(db_with_strategy):
         s = (await session.execute(select(Strategy).where(Strategy.id == strategy_id))).scalar_one()
         translator = Translator(session, model=_stub_model(bad))
         with pytest.raises(TranslatorError):
+            await translator.run_fresh(s)
+
+
+@pytest.mark.asyncio
+async def test_fresh_unconfigured_datasource_fails(db_with_strategy, monkeypatch):
+    """A datasource that fwbg does not have configured (e.g. the old frozen
+    'forexsb' default on a machine that only has 'eur-usd') must be rejected
+    at translate time — not fail silently at run start."""
+    live = make_live_catalog(datasources=[{"name": "eur-usd", "assets": []}])
+
+    async def _fetch(_session, _client):
+        return live
+
+    monkeypatch.setattr(translator_module, "fetch_live_catalog", _fetch)
+
+    SessionMaker, strategy_id, *_ = db_with_strategy
+    async with SessionMaker() as session:
+        s = (await session.execute(select(Strategy).where(Strategy.id == strategy_id))).scalar_one()
+        translator = Translator(session, model=_stub_model(VALID_OUTPUT))  # forexsb
+        with pytest.raises(TranslatorError, match="datasource"):
             await translator.run_fresh(s)
 
 
