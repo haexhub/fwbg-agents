@@ -66,8 +66,14 @@ class LiveCatalog(BaseModel):
     entry_modifiers: list[dict[str, Any]] = Field(default_factory=list)
     # section → available preset names in the fwbg workspace.
     presets: dict[str, list[str]] = Field(default_factory=dict)
+    # Datasources actually configured in fwbg — a strategy referencing any
+    # other name cannot be backtested. [{name, assets: [{symbol, timeframes}]}]
+    datasources: list[dict[str, Any]] = Field(default_factory=list)
     # True when fwbg answered; False on the offline/filesystem fallback.
     from_api: bool = True
+
+    def datasource_names(self) -> list[str]:
+        return [d["name"] for d in self.datasources if d.get("name")]
 
 
 def researcher_summary(live: LiveCatalog) -> dict[str, Any]:
@@ -88,6 +94,8 @@ def researcher_summary(live: LiveCatalog) -> dict[str, Any]:
     } | {
         "exit_modifiers": _slim(live.exit_modifiers),
         "entry_modifiers": _slim(live.entry_modifiers),
+        # What data exists — grounds suggested_universe in testable symbols.
+        "datasources": live.datasources,
     }
 
 
@@ -157,10 +165,38 @@ async def _fetch_from_api(session: AsyncSession, fwbg: FwbgClient) -> LiveCatalo
             e["id"] for e in entries if isinstance(e, dict) and e.get("id")
         )
 
+    datasources = await _fetch_datasources(fwbg)
+
     return LiveCatalog(
         catalog=catalog,
         plugin_details=details,
         exit_modifiers=exit_modifiers,
         entry_modifiers=entry_modifiers,
         presets=presets,
+        datasources=datasources,
     )
+
+
+async def _fetch_datasources(fwbg: FwbgClient) -> list[dict[str, Any]]:
+    """Configured datasources + what data each actually has, so the Translator
+    picks a datasource/timeframe a backtest can run on."""
+    sources = await fwbg.get_datasources()
+    try:
+        availability = await fwbg.get_datasource_assets()
+        assets = availability.get("assets", [])
+    except Exception:
+        log.warning("could not fetch datasource assets; listing names only")
+        assets = []
+
+    by_source: dict[str, list[dict[str, Any]]] = {}
+    for a in assets:
+        source = a.get("source")
+        if source:
+            by_source.setdefault(source, []).append(
+                {"symbol": a.get("symbol"), "timeframes": a.get("timeframes", [])}
+            )
+    return [
+        {"name": s["name"], "assets": by_source.get(s["name"], [])}
+        for s in sources
+        if s.get("name")
+    ]

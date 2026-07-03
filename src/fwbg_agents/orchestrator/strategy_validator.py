@@ -291,10 +291,12 @@ def validate_strategy_json(
     *,
     catalog: PluginCatalog | None = None,
     presets: dict[str, list[str]] | None = None,
+    datasources: list[str] | None = None,
 ) -> None:
     """Structural validation. Pass `catalog` to route plugin-name lookups
-    through the runtime PluginCatalog and `presets` (section → names, from the
-    fwbg workspace) for preset-string refs; without them the M4 frozenset
+    through the runtime PluginCatalog, `presets` (section → names, from the
+    fwbg workspace) for preset-string refs, and `datasources` (names actually
+    configured in fwbg) for the datasource ref; without them the M4 frozenset
     fallbacks apply.
     """
     if not isinstance(data, dict):
@@ -308,10 +310,11 @@ def validate_strategy_json(
         if not isinstance(data[field], str):
             raise StrategyValidationError(f"{field} must be a string")
 
-    if data["datasource"] not in KNOWN_DATASOURCES:
+    allowed_datasources = datasources or sorted(KNOWN_DATASOURCES)
+    if data["datasource"] not in allowed_datasources:
         raise StrategyValidationError(
-            f"datasource={data['datasource']!r} is not in the known catalog "
-            f"({sorted(KNOWN_DATASOURCES)})."
+            f"datasource={data['datasource']!r} is not configured in fwbg "
+            f"({allowed_datasources}).{_suggest(data['datasource'], list(allowed_datasources))}"
         )
     if data["timeframe"] not in KNOWN_TIMEFRAMES:
         raise StrategyValidationError(

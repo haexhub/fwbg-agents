@@ -132,7 +132,10 @@ def _catalog_prompt_dict(live: LiveCatalog) -> dict:
         "validation_presets": live.presets.get("validations")
         or sorted(KNOWN_VALIDATIONS),
         "resources_presets": live.presets.get("resources") or sorted(KNOWN_RESOURCES),
-        "datasources": sorted(KNOWN_DATASOURCES),
+        # Configured datasources incl. which symbols/timeframes actually have
+        # data — a strategy referencing anything else cannot be backtested.
+        "datasources": live.datasources
+        or [{"name": n, "assets": []} for n in sorted(KNOWN_DATASOURCES)],
         "timeframes": sorted(KNOWN_TIMEFRAMES),
     }
 
@@ -249,7 +252,10 @@ class Translator:
 
             try:
                 validate_strategy_json(
-                    payload, catalog=live.catalog, presets=live.presets
+                    payload,
+                    catalog=live.catalog,
+                    presets=live.presets,
+                    datasources=live.datasource_names() or None,
                 )
             except StrategyValidationError as exc:
                 raise TranslatorError(str(exc)) from exc
@@ -357,7 +363,10 @@ class Translator:
             try:
                 live = await fetch_live_catalog(self.session, self.fwbg_client)
                 validate_strategy_json(
-                    child_payload, catalog=live.catalog, presets=live.presets
+                    child_payload,
+                    catalog=live.catalog,
+                    presets=live.presets,
+                    datasources=live.datasource_names() or None,
                 )
             except StrategyValidationError as exc:
                 raise TranslatorError(str(exc)) from exc
@@ -523,7 +532,10 @@ class Translator:
             live = await fetch_live_catalog(self.session, self.fwbg_client)
             try:
                 validate_strategy_json(
-                    child_payload, catalog=live.catalog, presets=live.presets
+                    child_payload,
+                    catalog=live.catalog,
+                    presets=live.presets,
+                    datasources=live.datasource_names() or None,
                 )
             except StrategyValidationError as exc:
                 raise TranslatorError(str(exc)) from exc

@@ -13,9 +13,12 @@ the next agent run; in-flight runs are not hot-reloaded.
 from __future__ import annotations
 
 import json
+import logging
 from pathlib import Path
 
 from fwbg_agents.config import settings
+
+log = logging.getLogger(__name__)
 
 # LLM-driven roles whose model + persona are user-configurable. The
 # deterministic agents (Runner, Calibrator, PluginEvaluator) are intentionally
@@ -117,7 +120,14 @@ def set_prompt_override(agent_name: str, text: str | None) -> None:
 
 
 def default_prompt(agent_name: str) -> str:
-    return DEFAULT_PROMPT_PATHS[agent_name].read_text(encoding="utf-8")
+    path = DEFAULT_PROMPT_PATHS[agent_name]
+    try:
+        return path.read_text(encoding="utf-8")
+    except OSError:
+        # A missing bundled prompt (broken image packaging) must degrade to an
+        # empty default, not 500 the whole /agents/config endpoint.
+        log.warning("default prompt for %s missing at %s", agent_name, path)
+        return ""
 
 
 def effective_prompt(agent_name: str) -> str:

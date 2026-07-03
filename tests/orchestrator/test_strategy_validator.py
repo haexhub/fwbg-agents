@@ -407,3 +407,19 @@ def test_legacy_pipeline_string_checked_against_live_presets():
     validate_strategy_json(good, presets=presets)
     with pytest.raises(StrategyValidationError, match="pipeline"):
         validate_strategy_json(dict(VALID_FIXTURE), presets=presets)
+
+
+def test_datasource_checked_against_live_configured_sources():
+    """The frozen 'forexsb' default caused instantly-failing runs on machines
+    where only e.g. 'eur-usd' is configured — the live list must win."""
+    good = {**INLINE_FIXTURE, "datasource": "eur-usd"}
+    validate_strategy_json(good, catalog=_INLINE_CATALOG, datasources=["eur-usd"])
+    with pytest.raises(StrategyValidationError, match="datasource"):
+        # 'forexsb' is not configured on this deployment.
+        validate_strategy_json(
+            dict(INLINE_FIXTURE), catalog=_INLINE_CATALOG, datasources=["eur-usd"]
+        )
+
+
+def test_datasource_falls_back_to_frozenset_without_live_list():
+    validate_strategy_json(dict(INLINE_FIXTURE), catalog=_INLINE_CATALOG, datasources=None)

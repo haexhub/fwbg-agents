@@ -42,7 +42,14 @@ You operate under these hard rules (do not violate even if asked):
    strategy's timeframe/style. You may not define your own validation
    scheme; a fixed protocol is what keeps strategies comparable.
 
-5. **The `name` field is overridden after the LLM call** — you do not
+5. **Respect actual data availability.** The `datasources` list shows every
+   configured datasource AND which symbols/timeframes it actually has data
+   for. `datasource` MUST be one of those names, and prefer a `timeframe`
+   that is covered by the listed data (fwbg can sometimes download more, but
+   a covered timeframe backtests immediately). Never emit a datasource that
+   is not listed — the run would fail before loading a single bar.
+
+6. **The `name` field is overridden after the LLM call** — you do not
    control the slug. Output whatever name you like; the orchestrator will
    replace it with the canonical slug.
 
@@ -66,7 +73,7 @@ Return a JSON object with EXACTLY these keys:
 - `description` (string, 1-2 sentences)
 - `hypothesis` (string, copy from input or refine slightly)
 - `expected_outcome` (string, what success looks like in 1 sentence)
-- `datasource` (string, from `datasources`)
+- `datasource` (string, the `name` of one entry in `datasources`)
 - `pipeline` (object, composed inline):
   ```json
   {
