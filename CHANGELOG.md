@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.9.3](https://github.com/haexhub/fwbg-agents/compare/v0.9.2...v0.9.3) (2026-07-03)
+
+
+### Bug Fixes
+
+* **runner:** survive transient fwbg outages mid-backtest + 8h backtest cap ([7f95397](https://github.com/haexhub/fwbg-agents/commit/7f953978f18048dc79451a5ed021c39ed51f7677))
+* **runner:** survive transient fwbg outages mid-backtest + realistic timeout ([7a0a7b0](https://github.com/haexhub/fwbg-agents/commit/7a0a7b00983cdee7289500ac5a1344f83b855917))
+
 ## [0.9.2](https://github.com/haexhub/fwbg-agents/compare/v0.9.1...v0.9.2) (2026-07-03)
 
 
