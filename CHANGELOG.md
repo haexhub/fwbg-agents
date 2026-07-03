@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.9.0](https://github.com/haexhub/fwbg-agents/compare/v0.8.0...v0.9.0) (2026-07-03)
+
+
+### Features
+
+* **catalog:** asset registry in the live catalog — data is fetched on demand ([6419c0d](https://github.com/haexhub/fwbg-agents/commit/6419c0da1c36c6243fd9f5b728c4c28bc2b73055))
+* **runner:** auto mode + live timeframes + full-history awareness ([7ef9fe3](https://github.com/haexhub/fwbg-agents/commit/7ef9fe3b1c5160972a8582379d54cd0355b234a3))
+* **runner:** auto mode + live timeframes + full-history awareness ([4a65a90](https://github.com/haexhub/fwbg-agents/commit/4a65a9099235b3625dc822379f460109c6f17207))
+
+
+### Bug Fixes
+
+* **agents:** ship prompts/ in the image + validate datasources against fwbg ([a678aaf](https://github.com/haexhub/fwbg-agents/commit/a678aaf25393dc0ec5409b5a54c7d3707cc7933a))
+* **agents:** ship prompts/ in the image + validate datasources against fwbg ([7d15a10](https://github.com/haexhub/fwbg-agents/commit/7d15a1085af2fd65c3ef5bda52a7658cfa2c3ff9))
+
 ## [0.8.0](https://github.com/haexhub/fwbg-agents/compare/v0.7.0...v0.8.0) (2026-07-03)
 
 
