@@ -108,20 +108,29 @@ async def _run_analyst_background(strategy_id: int) -> None:
 
 @router.get("/runner/auto")
 async def get_runner_auto() -> dict[str, Any]:
-    """Current state of the Runner auto mode (persisted flag)."""
-    return {"enabled": auto_runner.is_enabled()}
+    """Current state of the Runner auto mode (persisted flags)."""
+    return {
+        "enabled": auto_runner.is_enabled(),
+        "pipeline_min_proposed": auto_runner.get_pipeline_min_proposed(),
+    }
 
 
 class RunnerAutoUpdate(BaseModel):
-    enabled: bool
+    enabled: bool | None = None
+    pipeline_min_proposed: int | None = None
 
 
 @router.put("/runner/auto")
 async def put_runner_auto(body: RunnerAutoUpdate) -> dict[str, Any]:
-    """Enable/disable the Runner auto mode. Takes effect on the next poll
-    cycle of the background loop — no restart needed."""
-    auto_runner.set_enabled(body.enabled)
-    return {"enabled": auto_runner.is_enabled()}
+    """Update Runner auto mode settings. Any omitted field is left unchanged."""
+    if body.enabled is not None:
+        auto_runner.set_enabled(body.enabled)
+    if body.pipeline_min_proposed is not None:
+        auto_runner.set_pipeline_min_proposed(body.pipeline_min_proposed)
+    return {
+        "enabled": auto_runner.is_enabled(),
+        "pipeline_min_proposed": auto_runner.get_pipeline_min_proposed(),
+    }
 
 
 @router.post("/strategies/{strategy_id}/run", status_code=202)

@@ -87,23 +87,32 @@ async def test_skips_untranslated_and_non_proposed(env):
         assert await auto_runner.pick_next_strategy_id(session) == ready
 
 
-async def test_single_flight_while_backtest_or_research_active(env):
+async def test_single_flight_while_runner_active(env):
     Session, make_strategy, add_run = env
     await make_strategy("orb__forex__001")
 
     from sqlalchemy import update
 
-    for busy_agent in ("runner", "research_flow", "reiterate"):
-        await add_run(busy_agent, AgentRunStatus.RUNNING)
-        async with Session() as session:
-            assert await auto_runner.pick_next_strategy_id(session) is None
-        # mark done → unblocked again
-        async with Session() as s:
-            await s.execute(update(AgentRun).values(status=AgentRunStatus.DONE.value))
-            await s.commit()
+    await add_run("runner", AgentRunStatus.RUNNING)
+    async with Session() as session:
+        assert await auto_runner.pick_next_strategy_id(session) is None
+
+    async with Session() as s:
+        await s.execute(update(AgentRun).values(status=AgentRunStatus.DONE.value))
+        await s.commit()
 
     async with Session() as session:
         assert await auto_runner.pick_next_strategy_id(session) is not None
+
+
+async def test_research_does_not_block_backtest(env):
+    Session, make_strategy, add_run = env
+    await make_strategy("orb__forex__001")
+
+    for research_agent in ("research_flow", "reiterate"):
+        await add_run(research_agent, AgentRunStatus.RUNNING)
+        async with Session() as session:
+            assert await auto_runner.pick_next_strategy_id(session) is not None
 
 
 async def test_retry_cap_skips_repeatedly_failing_strategy(env):
