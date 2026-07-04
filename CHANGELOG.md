@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.11.0](https://github.com/haexhub/fwbg-agents/compare/v0.10.1...v0.11.0) (2026-07-04)
+
+
+### Features
+
+* **api:** expose pipeline_min_proposed via GET/PUT /runner/auto ([0236c74](https://github.com/haexhub/fwbg-agents/commit/0236c7433a95efd44665f1918232a38c7404ce22))
+* **auto-runner:** decouple backtest and research loops ([ff7c6fe](https://github.com/haexhub/fwbg-agents/commit/ff7c6fe0d5b74daa67df135d53761dd32f1896fc))
+* **auto-runner:** decouple backtest and research loops ([e49c95c](https://github.com/haexhub/fwbg-agents/commit/e49c95cba28df459d568038648ba0faa195aa5e9))
+* decouple backtest/research loops and expose pipeline_min_proposed API ([f6c2f06](https://github.com/haexhub/fwbg-agents/commit/f6c2f06866f835e1b9787a0c1795dfe6557421e1))
+
 ## [0.10.1](https://github.com/haexhub/fwbg-agents/compare/v0.10.0...v0.10.1) (2026-07-04)
 
 
