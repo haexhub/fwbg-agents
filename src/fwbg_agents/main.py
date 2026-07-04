@@ -36,7 +36,9 @@ async def lifespan(_app: FastAPI):
     # before the loop starts.
     await run_janitor.fail_orphaned_runs()
     auto_runner_task = asyncio.create_task(auto_runner.run_loop())
+    pipeline_fill_task = asyncio.create_task(auto_runner.pipeline_fill_loop())
     yield
+    pipeline_fill_task.cancel()
     auto_runner_task.cancel()
     await engine.dispose()
     log.info("fwbg-agents shut down")
