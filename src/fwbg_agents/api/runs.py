@@ -21,7 +21,12 @@ from pydantic import BaseModel
 from sqlalchemy import desc, nulls_last, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from fwbg_agents.agents.analyst import Analyst, ChangeExit, TuneParams, _best_symbol_metrics_from_results
+from fwbg_agents.agents.analyst import (
+    Analyst,
+    ChangeExit,
+    TuneParams,
+    _best_symbol_metrics_from_results,
+)
 from fwbg_agents.agents.runner import Runner
 from fwbg_agents.config import settings
 from fwbg_agents.orchestrator import auto_runner

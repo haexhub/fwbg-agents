@@ -28,7 +28,12 @@ from datetime import UTC, datetime
 from sqlalchemy import and_, func, not_, nulls_last, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from fwbg_agents.agents.analyst import Analyst, ChangeExit, TuneParams, _best_symbol_metrics_from_results
+from fwbg_agents.agents.analyst import (
+    Analyst,
+    ChangeExit,
+    TuneParams,
+    _best_symbol_metrics_from_results,
+)
 from fwbg_agents.agents.researcher import ResearcherInput
 from fwbg_agents.agents.runner import Runner
 from fwbg_agents.config import settings
