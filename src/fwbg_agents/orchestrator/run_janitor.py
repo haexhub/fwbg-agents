@@ -27,6 +27,7 @@ from fwbg_agents.persistence.models import AgentRun, AgentRunStatus
 log = logging.getLogger(__name__)
 
 ORPHAN_ERROR = "orphaned: the service restarted while this run was active"
+TRANSIENT_ERROR = "transient: "
 
 
 async def fail_orphaned_runs() -> int:
