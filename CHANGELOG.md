@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.10.0](https://github.com/haexhub/fwbg-agents/compare/v0.9.3...v0.10.0) (2026-07-04)
+
+
+### Features
+
+* **pipeline:** sequential researcher + auto pipeline fill ([dbbb3c8](https://github.com/haexhub/fwbg-agents/commit/dbbb3c83f29ea17e9042e4c081bc6f22e2dc2990))
+* **pipeline:** sequential researcher + auto pipeline fill ([513e54e](https://github.com/haexhub/fwbg-agents/commit/513e54efaf5a5c6a5ece39d568c035776c63b3a9))
+
+
+### Bug Fixes
+
+* **lint:** store asyncio.create_task reference to prevent GC (RUF006) ([51470d4](https://github.com/haexhub/fwbg-agents/commit/51470d43c46ad66ead7ed983239217d05dda0d2b))
+* **runner:** adopt active fwbg runs + wait for the single backtest slot ([6fe10de](https://github.com/haexhub/fwbg-agents/commit/6fe10dec41127db4f99d6062e31878572ab281ca))
+* **runner:** adopt active fwbg runs + wait for the single backtest slot ([9905932](https://github.com/haexhub/fwbg-agents/commit/990593250096bba75e67f962a401b8f9eb881434))
+
 ## [0.9.3](https://github.com/haexhub/fwbg-agents/compare/v0.9.2...v0.9.3) (2026-07-03)
 
 
