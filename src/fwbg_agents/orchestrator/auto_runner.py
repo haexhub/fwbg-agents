@@ -271,6 +271,7 @@ async def pipeline_fill_loop() -> None:
                 ar = AgentRun(
                     agent_name="research_flow",
                     status=AgentRunStatus.PENDING.value,
+                    started_at=now,
                     created_at=now,
                 )
                 session.add(ar)
