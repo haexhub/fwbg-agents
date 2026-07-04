@@ -28,11 +28,13 @@ from datetime import UTC, datetime
 from sqlalchemy import and_, func, not_, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from fwbg_agents.agents.analyst import Analyst, ChangeExit, TuneParams, _best_symbol_metrics_from_results
 from fwbg_agents.agents.researcher import ResearcherInput
 from fwbg_agents.agents.runner import Runner
 from fwbg_agents.config import settings
 from fwbg_agents.orchestrator.lifecycle import strategy_dir
-from fwbg_agents.orchestrator.research_flow import research_and_translate
+from fwbg_agents.orchestrator.recommendations import validate_and_apply
+from fwbg_agents.orchestrator.research_flow import reiterate, research_and_translate
 from fwbg_agents.orchestrator.run_janitor import ORPHAN_ERROR, TRANSIENT_ERROR
 from fwbg_agents.persistence.database import SessionLocal
 from fwbg_agents.persistence.models import (
@@ -168,6 +170,7 @@ async def tick() -> int | None:
         return None
 
     log.info("runner auto mode: starting backtest for strategy %s", sid)
+    backtest_ok = False
     async with SessionLocal() as session:
         s = (
             await session.execute(select(Strategy).where(Strategy.id == sid))
@@ -175,12 +178,63 @@ async def tick() -> int | None:
         client = FwbgClient(base_url=settings.fwbg_api_url)
         try:
             await Runner(client, session).run(s)
+            backtest_ok = True
         except Exception:
             # Runner marked its AgentRun failed; the attempt counter keeps a
             # persistently broken strategy from being retried forever.
             log.exception("runner auto mode: backtest failed for strategy %s", sid)
         finally:
             await client.aclose()
+
+    if not backtest_ok:
+        return sid
+
+    # Analyst pass: decide promote / abandon / tune / change-exit.
+    async with SessionLocal() as session:
+        s = (
+            await session.execute(select(Strategy).where(Strategy.id == sid))
+        ).scalar_one()
+        try:
+            rec = await Analyst(session).analyze(s)
+        except Exception:
+            log.exception("runner auto mode: analyst failed for strategy %s", sid)
+            return sid
+
+        results_path = strategy_dir(s.slug) / "iteration_001" / "fwbg_results.json"
+        metrics: dict[str, float] = {}
+        if results_path.is_file():
+            results = json.loads(results_path.read_text())
+            metrics = {
+                k: float(v)
+                for k, v in _best_symbol_metrics_from_results(results).items()
+                if isinstance(v, (int, float))
+            }
+
+        try:
+            await validate_and_apply(session, s, rec, metrics=metrics)
+        except Exception as exc:
+            log.warning(
+                "runner auto mode: analyst recommendation rejected for strategy %s: %s",
+                sid, exc,
+            )
+            return sid
+
+        # TuneParams / ChangeExit → create a child PROPOSED strategy so the
+        # auto-runner picks it up on the next free slot (queueing via PROPOSED
+        # state; pick_next_strategy_id ensures single-flight).
+        # AddIndicator stays manual — a plugin must be authored first.
+        if isinstance(rec, (TuneParams, ChangeExit)):
+            try:
+                child_id = await reiterate(session, sid)
+                log.info(
+                    "runner auto mode: iteration queued as strategy %s (parent %s)",
+                    child_id, sid,
+                )
+            except Exception:
+                log.exception(
+                    "runner auto mode: reiterate failed for strategy %s", sid
+                )
+
     return sid
 
 
