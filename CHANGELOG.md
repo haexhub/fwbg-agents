@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.12.2](https://github.com/haexhub/fwbg-agents/compare/v0.12.1...v0.12.2) (2026-07-04)
+
+
+### Bug Fixes
+
+* **translator:** validate inline pipeline params against schema options ([a64bf9d](https://github.com/haexhub/fwbg-agents/commit/a64bf9d479c0c1a9d38a0a8fd572ceeb5a40404d))
+* **translator:** validate inline pipeline params against schema options ([30d9a80](https://github.com/haexhub/fwbg-agents/commit/30d9a80eb4ef240f52ac45f5072bbd557d10b509))
+
 ## [0.12.1](https://github.com/haexhub/fwbg-agents/compare/v0.12.0...v0.12.1) (2026-07-04)
 
 
