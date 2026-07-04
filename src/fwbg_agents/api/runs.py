@@ -18,7 +18,7 @@ from typing import Any
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 from pydantic import BaseModel
-from sqlalchemy import desc, select
+from sqlalchemy import desc, nulls_last, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from fwbg_agents.agents.analyst import Analyst, ChangeExit, TuneParams, _best_symbol_metrics_from_results
@@ -144,6 +144,74 @@ async def put_runner_auto(body: RunnerAutoUpdate) -> dict[str, Any]:
         "enabled": auto_runner.is_enabled(),
         "pipeline_min_proposed": auto_runner.get_pipeline_min_proposed(),
     }
+
+
+@router.get("/runner/queue")
+async def get_runner_queue(session: AsyncSession = Depends(get_session)) -> dict[str, Any]:
+    """All PROPOSED strategies ordered by queue_position (nulls last), then created_at."""
+    rows = (
+        await session.execute(
+            select(Strategy)
+            .where(Strategy.current_state == "proposed")
+            .order_by(nulls_last(Strategy.queue_position), Strategy.created_at)
+        )
+    ).scalars().all()
+    return {
+        "strategies": [
+            {
+                "id": s.id,
+                "slug": s.slug,
+                "strategy_family": s.strategy_family,
+                "asset_class": s.asset_class,
+                "queue_position": s.queue_position,
+                "created_at": s.created_at.isoformat(),
+            }
+            for s in rows
+        ]
+    }
+
+
+class QueueReorderBody(BaseModel):
+    order: list[int]
+
+
+@router.put("/runner/queue")
+async def put_runner_queue(
+    body: QueueReorderBody,
+    session: AsyncSession = Depends(get_session),
+) -> dict[str, Any]:
+    """Reorder the backtest queue.
+
+    Accepts a list of strategy IDs. For each ID that belongs to a PROPOSED
+    strategy, sets queue_position = 1-based index in the supplied list.
+    IDs that are not PROPOSED are silently ignored.
+    """
+    if not body.order:
+        return {"ok": True}
+
+    proposed_ids = set(
+        (
+            await session.execute(
+                select(Strategy.id).where(
+                    Strategy.id.in_(body.order),
+                    Strategy.current_state == "proposed",
+                )
+            )
+        ).scalars().all()
+    )
+
+    position = 1
+    for strategy_id in body.order:
+        if strategy_id not in proposed_ids:
+            continue
+        s = (
+            await session.execute(select(Strategy).where(Strategy.id == strategy_id))
+        ).scalar_one()
+        s.queue_position = position
+        position += 1
+
+    await session.commit()
+    return {"ok": True}
 
 
 @router.post("/strategies/{strategy_id}/run", status_code=202)

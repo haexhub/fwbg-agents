@@ -25,7 +25,7 @@ import json
 import logging
 from datetime import UTC, datetime
 
-from sqlalchemy import and_, func, not_, or_, select
+from sqlalchemy import and_, func, not_, nulls_last, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from fwbg_agents.agents.analyst import Analyst, ChangeExit, TuneParams, _best_symbol_metrics_from_results
@@ -120,7 +120,7 @@ async def pick_next_strategy_id(session: AsyncSession) -> int | None:
         await session.execute(
             select(Strategy)
             .where(Strategy.current_state == StrategyState.PROPOSED.value)
-            .order_by(Strategy.created_at)
+            .order_by(nulls_last(Strategy.queue_position), Strategy.created_at)
         )
     ).scalars().all()
 
