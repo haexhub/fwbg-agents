@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.12.0](https://github.com/haexhub/fwbg-agents/compare/v0.11.0...v0.12.0) (2026-07-04)
+
+
+### Features
+
+* **auto-runner:** wire analyst + auto-reiterate after backtest ([887bd72](https://github.com/haexhub/fwbg-agents/commit/887bd72727d540e7b62c91476ccfef6a4070111d))
+* **auto-runner:** wire analyst + auto-reiterate after backtest ([223f66f](https://github.com/haexhub/fwbg-agents/commit/223f66f9958c8972495d5a3ef74ab46ffd47bd13))
+* **queue:** add queue_position + reorder endpoint for backtest queue ([9c48039](https://github.com/haexhub/fwbg-agents/commit/9c4803946b1dddecaaa8bf3730cd17b345fc06d2))
+
+
+### Bug Fixes
+
+* **lint:** split long analyst import lines to satisfy ruff E501 ([b9dcec9](https://github.com/haexhub/fwbg-agents/commit/b9dcec9d543e6e8e9a3bd1a0c00a41a8772bd61b))
+
 ## [0.11.0](https://github.com/haexhub/fwbg-agents/compare/v0.10.1...v0.11.0) (2026-07-04)
 
 
