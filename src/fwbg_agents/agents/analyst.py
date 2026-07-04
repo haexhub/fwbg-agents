@@ -232,7 +232,7 @@ class Analyst:
                 self.model,
                 output_type=AnalystRecommendation,
                 system_prompt=system_prompt,
-                max_result_retries=3,
+                retries={"output": 3},
             )
             t0 = time.monotonic()
             result = await agent.run("Emit your recommendation now.")
