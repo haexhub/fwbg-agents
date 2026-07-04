@@ -63,6 +63,55 @@ _PHASE_TO_FIELD: dict[str, str] = {
 }
 
 
+_INLINE_PIPELINE_PHASES = ("indicators", "preprocessing", "feature_selection", "data_loading")
+
+
+def _validate_inline_params(
+    strategy: dict,
+    plugin_schemas: list[dict],
+) -> None:
+    """Validate inline pipeline param values against each plugin's schema options.
+
+    Raises StrategyValidationError when a param value is not in the schema's
+    `options` list. Silent when schemas are unavailable (graceful degradation).
+    """
+    schema_by_name: dict[str, dict] = {
+        p["name"]: p.get("param_schema") or {}
+        for p in plugin_schemas
+        if isinstance(p.get("name"), str)
+    }
+    pipeline = strategy.get("pipeline") or {}
+    if not isinstance(pipeline, dict):
+        return
+    for phase in _INLINE_PIPELINE_PHASES:
+        entries = pipeline.get(phase)
+        if not isinstance(entries, list):
+            continue
+        for i, entry in enumerate(entries):
+            if not isinstance(entry, dict):
+                continue
+            name = entry.get("name", "")
+            param_schema = schema_by_name.get(name)
+            if not param_schema:
+                continue
+            params = entry.get("params") or {}
+            for param_name, value in params.items():
+                field_schema = param_schema.get(param_name)
+                if not isinstance(field_schema, dict):
+                    continue
+                options = field_schema.get("options") or field_schema.get("choices")
+                if not options:
+                    continue
+                values = value if isinstance(value, list) else [value]
+                bad = [v for v in values if v not in options]
+                if bad:
+                    raise StrategyValidationError(
+                        f"pipeline.{phase}[{i}] ({name!r}): param {param_name!r} "
+                        f"contains invalid value(s) {bad}. "
+                        f"Valid options: {options}"
+                    )
+
+
 class TranslatorError(RuntimeError):
     """Raised when the Translator output fails structural validation."""
 
@@ -241,6 +290,14 @@ class Translator:
                     datasources=live.datasource_names() or None,
                     timeframes=live.timeframes or None,
                 )
+                if self.fwbg_client is not None:
+                    try:
+                        plugin_schemas = await self.fwbg_client.get_plugins()
+                        _validate_inline_params(payload, plugin_schemas)
+                    except StrategyValidationError:
+                        raise
+                    except Exception as exc:
+                        log.warning("could not validate inline params (non-fatal): %s", exc)
             except StrategyValidationError as exc:
                 raise TranslatorError(str(exc)) from exc
 
