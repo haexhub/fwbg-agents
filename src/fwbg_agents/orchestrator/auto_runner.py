@@ -1,9 +1,13 @@
 """Runner auto mode: backtest waiting strategies without a human trigger.
 
-When enabled, a background loop (started from the app lifespan) checks every
-`runner_auto_poll_seconds`: if no backtest-ish agent run is active and a
-PROPOSED strategy with a strategy.json is waiting, the oldest one is picked
-and run — exactly as if the user had clicked "Run Backtest".
+When enabled, two independent background loops run concurrently:
+- `run_loop`: every `runner_auto_poll_seconds`, if no runner is active, picks
+  the oldest PROPOSED strategy with a strategy.json and backtests it.
+- `pipeline_fill_loop`: every `pipeline_fill_poll_seconds`, if the PROPOSED
+  count is below `pipeline_min_proposed`, triggers a new research cycle.
+
+The two loops are fully independent — research never blocks a backtest and
+vice versa. fwbg's own 429 / single-slot enforcement handles any concurrency.
 
 Deliberately single-flight: at most one backtest at a time (fwbg runs are
 CPU-heavy). Strategies whose auto-triggered backtests already failed
@@ -43,9 +47,6 @@ from fwbg_agents.tools.secrets import get_secret
 
 log = logging.getLogger(__name__)
 
-# Agent runs that mean "a backtest is running or imminent" — research_flow
-# and reiterate both end in an automatic backtest of their new strategy.
-_BUSY_AGENTS: tuple[str, ...] = ("runner", "research_flow", "reiterate")
 _background_tasks: set[asyncio.Task] = set()
 
 
@@ -78,7 +79,7 @@ async def pick_next_strategy_id(session: AsyncSession) -> int | None:
             select(func.count())
             .select_from(AgentRun)
             .where(
-                AgentRun.agent_name.in_(_BUSY_AGENTS),
+                AgentRun.agent_name == "runner",
                 AgentRun.status.in_(
                     [AgentRunStatus.RUNNING.value, AgentRunStatus.PENDING.value]
                 ),
