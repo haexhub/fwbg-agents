@@ -149,9 +149,9 @@ def _render_prompt(
 ) -> str:
     """Tiny mustache-style replacer — we don't need Jinja for five variables."""
     out = template
-    out = out.replace("{{ strategy.slug }}", strategy.slug)
-    out = out.replace("{{ strategy.asset_class }}", strategy.asset_class)
-    out = out.replace("{{ strategy.strategy_family }}", strategy.strategy_family)
+    out = out.replace("{{ strategy.slug }}", strategy.slug or "")
+    out = out.replace("{{ strategy.asset_class }}", strategy.asset_class or "unknown")
+    out = out.replace("{{ strategy.strategy_family }}", strategy.strategy_family or "unknown")
     out = out.replace("{{ iteration }}", str(iteration))
     out = out.replace("{{ strategy_json }}", json.dumps(strategy_json, indent=2))
     out = out.replace("{{ metrics }}", json.dumps(metrics, indent=2))
@@ -229,7 +229,10 @@ class Analyst:
             )
 
             agent = Agent(
-                self.model, output_type=AnalystRecommendation, system_prompt=system_prompt
+                self.model,
+                output_type=AnalystRecommendation,
+                system_prompt=system_prompt,
+                retries={"output": 3},
             )
             t0 = time.monotonic()
             result = await agent.run("Emit your recommendation now.")
