@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.12.1](https://github.com/haexhub/fwbg-agents/compare/v0.12.0...v0.12.1) (2026-07-04)
+
+
+### Bug Fixes
+
+* **analyst:** guard None asset_class/strategy_family and raise output retries ([85da189](https://github.com/haexhub/fwbg-agents/commit/85da189f198e35073f7bc4b6f44ba4d4e3b94da2))
+* **analyst:** guard None asset_class/strategy_family and raise output retries ([76497c2](https://github.com/haexhub/fwbg-agents/commit/76497c297d9e5a6ac1eb87625dd188dc30ef4734))
+* **analyst:** use correct pydantic-ai 2.0 retries API ([4be6ea5](https://github.com/haexhub/fwbg-agents/commit/4be6ea5d983d84b2ef0a81b14a4cd1f18e56532f))
+
 ## [0.12.0](https://github.com/haexhub/fwbg-agents/compare/v0.11.0...v0.12.0) (2026-07-04)
 
 
