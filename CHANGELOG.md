@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.10.1](https://github.com/haexhub/fwbg-agents/compare/v0.10.0...v0.10.1) (2026-07-04)
+
+
+### Bug Fixes
+
+* **auto-runner:** set started_at on pipeline-fill AgentRun ([4df50c0](https://github.com/haexhub/fwbg-agents/commit/4df50c03a860f11ff027812699057a22f357be39))
+* **auto-runner:** set started_at when creating pipeline-fill AgentRun ([e3c94dc](https://github.com/haexhub/fwbg-agents/commit/e3c94dc1a8253c352841071c4c22fe8d8e207d54))
+* **runner:** don't count transient network errors against retry budget ([d9bc680](https://github.com/haexhub/fwbg-agents/commit/d9bc680aa7c3d7714ac802e756f614d41ae3ea0a))
+* **runner:** don't count transient network errors against retry budget ([95ecfbe](https://github.com/haexhub/fwbg-agents/commit/95ecfbead38bec8f73ee27db5794152e3cc3ca70))
+
 ## [0.10.0](https://github.com/haexhub/fwbg-agents/compare/v0.9.3...v0.10.0) (2026-07-04)
 
 
