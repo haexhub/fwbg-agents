@@ -234,7 +234,10 @@ class Runner:
         except Exception as exc:
             ar.status = AgentRunStatus.FAILED.value
             ar.ended_at = datetime.now(UTC)
-            ar.error = str(exc)
+            error_str = str(exc) or repr(exc)
+            if isinstance(exc, httpx.TransportError):
+                error_str = f"transient: {error_str}"
+            ar.error = error_str
             await self.session.commit()
             raise
 

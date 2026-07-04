@@ -21,7 +21,7 @@ import json
 import logging
 from datetime import UTC, datetime
 
-from sqlalchemy import func, or_, select
+from sqlalchemy import and_, func, not_, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from fwbg_agents.agents.researcher import ResearcherInput
@@ -29,7 +29,7 @@ from fwbg_agents.agents.runner import Runner
 from fwbg_agents.config import settings
 from fwbg_agents.orchestrator.lifecycle import strategy_dir
 from fwbg_agents.orchestrator.research_flow import research_and_translate
-from fwbg_agents.orchestrator.run_janitor import ORPHAN_ERROR
+from fwbg_agents.orchestrator.run_janitor import ORPHAN_ERROR, TRANSIENT_ERROR
 from fwbg_agents.persistence.database import SessionLocal
 from fwbg_agents.persistence.models import (
     AgentRun,
@@ -107,10 +107,15 @@ async def pick_next_strategy_id(session: AsyncSession) -> int | None:
                     AgentRun.agent_name == "runner",
                     AgentRun.strategy_id == s.id,
                     AgentRun.status == AgentRunStatus.FAILED.value,
-                    # A run failed by the startup janitor was killed by a
-                    # restart, not by the strategy — it must not eat an
-                    # attempt.
-                    or_(AgentRun.error.is_(None), AgentRun.error != ORPHAN_ERROR),
+                    # Orphaned and transient-network runs were not caused by
+                    # the strategy — they must not eat an attempt budget.
+                    or_(
+                        AgentRun.error.is_(None),
+                        and_(
+                            AgentRun.error != ORPHAN_ERROR,
+                            not_(AgentRun.error.like(f"{TRANSIENT_ERROR}%")),
+                        ),
+                    ),
                 )
             )
         ).scalar_one()
@@ -271,6 +276,7 @@ async def pipeline_fill_loop() -> None:
                 ar = AgentRun(
                     agent_name="research_flow",
                     status=AgentRunStatus.PENDING.value,
+                    started_at=now,
                     created_at=now,
                 )
                 session.add(ar)
