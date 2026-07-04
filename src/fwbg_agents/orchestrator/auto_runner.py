@@ -46,6 +46,7 @@ log = logging.getLogger(__name__)
 # Agent runs that mean "a backtest is running or imminent" — research_flow
 # and reiterate both end in an automatic backtest of their new strategy.
 _BUSY_AGENTS: tuple[str, ...] = ("runner", "research_flow", "reiterate")
+_background_tasks: set[asyncio.Task] = set()
 
 
 def _config_file():
@@ -275,6 +276,8 @@ async def pipeline_fill_loop() -> None:
                 session.add(ar)
                 await session.commit()
                 await session.refresh(ar)
-                asyncio.create_task(_fill_pipeline_background(ar.id))
+                task = asyncio.create_task(_fill_pipeline_background(ar.id))
+                _background_tasks.add(task)
+                task.add_done_callback(_background_tasks.discard)
         except Exception:
             log.exception("pipeline fill loop: tick failed")
