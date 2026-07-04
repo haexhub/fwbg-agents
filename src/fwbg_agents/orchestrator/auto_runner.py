@@ -54,18 +54,43 @@ def _config_file():
     return settings.data_dir / "runner_auto.json"
 
 
-def is_enabled() -> bool:
+def _read_config() -> dict:
     try:
-        return bool(json.loads(_config_file().read_text()).get("enabled", False))
+        return json.loads(_config_file().read_text())
     except (OSError, json.JSONDecodeError):
-        return False
+        return {}
+
+
+def _write_config(cfg: dict) -> None:
+    path = _config_file()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(cfg))
+
+
+def is_enabled() -> bool:
+    return bool(_read_config().get("enabled", False))
 
 
 def set_enabled(enabled: bool) -> None:
-    path = _config_file()
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps({"enabled": bool(enabled)}))
+    cfg = _read_config()
+    cfg["enabled"] = bool(enabled)
+    _write_config(cfg)
     log.info("runner auto mode %s", "enabled" if enabled else "disabled")
+
+
+def get_pipeline_min_proposed() -> int:
+    v = _read_config().get("pipeline_min_proposed")
+    if v is None:
+        return settings.pipeline_min_proposed
+    return max(0, min(int(v), 20))
+
+
+def set_pipeline_min_proposed(value: int) -> None:
+    value = max(0, min(int(value), 20))
+    cfg = _read_config()
+    cfg["pipeline_min_proposed"] = value
+    _write_config(cfg)
+    log.info("pipeline_min_proposed set to %d", value)
 
 
 async def pick_next_strategy_id(session: AsyncSession) -> int | None:
@@ -249,7 +274,7 @@ async def pipeline_fill_loop() -> None:
     """
     log.info(
         "pipeline fill loop started (min=%d, poll=%ss)",
-        settings.pipeline_min_proposed,
+        get_pipeline_min_proposed(),
         settings.pipeline_fill_poll_seconds,
     )
     while True:
@@ -261,12 +286,13 @@ async def pipeline_fill_loop() -> None:
                 if await _research_is_busy(session):
                     continue
                 count = await _count_proposed(session)
-                if count >= settings.pipeline_min_proposed:
+                min_proposed = get_pipeline_min_proposed()
+                if count >= min_proposed:
                     continue
                 log.info(
                     "pipeline fill: %d/%d proposed — triggering research",
                     count,
-                    settings.pipeline_min_proposed,
+                    min_proposed,
                 )
                 now = datetime.now(UTC)
                 ar = AgentRun(
