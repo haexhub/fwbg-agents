@@ -32,9 +32,24 @@ class Settings(BaseSettings):
         ge=1,
         le=5,
         description=(
-            "Parallel hypothesis candidates per /research/brief call; "
-            "first to pass validate_hypothesis wins."
+            "Max sequential researcher attempts per /research/brief call; "
+            "each attempt runs alone — on failure the next starts immediately."
         ),
+    )
+    pipeline_min_proposed: int = Field(
+        default=5,
+        ge=0,
+        le=20,
+        description=(
+            "Minimum number of PROPOSED strategies to keep in the pipeline "
+            "(active when runner-auto is enabled). When below this threshold "
+            "and no research_flow is running, one asset-agnostic research run "
+            "is triggered automatically."
+        ),
+    )
+    pipeline_fill_poll_seconds: float = Field(
+        default=300.0,
+        description="How often (seconds) the pipeline fill loop checks the PROPOSED count.",
     )
 
     # fwbg
@@ -64,6 +79,9 @@ class Settings(BaseSettings):
     # up (watchtower recreates, keep-alive races). The backtest itself keeps
     # running on the fwbg side during such blips.
     runner_poll_outage_tolerance_seconds: float = 120.0
+    # fwbg enforces a single backtest slot (429 while busy) — how long to
+    # sleep between attempts to grab it.
+    runner_busy_wait_seconds: float = 30.0
 
     # On-demand data provisioning (fwbg POST /api/data/ensure, Phase 1c).
     # The adaptive Runner ensures data for its suggested symbols before a

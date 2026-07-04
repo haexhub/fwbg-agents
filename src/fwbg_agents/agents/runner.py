@@ -72,6 +72,7 @@ class RunnerError(RuntimeError):
 class _FwbgClientProto(Protocol):
     async def create_strategy(self, name: str, data: dict[str, Any]) -> dict[str, Any]: ...
     async def start_run(self, strategy_name: str, **kwargs: Any) -> dict[str, Any]: ...
+    async def list_runs(self) -> list[dict[str, Any]]: ...
     async def get_progress(self, run_id: str) -> dict[str, Any]: ...
     async def get_run(self, run_id: str) -> dict[str, Any]: ...
     async def ensure_data(self, symbol: str, **kwargs: Any) -> dict[str, Any]: ...
@@ -292,6 +293,63 @@ class Runner:
         log.info("runner: data ensure timed out for %s", symbol)
         return False
 
+    async def _acquire_run(
+        self,
+        fwbg_name: str,
+        *,
+        assets: list[str] | None,
+        asset_classes: list[str] | None,
+    ) -> str:
+        """Get a job_id for this strategy: adopt an already-active fwbg run
+        of the same strategy, or start a new one — waiting while fwbg's
+        single backtest slot is taken.
+
+        Adopting closes the duplicate-run hole: a /runs/start whose response
+        is lost in a transport blip still starts the run on the fwbg side;
+        the retry must attach to it instead of launching a second copy.
+        fwbg enforces one concurrent run (FWBG_MAX_CONCURRENT_RUNS=1) and
+        answers 429 while busy — the intended behaviour then is to wait for
+        the slot, not to burn a universe attempt.
+        """
+        deadline = time.monotonic() + settings.runner_poll_timeout_seconds
+        while True:
+            try:
+                active = [
+                    r
+                    for r in await self.fwbg.list_runs()
+                    if r.get("status") == "running"
+                    and r.get("strategy_name") == fwbg_name
+                ]
+            except (httpx.TransportError, FwbgClientError):
+                active = []
+            if active:
+                job_id = active[0].get("run_id") or active[0].get("job_id")
+                log.info(
+                    "runner: adopting already-active fwbg job %s for %s",
+                    job_id,
+                    fwbg_name,
+                )
+                return job_id
+
+            try:
+                start = await self.fwbg.start_run(
+                    fwbg_name, assets=assets, asset_classes=asset_classes
+                )
+            except FwbgClientError as exc:
+                if exc.status != 429:
+                    raise
+                if time.monotonic() >= deadline:
+                    raise RunnerError(
+                        f"fwbg backtest slot stayed busy for "
+                        f"{settings.runner_poll_timeout_seconds:.0f}s"
+                    ) from exc
+                log.info("runner: fwbg busy (429), waiting for the slot")
+                await asyncio.sleep(settings.runner_busy_wait_seconds)
+                continue
+            job_id = start["job_id"]
+            log.info("runner: started fwbg job %s", job_id)
+            return job_id
+
     async def _execute_backtest(
         self,
         fwbg_name: str,
@@ -301,11 +359,9 @@ class Runner:
     ) -> tuple[str, dict[str, Any]]:
         """Start one fwbg run and poll it to completion. Raises RunnerError on
         a failed/errored run or a polling timeout."""
-        start = await self.fwbg.start_run(
+        job_id = await self._acquire_run(
             fwbg_name, assets=assets, asset_classes=asset_classes
         )
-        job_id = start["job_id"]
-        log.info("runner: started fwbg job %s", job_id)
 
         deadline = time.monotonic() + settings.runner_poll_timeout_seconds
         status = "running"

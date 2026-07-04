@@ -19,7 +19,6 @@ the smoke script can drive the pipeline without re-implementing it.
 
 from __future__ import annotations
 
-import asyncio
 import json
 import logging
 from datetime import UTC, datetime
@@ -73,11 +72,10 @@ async def _generate_valid_hypothesis(
     fanout_n: int,
     available_plugins: dict | None = None,
 ) -> ResearcherHypothesis:
-    """Run up to `fanout_n` Researcher candidates concurrently, each in its
-    own session (decision C — AsyncSession isn't safe to share across
-    concurrent tasks, unlike the httpx-backed search_client). Returns the
-    first candidate that survives `validate_hypothesis`, in submission
-    order (decision D — no ranking across multiple valid candidates).
+    """Run up to `fanout_n` Researcher attempts sequentially. Returns the
+    first result that passes `validate_hypothesis`; on failure the next
+    attempt starts immediately. Raises ResearcherFanoutExhaustedError when
+    all attempts are exhausted.
     """
 
     async def _one_candidate() -> ResearcherHypothesis:
@@ -90,16 +88,16 @@ async def _generate_valid_hypothesis(
             )
             return await researcher.run(input)
 
-    results = await asyncio.gather(
-        *(_one_candidate() for _ in range(fanout_n)),
-        return_exceptions=True,
-    )
-    for result in results:
-        if not isinstance(result, BaseException):
-            return result
+    errors: list[BaseException] = []
+    for attempt in range(1, fanout_n + 1):
+        try:
+            return await _one_candidate()
+        except BaseException as exc:
+            log.warning("researcher attempt %d/%d failed: %s", attempt, fanout_n, exc)
+            errors.append(exc)
 
-    reasons = "; ".join(str(r) for r in results if isinstance(r, BaseException))
-    raise ResearcherFanoutExhaustedError(f"all {fanout_n} candidates rejected: {reasons}")
+    reasons = "; ".join(str(e) for e in errors)
+    raise ResearcherFanoutExhaustedError(f"all {fanout_n} attempts failed: {reasons}")
 
 
 def _render_research_notes(hypothesis: ResearcherHypothesis) -> str:
