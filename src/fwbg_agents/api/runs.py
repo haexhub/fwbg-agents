@@ -18,15 +18,21 @@ from typing import Any
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 from pydantic import BaseModel
-from sqlalchemy import desc, select
+from sqlalchemy import desc, nulls_last, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from fwbg_agents.agents.analyst import Analyst
+from fwbg_agents.agents.analyst import (
+    Analyst,
+    ChangeExit,
+    TuneParams,
+    _best_symbol_metrics_from_results,
+)
 from fwbg_agents.agents.runner import Runner
 from fwbg_agents.config import settings
 from fwbg_agents.orchestrator import auto_runner
 from fwbg_agents.orchestrator.lifecycle import strategy_dir
 from fwbg_agents.orchestrator.recommendations import validate_and_apply
+from fwbg_agents.orchestrator.research_flow import reiterate
 from fwbg_agents.persistence.database import SessionLocal, get_session
 from fwbg_agents.persistence.models import (
     AgentRun,
@@ -79,15 +85,11 @@ async def _run_analyst_background(strategy_id: int) -> None:
         analyst = Analyst(session)
         try:
             rec = await analyst.analyze(s)
-            iteration_dir = strategy_dir(s.slug) / "iteration_001"
-            results_path = iteration_dir / "fwbg_results.json"
+            results_path = strategy_dir(s.slug) / "iteration_001" / "fwbg_results.json"
             metrics: dict[str, float] = {}
             if results_path.is_file():
                 import json as _json
-
                 results = _json.loads(results_path.read_text())
-                from fwbg_agents.agents.analyst import _best_symbol_metrics_from_results
-
                 metrics = {
                     k: float(v)
                     for k, v in _best_symbol_metrics_from_results(results).items()
@@ -97,6 +99,22 @@ async def _run_analyst_background(strategy_id: int) -> None:
                 await validate_and_apply(session, s, rec, metrics=metrics)
             except Exception as exc:
                 log.warning("analyst recommendation rejected: %s", exc)
+                return
+
+            # TuneParams / ChangeExit → queue a child PROPOSED strategy for
+            # the auto-runner to pick up on the next free slot.
+            # AddIndicator stays manual — a plugin must be authored first.
+            if isinstance(rec, (TuneParams, ChangeExit)):
+                try:
+                    child_id = await reiterate(session, strategy_id)
+                    log.info(
+                        "analyst: iteration queued as strategy %s (parent %s)",
+                        child_id, strategy_id,
+                    )
+                except Exception:
+                    log.exception(
+                        "analyst: reiterate failed for strategy %s", strategy_id
+                    )
         except Exception:
             log.exception("analyst background task failed for strategy %s", strategy_id)
 
@@ -131,6 +149,74 @@ async def put_runner_auto(body: RunnerAutoUpdate) -> dict[str, Any]:
         "enabled": auto_runner.is_enabled(),
         "pipeline_min_proposed": auto_runner.get_pipeline_min_proposed(),
     }
+
+
+@router.get("/runner/queue")
+async def get_runner_queue(session: AsyncSession = Depends(get_session)) -> dict[str, Any]:
+    """All PROPOSED strategies ordered by queue_position (nulls last), then created_at."""
+    rows = (
+        await session.execute(
+            select(Strategy)
+            .where(Strategy.current_state == "proposed")
+            .order_by(nulls_last(Strategy.queue_position), Strategy.created_at)
+        )
+    ).scalars().all()
+    return {
+        "strategies": [
+            {
+                "id": s.id,
+                "slug": s.slug,
+                "strategy_family": s.strategy_family,
+                "asset_class": s.asset_class,
+                "queue_position": s.queue_position,
+                "created_at": s.created_at.isoformat(),
+            }
+            for s in rows
+        ]
+    }
+
+
+class QueueReorderBody(BaseModel):
+    order: list[int]
+
+
+@router.put("/runner/queue")
+async def put_runner_queue(
+    body: QueueReorderBody,
+    session: AsyncSession = Depends(get_session),
+) -> dict[str, Any]:
+    """Reorder the backtest queue.
+
+    Accepts a list of strategy IDs. For each ID that belongs to a PROPOSED
+    strategy, sets queue_position = 1-based index in the supplied list.
+    IDs that are not PROPOSED are silently ignored.
+    """
+    if not body.order:
+        return {"ok": True}
+
+    proposed_ids = set(
+        (
+            await session.execute(
+                select(Strategy.id).where(
+                    Strategy.id.in_(body.order),
+                    Strategy.current_state == "proposed",
+                )
+            )
+        ).scalars().all()
+    )
+
+    position = 1
+    for strategy_id in body.order:
+        if strategy_id not in proposed_ids:
+            continue
+        s = (
+            await session.execute(select(Strategy).where(Strategy.id == strategy_id))
+        ).scalar_one()
+        s.queue_position = position
+        position += 1
+
+    await session.commit()
+    return {"ok": True}
 
 
 @router.post("/strategies/{strategy_id}/run", status_code=202)

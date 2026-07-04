@@ -150,6 +150,7 @@ class Strategy(Base):
     model_knowledge_only: Mapped[bool] = mapped_column(
         Boolean, nullable=False, server_default="0", default=False
     )
+    queue_position: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
