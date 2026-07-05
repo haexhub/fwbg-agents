@@ -37,14 +37,16 @@ class Settings(BaseSettings):
         ),
     )
     pipeline_min_proposed: int = Field(
-        default=5,
+        default=1,
         ge=0,
         le=20,
         description=(
-            "Minimum number of PROPOSED strategies to keep in the pipeline "
-            "(active when runner-auto is enabled). When below this threshold "
-            "and no research_flow is running, one asset-agnostic research run "
-            "is triggered automatically."
+            "Minimum number of active strategies (PROPOSED + BACKTESTED) to "
+            "keep in the pipeline (active when runner-auto is enabled). When "
+            "below this threshold and no research_flow is running, one "
+            "asset-agnostic research run is triggered. Default 1 enforces "
+            "iteration-first: the current strategy line (PROPOSED → backtest "
+            "→ reiterate …) must fully resolve before a new one is researched."
         ),
     )
     pipeline_fill_poll_seconds: float = Field(

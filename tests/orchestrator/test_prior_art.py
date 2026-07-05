@@ -160,3 +160,24 @@ async def test_cap_at_20_matches(db):
         await _seed(db, f"s_{i:03d}", "ORB", "FOREX", ["intraday", "momentum"])
     matches = await lookup_prior_art(db, "ORB", "FOREX", ["intraday", "momentum"])
     assert len(matches) == 20
+
+
+@pytest.mark.asyncio
+async def test_agnostic_lookup_scans_all_asset_classes(db):
+    """asset_class=None must find strategies in other classes (not just None-class)."""
+    await _seed(db, "forex_a", "ORB", "FOREX", ["intraday", "momentum"])
+    await _seed(db, "index_b", "ORB", "INDEX", ["intraday", "momentum"])
+    await _seed(db, "agnostic_c", "ORB", None, ["intraday", "momentum"])
+    matches = await lookup_prior_art(db, "ORB", None, ["intraday", "momentum"])
+    slugs = {m.slug for m in matches}
+    assert slugs == {"forex_a", "index_b", "agnostic_c"}
+
+
+@pytest.mark.asyncio
+async def test_empty_string_asset_class_normalised_to_none(db):
+    """LLM passes '' for asset-agnostic; must behave identically to None."""
+    await _seed(db, "agnostic_a", "ORB", None, ["intraday"])
+    await _seed(db, "forex_b", "ORB", "FOREX", ["intraday"])
+    matches_none = await lookup_prior_art(db, "ORB", None, ["intraday"])
+    matches_empty = await lookup_prior_art(db, "ORB", "", ["intraday"])
+    assert {m.slug for m in matches_none} == {m.slug for m in matches_empty}
