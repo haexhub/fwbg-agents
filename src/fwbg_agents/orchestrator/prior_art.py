@@ -28,7 +28,7 @@ class PriorArtMatch(BaseModel):
     slug: str
     current_state: str
     strategy_family: str
-    asset_class: str
+    asset_class: str | None  # None for asset-agnostic strategies
     tags_overlap: list[str]
     jaccard: float
     post_mortem_path: str | None = None
@@ -60,21 +60,35 @@ def _load_summary(path_str: str | None) -> str | None:
 async def lookup_prior_art(
     session: AsyncSession,
     strategy_family: str,
-    asset_class: str,
+    asset_class: str | None,
     tags: list[str],
 ) -> list[PriorArtMatch]:
     """Return prior strategies whose tags overlap with the candidate's.
 
-    Filtered by exact `asset_class`. A strategy with the same `strategy_family`
-    is kept even if its tag overlap is below threshold (the Researcher should
-    still see family neighbours). Sorted by descending Jaccard similarity, with
-    same-family matches breaking ties.
+    For class-pinned research (asset_class set), only same-class strategies are
+    scanned to avoid penalising unrelated families in other markets.
+
+    For asset-agnostic research (asset_class=None or ""), ALL strategies are
+    scanned — otherwise asset-agnostic strategies would never see each other and
+    the anti-redundancy gate would be blind to same-family repeats. The LLM
+    passes "" for asset-agnostic; the DB stores None — both are normalised here.
+
+    A strategy with the same `strategy_family` is always included even if its
+    tag overlap is below threshold. Sorted by descending Jaccard, same-family
+    as tiebreaker.
     """
+    # Normalise: LLM passes "" for asset-agnostic; DB stores None.
+    if asset_class == "":
+        asset_class = None
+
     input_tags = set(tags)
 
-    rows = (
-        await session.execute(select(Strategy).where(Strategy.asset_class == asset_class))
-    ).scalars().all()
+    if asset_class is not None:
+        stmt = select(Strategy).where(Strategy.asset_class == asset_class)
+    else:
+        stmt = select(Strategy)
+
+    rows = (await session.execute(stmt)).scalars().all()
     if not rows:
         return []
 
