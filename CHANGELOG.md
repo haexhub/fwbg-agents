@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.13.0](https://github.com/haexhub/fwbg-agents/compare/v0.12.2...v0.13.0) (2026-07-05)
+
+
+### Features
+
+* **pipeline:** iteration-first — prefer depth over breadth in auto-runner ([92ddf35](https://github.com/haexhub/fwbg-agents/commit/92ddf35611bd37837eff0cd06959ee5f9dfa7af9))
+* **pipeline:** iteration-first — prefer depth over breadth in auto-runner ([2ded03d](https://github.com/haexhub/fwbg-agents/commit/2ded03dfb08cfd3275629de3cd986118b72ea789))
+
 ## [0.12.2](https://github.com/haexhub/fwbg-agents/compare/v0.12.1...v0.12.2) (2026-07-04)
 
 
