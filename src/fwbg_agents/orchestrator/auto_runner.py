@@ -258,12 +258,24 @@ async def run_loop() -> None:
         await asyncio.sleep(settings.runner_auto_poll_seconds)
 
 
-async def _count_proposed(session: AsyncSession) -> int:
+async def _active_strategy_count(session: AsyncSession) -> int:
+    """Count strategies that are actively being worked on (PROPOSED or BACKTESTED).
+
+    The fill loop uses this instead of a raw PROPOSED count so that a strategy
+    currently being backtested or waiting for the analyst does not trigger new
+    research prematurely. New research is only started once the entire iteration
+    chain for the current strategy has resolved (promoted to paper or abandoned).
+    """
     return (
         await session.execute(
             select(func.count())
             .select_from(Strategy)
-            .where(Strategy.current_state == StrategyState.PROPOSED.value)
+            .where(
+                Strategy.current_state.in_([
+                    StrategyState.PROPOSED.value,
+                    StrategyState.BACKTESTED.value,
+                ])
+            )
         )
     ).scalar_one()
 
@@ -349,12 +361,12 @@ async def pipeline_fill_loop() -> None:
             async with SessionLocal() as session:
                 if await _research_is_busy(session):
                     continue
-                count = await _count_proposed(session)
+                count = await _active_strategy_count(session)
                 min_proposed = get_pipeline_min_proposed()
                 if count >= min_proposed:
                     continue
                 log.info(
-                    "pipeline fill: %d/%d proposed — triggering research",
+                    "pipeline fill: %d/%d active (proposed+backtested) — triggering research",
                     count,
                     min_proposed,
                 )
