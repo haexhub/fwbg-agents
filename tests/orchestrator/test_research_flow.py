@@ -403,6 +403,36 @@ async def test_fanout_creates_one_agent_run_per_candidate(db, monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_fanout_propagates_cancellation_without_retrying(db, monkeypatch):
+    """A user cancel (CancelledError) must abort the flow, not be swallowed as
+    a failed attempt that spins up the next candidate."""
+    import asyncio
+
+    attempts = itertools.count()
+
+    class _CancellingResearcher:
+        def __init__(self, session, *, model=None, search_client=None, available_plugins=None):
+            pass
+
+        async def run(self, input):
+            next(attempts)
+            raise asyncio.CancelledError()
+
+    session, _ = db
+    monkeypatch.setattr(research_flow, "Researcher", _CancellingResearcher)
+
+    with pytest.raises(asyncio.CancelledError):
+        await research_and_translate(
+            session,
+            ResearcherInput(asset_class="FOREX"),
+            model=_dispatch_model(),
+            fanout_n=3,
+        )
+    # Exactly one attempt ran — cancellation was not retried into candidates 2/3.
+    assert next(attempts) == 1
+
+
+@pytest.mark.asyncio
 async def test_fanout_all_candidates_fail_raises_with_combined_reasons(db, monkeypatch):
     session, _ = db
     monkeypatch.setattr(research_flow, "Researcher", _make_flaky_researcher_factory(n_fail=3))
