@@ -19,6 +19,7 @@ the smoke script can drive the pipeline without re-implementing it.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 from datetime import UTC, datetime
@@ -92,7 +93,11 @@ async def _generate_valid_hypothesis(
     for attempt in range(1, fanout_n + 1):
         try:
             return await _one_candidate()
-        except BaseException as exc:
+        except asyncio.CancelledError:
+            # A user cancel (run_registry) must actually stop the flow — do
+            # NOT swallow it as a failed attempt and spin up the next candidate.
+            raise
+        except Exception as exc:
             log.warning("researcher attempt %d/%d failed: %s", attempt, fanout_n, exc)
             errors.append(exc)
 

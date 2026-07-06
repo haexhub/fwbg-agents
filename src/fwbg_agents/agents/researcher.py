@@ -15,6 +15,8 @@ Researcher cannot bypass this — it is the equivalent of the Analyst's
 
 from __future__ import annotations
 
+import asyncio
+import contextlib
 import json
 import logging
 import time
@@ -212,6 +214,16 @@ class Researcher:
             })
 
             return result.output
+        except asyncio.CancelledError:
+            # User cancel: mark the row terminal so it doesn't linger RUNNING
+            # (else it looks "stuck" until the janitor sweeps it), then re-raise
+            # so the cancellation actually propagates and kills the task.
+            ar.status = AgentRunStatus.FAILED.value
+            ar.ended_at = datetime.now(UTC)
+            ar.error = "Cancelled by user"
+            with contextlib.suppress(Exception):
+                await self.session.commit()
+            raise
         except Exception as exc:
             ar.status = AgentRunStatus.FAILED.value
             ar.ended_at = datetime.now(UTC)
