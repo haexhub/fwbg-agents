@@ -22,7 +22,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Annotated, Literal
 
-from pydantic import BaseModel, Discriminator, Field
+from pydantic import BaseModel, Discriminator, Field, field_validator
 from pydantic_ai import Agent
 from pydantic_ai.models import Model
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -90,6 +90,67 @@ class ChangeExit(_RecBase):
     recommendations from M4 onward."""
 
 
+# ---------------------------------------------------------------------------
+# AddIndicator enum robustness.
+#
+# Models routinely copy the *plural* category key straight out of the catalog
+# snapshot ("indicators") while the schema wants the singular enum member
+# ("indicator"), and they occasionally invent a phase the prompt never lists
+# ("entry"). Either near-miss used to exhaust pydantic-ai's output retries and
+# fail the whole analyst run. We keep one canonical mapping here, used both to
+# render valid category labels into the snapshot *and* to coerce the model's
+# output before validation — mirroring the tolerance the downstream
+# plugin_planner already applies (see its _PHASE_MAPPING). Unknown values fall
+# back to the most common valid member (with a warning) rather than crash.
+# ---------------------------------------------------------------------------
+
+_CATEGORY_VALUES: tuple[str, ...] = (
+    "indicator",
+    "model",
+    "exit_strategy",
+    "risk_management",
+    "entry_modifier",
+    "preprocessing",
+    "feature_selection",
+    "data_loading",
+)
+_CATEGORY_ALIASES: dict[str, str] = {
+    "indicators": "indicator",
+    "models": "model",
+    "exit_strategies": "exit_strategy",
+    "entry_modifiers": "entry_modifier",
+}
+
+_PHASE_VALUES: tuple[str, ...] = ("feature_selection", "indicators", "preprocessing", "filters")
+_PHASE_ALIASES: dict[str, str] = {
+    "entry": "indicators",
+    "indicator": "indicators",
+    "filter": "filters",
+}
+
+
+def _normalise_category(value: str) -> str:
+    key = value.strip().lower()
+    if key in _CATEGORY_VALUES:
+        return key
+    mapped = _CATEGORY_ALIASES.get(key)
+    if mapped:
+        return mapped
+    log.warning("AddIndicator.category %r not recognised; defaulting to 'indicator'", value)
+    return "indicator"
+
+
+def _normalise_phase(value: str) -> str:
+    key = value.strip().lower()
+    if key in _PHASE_VALUES:
+        return key
+    mapped = _PHASE_ALIASES.get(key)
+    if mapped:
+        return mapped
+    log.warning("AddIndicator.phase %r not recognised; defaulting to 'indicators'", value)
+    return "indicators"
+
+
 class AddIndicator(_RecBase):
     """Request a brand-new plugin via PluginAuthor (M5b).
 
@@ -117,6 +178,16 @@ class AddIndicator(_RecBase):
         "feature_selection",
         "data_loading",
     ]
+
+    @field_validator("category", mode="before")
+    @classmethod
+    def _coerce_category(cls, v: object) -> object:
+        return _normalise_category(v) if isinstance(v, str) else v
+
+    @field_validator("phase", mode="before")
+    @classmethod
+    def _coerce_phase(cls, v: object) -> object:
+        return _normalise_phase(v) if isinstance(v, str) else v
 
 
 AnalystRecommendation = Annotated[
@@ -165,13 +236,19 @@ def _render_prompt(
 
 
 def _render_catalog_snapshot(catalog: PluginCatalog) -> str:
-    """One line per (category, slug). Empty categories are skipped."""
+    """One line per (category, slug). Empty categories are skipped.
+
+    Category labels are normalised to the AddIndicator.category enum spelling
+    (singular) so that, when the model decides an add_indicator request is
+    warranted, it copies a *valid* category token — the raw catalog keys are
+    plural ("indicators") and used to make the model emit an invalid category.
+    """
     lines: list[str] = []
     for category in sorted(catalog.by_category):
         slugs = catalog.all_slugs_for(category)
         if not slugs:
             continue
-        lines.append(f"- {category}: {', '.join(slugs)}")
+        lines.append(f"- {_normalise_category(category)}: {', '.join(slugs)}")
     if not lines:
         return "(catalog empty — only suggest add_indicator if you genuinely have no other option)"
     return "\n".join(lines)
