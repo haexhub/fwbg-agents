@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.13.1](https://github.com/haexhub/fwbg-agents/compare/v0.13.0...v0.13.1) (2026-07-06)
+
+
+### Bug Fixes
+
+* **agents:** stop analyst crashes, unblock research, add run cancel + hang resilience ([a6e68b4](https://github.com/haexhub/fwbg-agents/commit/a6e68b4170d0eab694efc0904a277b08f8c8b62b))
+* **agents:** stop analyst crashes, unblock research, add run cancel + hang resilience ([b9d1f5f](https://github.com/haexhub/fwbg-agents/commit/b9d1f5f9357d11bd2d07025fdb749f47d20e0b6c))
+* **docker:** align runtime base to python3.12 (matches builder venv) ([e8755fa](https://github.com/haexhub/fwbg-agents/commit/e8755fa34d6843ac9693135c8f19be72ca48b7a9))
+
 ## [0.13.0](https://github.com/haexhub/fwbg-agents/compare/v0.12.2...v0.13.0) (2026-07-05)
 
 
