@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.13.3](https://github.com/haexhub/fwbg-agents/compare/v0.13.2...v0.13.3) (2026-07-06)
+
+
+### Bug Fixes
+
+* **analyst:** tolerate near-miss AddIndicator enums instead of crashing ([29d1317](https://github.com/haexhub/fwbg-agents/commit/29d13176cd7625082cff5d13c809b6e00309eefc))
+* **analyst:** tolerate near-miss AddIndicator enums instead of crashing ([fb71146](https://github.com/haexhub/fwbg-agents/commit/fb711469e68cb8d75018f28e006a0474c46b7356))
+
 ## [0.13.2](https://github.com/haexhub/fwbg-agents/compare/v0.13.1...v0.13.2) (2026-07-06)
 
 
