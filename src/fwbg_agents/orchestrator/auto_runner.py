@@ -286,6 +286,16 @@ async def _analyze_and_apply(session: AsyncSession, sid: int) -> None:
     # TuneParams / ChangeExit → create a child PROPOSED strategy so the
     # auto-runner picks it up on the next free slot.
     # AddIndicator stays manual — a plugin must be authored first.
+    # ChangeExit with new_exit_strategy=None: the Analyst did not supply the
+    # concrete replacement spec; run_reiterate would raise. Skip reiterate and
+    # leave the strategy in BACKTESTED — same treatment as AddIndicator.
+    if isinstance(rec, ChangeExit) and rec.new_exit_strategy is None:
+        log.warning(
+            "runner auto mode: strategy %s got ChangeExit(new_exit_strategy=None); "
+            "skipping reiterate — analyst prompt must be updated to populate this field",
+            sid,
+        )
+        return
     if isinstance(rec, (TuneParams, ChangeExit)):
         try:
             child_id = await reiterate(session, sid)
@@ -372,25 +382,42 @@ async def run_loop() -> None:
 
 
 async def _active_strategy_count(session: AsyncSession) -> int:
-    """Count strategies that are actively being worked on (PROPOSED or BACKTESTED).
+    """Count strategies that are genuinely in-flight: PROPOSED + BACKTESTED-unanalyzed.
 
-    The fill loop uses this instead of a raw PROPOSED count so that a strategy
-    currently being backtested or waiting for the analyst does not trigger new
-    research prematurely. New research is only started once the entire iteration
-    chain for the current strategy has resolved (promoted to paper or abandoned).
+    BACKTESTED strategies that already have a successful analyst run are NOT counted —
+    they are done with their current iteration (exhausted reiterate chain,
+    add_indicator waiting on plugin author, or ChangeExit with null new_exit_strategy).
+    Counting them would permanently block the pipeline-fill trigger and prevent new
+    research from starting.
     """
-    return (
+    proposed = (
+        await session.execute(
+            select(func.count())
+            .select_from(Strategy)
+            .where(Strategy.current_state == StrategyState.PROPOSED.value)
+        )
+    ).scalar_one()
+
+    analyzed_ids = (
+        select(AgentRun.strategy_id)
+        .where(
+            AgentRun.agent_name == "analyst",
+            AgentRun.status == AgentRunStatus.DONE.value,
+            AgentRun.strategy_id.isnot(None),
+        )
+    )
+    unanalyzed_backtested = (
         await session.execute(
             select(func.count())
             .select_from(Strategy)
             .where(
-                Strategy.current_state.in_([
-                    StrategyState.PROPOSED.value,
-                    StrategyState.BACKTESTED.value,
-                ])
+                Strategy.current_state == StrategyState.BACKTESTED.value,
+                ~Strategy.id.in_(analyzed_ids),
             )
         )
     ).scalar_one()
+
+    return int(proposed) + int(unanalyzed_backtested)
 
 
 async def _research_is_busy(session: AsyncSession) -> bool:
