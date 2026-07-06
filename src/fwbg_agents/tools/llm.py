@@ -8,7 +8,7 @@ capability tradeoffs justify it.
 
 from pathlib import Path
 
-from pydantic_ai.models.anthropic import AnthropicModel
+from pydantic_ai.models.anthropic import AnthropicModel, AnthropicModelSettings
 from pydantic_ai.providers.anthropic import AnthropicProvider
 
 from fwbg_agents.config import settings
@@ -28,7 +28,14 @@ def _build_model(model_name: str) -> AnthropicModel:
         base_url=settings.anthropic_base_url,
         api_key=settings.anthropic_api_key,
     )
-    return AnthropicModel(model_name=model_name, provider=provider)
+    return AnthropicModel(
+        model_name=model_name,
+        provider=provider,
+        # Bound every request so a wedged proxy can't freeze an agent for the
+        # SDK's ~30-min default; pydantic-ai surfaces this as a ret/timeout error
+        # the flow can fail on, rather than an unbounded await.
+        settings=AnthropicModelSettings(timeout=settings.llm_timeout_seconds),
+    )
 
 
 def role_default_model(agent_name: str) -> str:
@@ -76,11 +83,13 @@ async def ping() -> dict[str, object]:
     agent = Agent(default_model(), system_prompt="Reply with exactly one word.")
     result = await agent.run("Reply with the single word: pong")
     text = result.output.strip()
-    usage = result.usage()
+    # pydantic-ai 2.0: usage is a property with input_tokens/output_tokens
+    # (was a callable returning request_tokens/response_tokens pre-2.0).
+    usage = result.usage
     return {
         "ok": "pong" in text.lower(),
         "model": settings.anthropic_model,
         "reply": text,
-        "input_tokens": usage.request_tokens,
-        "output_tokens": usage.response_tokens,
+        "input_tokens": getattr(usage, "input_tokens", 0),
+        "output_tokens": getattr(usage, "output_tokens", 0),
     }
