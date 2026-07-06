@@ -14,7 +14,7 @@ COPY src/ src/
 RUN --mount=type=cache,target=/root/.cache/uv uv sync --frozen --no-dev
 
 # ---- runtime: slim image with only the venv + app, no uv toolchain ----
-FROM python:3.12-slim-bookworm
+FROM python:3.14-slim-bookworm
 
 WORKDIR /app
 
