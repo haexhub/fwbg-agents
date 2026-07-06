@@ -9,18 +9,20 @@ each track their own AgentRun rows — the row created here is the
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import desc, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from fwbg_agents.agents.researcher import ResearcherInput
 from fwbg_agents.agents.runner import Runner
 from fwbg_agents.config import settings
+from fwbg_agents.orchestrator import run_registry
 from fwbg_agents.orchestrator.lifecycle import strategy_dir
 from fwbg_agents.orchestrator.research_flow import (
     reiterate,
@@ -151,6 +153,12 @@ async def _run_reiterate_background(parent_id: int, agent_run_id: int) -> None:
             await fwbg.aclose()
 
 
+def _spawn(agent_run_id: int, coro) -> None:
+    """Run a background flow as a tracked asyncio task so /cancel can abort it."""
+    task = asyncio.create_task(coro)
+    run_registry.register(agent_run_id, task)
+
+
 # ---------------------------------------------------------------------------
 # Endpoints
 # ---------------------------------------------------------------------------
@@ -159,7 +167,6 @@ async def _run_reiterate_background(parent_id: int, agent_run_id: int) -> None:
 @router.post("/research/brief", status_code=202)
 async def post_research_brief(
     body: ResearcherInput,
-    background_tasks: BackgroundTasks,
     session: AsyncSession = Depends(get_session),
 ) -> dict[str, Any]:
     """Kick off Researcher → Translator. Returns the orchestration AgentRun id.
@@ -200,7 +207,7 @@ async def post_research_brief(
     ar.input_artifact_path = str(input_path)
     await session.commit()
 
-    background_tasks.add_task(_run_research_background, body, ar.id)
+    _spawn(ar.id, _run_research_background(body, ar.id))
     return {
         "agent_run_id": ar.id,
         "status": "scheduled",
@@ -211,7 +218,6 @@ async def post_research_brief(
 @router.post("/strategies/{strategy_id}/reiterate", status_code=202)
 async def post_strategy_reiterate(
     strategy_id: int,
-    background_tasks: BackgroundTasks,
     session: AsyncSession = Depends(get_session),
 ) -> dict[str, Any]:
     """Apply Analyst sidecar to create a child Strategy. 422/409 preconditions."""
@@ -250,7 +256,7 @@ async def post_strategy_reiterate(
     await session.commit()
     await session.refresh(ar)
 
-    background_tasks.add_task(_run_reiterate_background, parent.id, ar.id)
+    _spawn(ar.id, _run_reiterate_background(parent.id, ar.id))
     return {
         "agent_run_id": ar.id,
         "parent_strategy_id": parent.id,
@@ -279,13 +285,16 @@ async def cancel_agent_run(
     ar.ended_at = datetime.now(UTC)
     ar.error = "Cancelled by user"
     await session.commit()
-    return {"id": agent_run_id, "status": ar.status}
+    # Abort the live task if this run is a tracked flow (research_flow /
+    # reiterate). Inline flows (auto-runner analyst pass) aren't tracked and
+    # fall back to this soft DB-only cancel.
+    killed = run_registry.request_cancel(agent_run_id)
+    return {"id": agent_run_id, "status": ar.status, "task_cancelled": killed}
 
 
 @router.post("/agents/runs/{agent_run_id}/retry", status_code=202)
 async def retry_agent_run(
     agent_run_id: int,
-    background_tasks: BackgroundTasks,
     session: AsyncSession = Depends(get_session),
 ) -> dict[str, Any]:
     """Re-schedule a failed or stuck research_flow run with the original input."""
@@ -323,7 +332,7 @@ async def retry_agent_run(
     new_ar.input_artifact_path = str(new_input_path)
     await session.commit()
 
-    background_tasks.add_task(_run_research_background, original_input, new_ar.id)
+    _spawn(new_ar.id, _run_research_background(original_input, new_ar.id))
     return {
         "agent_run_id": new_ar.id,
         "retried_from": agent_run_id,

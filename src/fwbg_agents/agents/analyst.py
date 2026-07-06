@@ -47,32 +47,38 @@ log = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 
-class Promote(BaseModel):
+class _RecBase(BaseModel):
+    """Fields common to every recommendation kind.
+
+    `confidence` and `reasoning` are defaulted so an occasional model omission
+    degrades gracefully instead of exhausting pydantic-ai's output retries and
+    crashing the whole auto-runner pass (the models regularly drop these two
+    when focused on kind-specific fields). Both are advisory — logging and the
+    post-mortem only; the hard promotion gates live in validate_and_apply.
+    """
+
+    confidence: float = Field(default=0.5, ge=0.0, le=1.0)
+    reasoning: str = ""
+
+
+class Promote(_RecBase):
     kind: Literal["promote"] = "promote"
-    confidence: float = Field(ge=0.0, le=1.0)
-    reasoning: str
 
 
-class Abandon(BaseModel):
+class Abandon(_RecBase):
     kind: Literal["abandon"] = "abandon"
-    confidence: float = Field(ge=0.0, le=1.0)
-    reasoning: str
     post_mortem_summary: str
     lessons: list[str]
 
 
-class TuneParams(BaseModel):
+class TuneParams(_RecBase):
     kind: Literal["tune_params"] = "tune_params"
-    confidence: float = Field(ge=0.0, le=1.0)
-    reasoning: str
     param: str
     new_range: list[float | int]
 
 
-class ChangeExit(BaseModel):
+class ChangeExit(_RecBase):
     kind: Literal["change_exit"] = "change_exit"
-    confidence: float = Field(ge=0.0, le=1.0)
-    reasoning: str
     from_exit: str
     to_exit: str
     new_exit_strategy: dict | None = None
@@ -84,7 +90,7 @@ class ChangeExit(BaseModel):
     recommendations from M4 onward."""
 
 
-class AddIndicator(BaseModel):
+class AddIndicator(_RecBase):
     """Request a brand-new plugin via PluginAuthor (M5b).
 
     The Analyst emits this ONLY when no entry in the catalog snapshot covers
@@ -94,8 +100,6 @@ class AddIndicator(BaseModel):
     """
 
     kind: Literal["add_indicator"] = "add_indicator"
-    confidence: float = Field(ge=0.0, le=1.0)
-    reasoning: str
     phase: Literal["feature_selection", "indicators", "preprocessing", "filters"]
     capability: str = Field(
         description=(

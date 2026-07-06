@@ -14,7 +14,10 @@ COPY src/ src/
 RUN --mount=type=cache,target=/root/.cache/uv uv sync --frozen --no-dev
 
 # ---- runtime: slim image with only the venv + app, no uv toolchain ----
-FROM python:3.14-slim-bookworm
+# MUST match the builder's Python minor: the venv lives at
+# .venv/lib/python3.12/site-packages, so a 3.14 runtime can't import any of it
+# (only the bin/ console scripts survive) → "No module named alembic" at boot.
+FROM python:3.12-slim-bookworm
 
 WORKDIR /app
 

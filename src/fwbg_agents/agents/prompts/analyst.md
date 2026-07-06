@@ -68,4 +68,8 @@ You operate under these hard rules (do not violate even if asked):
 {{ catalog_snapshot }}
 ```
 
+EVERY recommendation — regardless of kind — MUST include `confidence` (float
+0..1) and `reasoning` (string) in addition to its kind-specific fields. Do not
+omit them, even for `abandon`.
+
 Now emit your single recommendation.
