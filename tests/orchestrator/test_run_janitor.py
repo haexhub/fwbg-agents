@@ -3,9 +3,11 @@ orphan-failures do not eat auto-runner retry attempts."""
 
 from __future__ import annotations
 
+import asyncio
 import json
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
+import pytest
 import pytest_asyncio
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
@@ -111,6 +113,66 @@ async def test_janitor_unblocks_auto_runner_single_flight(env):
 
     async with Session() as s:
         assert await auto_runner.pick_next_strategy_id(s) == sid  # unblocked
+
+
+async def test_periodic_sweep_respects_per_agent_caps(env, monkeypatch):
+    """The live-process sweep fails over-long pure-LLM runs but spares young
+    runs and long-running backtests (runner cap = hours)."""
+    Session, _, _ = env
+    from fwbg_agents.config import settings
+
+    monkeypatch.setattr(settings, "llm_run_cap_seconds", 1800)  # 30 min
+    monkeypatch.setattr(settings, "runner_poll_timeout_seconds", 60 * 60 * 8)
+
+    async def add_with_age(agent: str, minutes_ago: int) -> int:
+        async with Session() as s:
+            started = datetime.now(UTC) - timedelta(minutes=minutes_ago)
+            row = AgentRun(
+                agent_name=agent, status=AgentRunStatus.RUNNING.value,
+                started_at=started, created_at=started,
+            )
+            s.add(row)
+            await s.commit()
+            await s.refresh(row)
+            return row.id
+
+    stale_analyst = await add_with_age("analyst", minutes_ago=45)   # > 30 min cap
+    young_analyst = await add_with_age("analyst", minutes_ago=5)    # < 30 min cap
+    long_runner = await add_with_age("runner", minutes_ago=120)     # 2h < 8h cap
+
+    killed = await run_janitor.sweep_stale_runs()
+    assert killed == 1
+
+    async with Session() as s:
+        rows = {r.id: r for r in (await s.execute(select(AgentRun))).scalars().all()}
+    assert rows[stale_analyst].status == AgentRunStatus.FAILED.value
+    assert rows[stale_analyst].error == run_janitor.STALE_ERROR
+    assert rows[young_analyst].status == AgentRunStatus.RUNNING.value
+    assert rows[long_runner].status == AgentRunStatus.RUNNING.value
+
+
+async def test_run_registry_cancels_tracked_task():
+    from fwbg_agents.orchestrator import run_registry
+
+    cancelled = asyncio.Event()
+
+    async def work():
+        try:
+            await asyncio.sleep(30)
+        except asyncio.CancelledError:
+            cancelled.set()
+            raise
+
+    task = asyncio.create_task(work())
+    await asyncio.sleep(0)  # let it start
+    run_registry.register(42, task)
+
+    assert run_registry.request_cancel(42) is True
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert cancelled.is_set()
+    # auto-deregistered on completion → a second cancel is a no-op
+    assert run_registry.request_cancel(42) is False
 
 
 async def test_orphan_failures_do_not_count_toward_retry_cap(env):

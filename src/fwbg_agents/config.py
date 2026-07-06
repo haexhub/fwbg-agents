@@ -23,6 +23,14 @@ class Settings(BaseSettings):
         description="Required by SDK; proxy ignores it in favor of OAuth",
     )
     anthropic_model: str = Field(default="claude-opus-4-7")
+    llm_timeout_seconds: float = Field(
+        default=120.0,
+        description=(
+            "Per-request timeout for every LLM call. Without it the Anthropic "
+            "SDK defaults to a 600s read timeout x retries (~30 min), so a "
+            "wedged proxy freezes an agent for half an hour."
+        ),
+    )
 
     # Web research
     tavily_api_key: str | None = None
@@ -113,6 +121,23 @@ class Settings(BaseSettings):
         ge=1,
         le=20,
         description="Max refinement rounds for the PluginImplementer gate-loop.",
+    )
+
+    # Periodic run-janitor: a backstop for runs that hang in the live process
+    # (as opposed to orphans from a restart, handled at startup). Runner-borne
+    # runs may legitimately last hours (see runner_poll_timeout_seconds), so
+    # only pure-LLM agents get the shorter cap; the sweep never touches a run
+    # younger than its cap.
+    run_stale_sweep_seconds: float = Field(
+        default=300.0,
+        description="How often the periodic janitor sweeps for over-long RUNNING agent runs.",
+    )
+    llm_run_cap_seconds: float = Field(
+        default=60 * 30,
+        description=(
+            "Wall-clock cap for pure-LLM agent runs (researcher, translator, "
+            "analyst, ...). Backtest-bearing runs use runner_poll_timeout_seconds."
+        ),
     )
 
     # Service

@@ -11,6 +11,7 @@ is what's under test here.
 
 from __future__ import annotations
 
+import asyncio
 import json
 from datetime import UTC, datetime
 
@@ -60,9 +61,11 @@ async def test_post_research_brief_schedules_and_returns_202(research_client, mo
     client, session, *_ = research_client
 
     captured: list[tuple] = []
+    done = asyncio.Event()
 
     async def fake_run_research(input, agent_run_id):
         captured.append((input.asset_class, agent_run_id))
+        done.set()
 
     from fwbg_agents.api import research as research_api
 
@@ -84,6 +87,10 @@ async def test_post_research_brief_schedules_and_returns_202(research_client, mo
     body = r.json()
     assert "agent_run_id" in body
     assert body["status"] == "scheduled"
+
+    # The flow now runs as a tracked asyncio task (so /cancel can abort it);
+    # wait for the (monkeypatched) background entry point to fire.
+    await asyncio.wait_for(done.wait(), timeout=2)
 
     ar = (
         await session.execute(select(AgentRun).where(AgentRun.id == body["agent_run_id"]))
@@ -169,9 +176,11 @@ async def test_post_reiterate_happy_path_schedules_and_returns_202(research_clie
     )
 
     captured: list[tuple] = []
+    done = asyncio.Event()
 
     async def fake_run_reiterate(parent_id, agent_run_id):
         captured.append((parent_id, agent_run_id))
+        done.set()
 
     from fwbg_agents.api import research as research_api
 
@@ -181,6 +190,8 @@ async def test_post_reiterate_happy_path_schedules_and_returns_202(research_clie
     assert r.status_code == 202, r.text
     body = r.json()
     assert body["parent_strategy_id"] == parent.id
+
+    await asyncio.wait_for(done.wait(), timeout=2)
 
     ar = (
         await session.execute(select(AgentRun).where(AgentRun.id == body["agent_run_id"]))

@@ -103,7 +103,11 @@ def _validate_inline_params(
                 if not options:
                     continue
                 values = value if isinstance(value, list) else [value]
-                bad = [v for v in values if v not in options]
+                # Options come from the plugin schema as strings (e.g. session
+                # ids "0".."15"); the model often emits them as ints. Compare
+                # by string form so a valid `sessions: [0]` isn't rejected.
+                allowed = {str(o) for o in options}
+                bad = [v for v in values if str(v) not in allowed]
                 if bad:
                     raise StrategyValidationError(
                         f"pipeline.{phase}[{i}] ({name!r}): param {param_name!r} "

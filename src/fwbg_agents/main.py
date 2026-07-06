@@ -37,7 +37,10 @@ async def lifespan(_app: FastAPI):
     await run_janitor.fail_orphaned_runs()
     auto_runner_task = asyncio.create_task(auto_runner.run_loop())
     pipeline_fill_task = asyncio.create_task(auto_runner.pipeline_fill_loop())
+    # Periodic backstop for runs that hang while the process stays alive.
+    stale_sweep_task = asyncio.create_task(run_janitor.sweep_loop())
     yield
+    stale_sweep_task.cancel()
     pipeline_fill_task.cancel()
     auto_runner_task.cancel()
     await engine.dispose()
