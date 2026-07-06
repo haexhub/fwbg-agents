@@ -251,13 +251,68 @@ def test_render_catalog_snapshot_lists_categories_and_slugs():
         },
     })
     snap = _render_catalog_snapshot(cat)
-    assert "indicators: ema, sma" in snap
-    assert "exit_strategies: fixed" in snap
+    # Category labels are normalised to the AddIndicator.category enum spelling
+    # (singular) so the model copies a valid category token.
+    assert "indicator: ema, sma" in snap
+    assert "exit_strategy: fixed" in snap
+    assert "indicators:" not in snap  # plural key must not leak into the snapshot
 
 
 def test_render_catalog_snapshot_empty():
     snap = _render_catalog_snapshot(PluginCatalog(by_category={}))
     assert "catalog empty" in snap.lower()
+
+
+def test_add_indicator_coerces_plural_category_and_bad_phase():
+    """The model copies plural category keys ('indicators') from the snapshot and
+    invents phases the prompt never lists ('entry'). Both used to exhaust
+    pydantic-ai's output retries and crash the analyst — the before-validator now
+    degrades them to the closest valid enum member instead."""
+    rec = AddIndicator(
+        confidence=0.7,
+        reasoning="needs pivot zones",
+        phase="entry",
+        capability="support/resistance zones",
+        category="indicators",
+    )
+    assert rec.category == "indicator"
+    assert rec.phase == "indicators"
+
+
+async def test_analyst_add_indicator_survives_invalid_enums(
+    db_and_backtested, monkeypatch, tmp_path
+):
+    """End-to-end regression for the production crash: a model emitting the
+    plural category + bogus phase must yield a normalised AddIndicator and a
+    DONE AgentRun rather than 'Exceeded maximum output retries (3)'."""
+    SessionMaker, strategy_id, _ = db_and_backtested
+    _load_fwbg_cached.cache_clear()
+    from fwbg_agents.config import settings as _settings
+    monkeypatch.setattr(_settings, "fwbg_repo_root", tmp_path / "no-fwbg")
+
+    test_model = _stub_model(
+        "final_result_AddIndicator",
+        {
+            "kind": "add_indicator",
+            "confidence": 0.7,
+            "reasoning": "no pivot-zone plugin in catalog",
+            "phase": "entry",  # not a valid phase — model hallucination
+            "capability": "support/resistance zones from pivot points",
+            "category": "indicators",  # plural — copied from the catalog snapshot
+        },
+    )
+    async with SessionMaker() as session:
+        s = (await session.execute(select(Strategy).where(Strategy.id == strategy_id))).scalar_one()
+        rec = await Analyst(session, model=test_model).analyze(s)
+
+    assert isinstance(rec, AddIndicator)
+    assert rec.category == "indicator"
+    assert rec.phase == "indicators"
+
+    async with SessionMaker() as v:
+        ar = (await v.execute(select(AgentRun))).scalars().all()
+        assert len(ar) == 1
+        assert ar[0].status == AgentRunStatus.DONE.value
 
 
 async def test_analyst_missing_results_marks_agent_run_failed(db_and_backtested):
