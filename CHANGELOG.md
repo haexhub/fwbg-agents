@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.13.2](https://github.com/haexhub/fwbg-agents/compare/v0.13.1...v0.13.2) (2026-07-06)
+
+
+### Bug Fixes
+
+* **agents:** make research cancel actually stop the flow ([a1ddd97](https://github.com/haexhub/fwbg-agents/commit/a1ddd978aed94d2e37950fff6a2221ba3e43f7e7))
+* **auto-runner:** drain backtested backlog + abandon capped + restore research cancel ([deb29cb](https://github.com/haexhub/fwbg-agents/commit/deb29cb46139c288dc44c8687df57a4b5663f75b))
+* **auto-runner:** drain backtested backlog + abandon capped proposed ([f502f1e](https://github.com/haexhub/fwbg-agents/commit/f502f1ec341f1eec6ad7973fd50a9183df14f081))
+
 ## [0.13.1](https://github.com/haexhub/fwbg-agents/compare/v0.13.0...v0.13.1) (2026-07-06)
 
 
