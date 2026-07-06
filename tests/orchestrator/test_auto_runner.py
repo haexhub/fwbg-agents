@@ -6,6 +6,7 @@ import json
 from datetime import UTC, datetime
 
 import pytest_asyncio
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from fwbg_agents.orchestrator import auto_runner
@@ -162,3 +163,44 @@ async def test_tick_runs_the_picked_strategy(env, monkeypatch):
 
     assert await auto_runner.tick() == sid
     assert ran == [sid]
+
+
+async def test_abandon_capped_proposed_frees_the_queue(env):
+    Session, make_strategy, add_run = env
+    capped = await make_strategy("orb__forex__001")
+    healthy = await make_strategy("orb__forex__002")
+    await add_run("runner", AgentRunStatus.FAILED, strategy_id=capped)
+    await add_run("runner", AgentRunStatus.FAILED, strategy_id=capped)  # 2 → capped
+    await add_run("runner", AgentRunStatus.FAILED, strategy_id=healthy)  # 1 → ok
+
+    async with Session() as session:
+        assert await auto_runner.abandon_capped_proposed(session) == 1
+
+    async with Session() as session:
+        rows = {r.id: r for r in (await session.execute(select(Strategy))).scalars().all()}
+    assert rows[capped].current_state == StrategyState.ABANDONED.value
+    assert rows[healthy].current_state == StrategyState.PROPOSED.value
+
+
+async def test_pick_next_backtested_unanalyzed(env):
+    from fwbg_agents.config import settings
+
+    Session, make_strategy, add_run = env
+
+    def _seed_results(slug: str):
+        (
+            settings.data_dir / "strategies" / slug / "iteration_001" / "fwbg_results.json"
+        ).write_text("{}")
+
+    # backtested, has results, no analyst run → picked
+    bt = await make_strategy("orb__forex__001", state=StrategyState.BACKTESTED)
+    _seed_results("orb__forex__001")
+    # backtested but already analyzed → skipped
+    done = await make_strategy("orb__forex__002", state=StrategyState.BACKTESTED)
+    _seed_results("orb__forex__002")
+    await add_run("analyst", AgentRunStatus.DONE, strategy_id=done)
+    # backtested but no results file → skipped
+    await make_strategy("orb__forex__003", state=StrategyState.BACKTESTED)
+
+    async with Session() as session:
+        assert await auto_runner.pick_next_backtested_unanalyzed(session) == bt
