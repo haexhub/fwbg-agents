@@ -317,7 +317,9 @@ async def test_reiterate_multi_tune_params_sets_all_grid_entries(db_with_parent)
     from fwbg_agents.config import settings
 
     child_json = json.loads(
-        (settings.data_dir / "strategies" / child.slug / "iteration_001" / "strategy.json").read_text()
+        (
+            settings.data_dir / "strategies" / child.slug / "iteration_001" / "strategy.json"
+        ).read_text()
     )
     grid = child_json["optimization"]["grid_params"]
     assert grid["sl_mult"] == [1.5, 2.0, 2.5]
@@ -354,7 +356,9 @@ async def test_reiterate_modify_plugins_toplevel_add_remove(db_with_parent):
     from fwbg_agents.config import settings
 
     child_json = json.loads(
-        (settings.data_dir / "strategies" / child.slug / "iteration_001" / "strategy.json").read_text()
+        (
+            settings.data_dir / "strategies" / child.slug / "iteration_001" / "strategy.json"
+        ).read_text()
     )
     assert child_json["indicators"] == ["atr"]
 
@@ -395,7 +399,9 @@ async def test_reiterate_modify_plugins_inline_pipeline_ops(db_with_parent):
     from fwbg_agents.config import settings
 
     child_json = json.loads(
-        (settings.data_dir / "strategies" / child.slug / "iteration_001" / "strategy.json").read_text()
+        (
+            settings.data_dir / "strategies" / child.slug / "iteration_001" / "strategy.json"
+        ).read_text()
     )
     names = [e["name"] for e in child_json["pipeline"]["indicators"]]
     assert names == ["opening_range", "atr"]

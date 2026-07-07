@@ -101,7 +101,7 @@ class Abandon(_RecBase):
 class ParamTune(BaseModel):
     param: str
     new_range: list[float | int] = Field(
-        description="3–7 candidate values for a grid search over this parameter."
+        description="3-7 candidate values for a grid search over this parameter."
     )
 
 
@@ -110,7 +110,7 @@ class TuneParams(_IterBase):
     params: list[ParamTune] = Field(
         min_length=1,
         max_length=3,
-        description="The 1–3 most impactful parameters to re-tune together.",
+        description="The 1-3 most impactful parameters to re-tune together.",
     )
 
     @model_validator(mode="before")

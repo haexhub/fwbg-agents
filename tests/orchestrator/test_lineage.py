@@ -87,7 +87,9 @@ async def chain(tmp_path, monkeypatch):
     # The root's analyst verdict (what led to the child).
     (settings.data_dir / "strategies" / "fam_root" / "iteration_001"
      / "analyst_recommendation.json").write_text(
-        json.dumps({"kind": "tune_params", "params": [{"param": "sl_mult", "new_range": [1.5, 2.0]}]})
+        json.dumps(
+            {"kind": "tune_params", "params": [{"param": "sl_mult", "new_range": [1.5, 2.0]}]}
+        )
     )
 
     yield Session, root_id, child_id
@@ -114,7 +116,7 @@ async def test_family_strategies_from_any_member(chain):
 async def test_render_family_history(chain, tmp_path):
     from fwbg_agents.config import settings
 
-    Session, root_id, child_id = chain
+    Session, _root_id, child_id = chain
     # Abandon post-mortem on the root adds lessons to the history.
     pm = settings.data_dir / "strategies" / "fam_root" / "post_mortem.yaml"
     pm.write_text(yaml.safe_dump({"lessons": ["GBPUSD never carried the edge"]}))
@@ -138,11 +140,10 @@ async def test_render_family_history(chain, tmp_path):
 
 
 async def test_render_family_history_first_iteration(chain):
-    Session, root_id, _child_id = chain
+    Session, _root_id, _child_id = chain
     async with Session() as s:
-        root = (await s.execute(select(Strategy).where(Strategy.id == root_id))).scalar_one()
-        # Root has a child, so it gets the full family. A strategy without
-        # relatives gets the placeholder instead.
+        # A strategy without relatives gets the placeholder instead of the
+        # full family block.
         now = datetime.now(UTC)
         lone = Strategy(
             slug="lone_wolf", current_state=StrategyState.BACKTESTED.value,

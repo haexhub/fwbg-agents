@@ -69,7 +69,7 @@ _INLINE_PIPELINE_PHASES = ("indicators", "preprocessing", "feature_selection", "
 # `pipeline` dict as {name, params} entries; `extra_filters` (and any legacy
 # preset-string pipeline) is a top-level list of plain slugs.
 _MODIFY_INLINE_SECTIONS = ("indicators", "preprocessing", "feature_selection")
-_MODIFY_SECTIONS = _MODIFY_INLINE_SECTIONS + ("extra_filters",)
+_MODIFY_SECTIONS = (*_MODIFY_INLINE_SECTIONS, "extra_filters")
 
 
 def _apply_plugin_op(payload: dict, op: dict) -> None:
@@ -461,7 +461,8 @@ class Translator:
         - tune_params: {kind, ..., params: [{param, new_range}, ...], target_assets}
           (legacy single {param, new_range} sidecars still apply)
         - change_exit: {kind, ..., from_exit, to_exit, new_exit_strategy, target_assets}
-        - modify_plugins: {kind, ..., ops: [{action, section, slug, params, replaces}], target_assets}
+        - modify_plugins: {kind, ..., ops: [{action, section, slug, params, replaces}],
+          target_assets}
         """
         now = datetime.now(UTC)
         ar = AgentRun(
