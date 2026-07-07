@@ -31,6 +31,7 @@ from fwbg_agents.agents.analyst import (
     AddIndicator,
     AnalystRecommendation,
     ChangeExit,
+    ModifyPlugins,
     Promote,
     TuneParams,
 )
@@ -111,8 +112,8 @@ async def validate_and_apply(
             created_by="analyst",
         )
 
-    # TuneParams / ChangeExit — record-only. M4 Translator re-iterates.
-    if isinstance(rec, (TuneParams, ChangeExit)):
+    # TuneParams / ChangeExit / ModifyPlugins — record-only. M4 Translator re-iterates.
+    if isinstance(rec, (TuneParams, ChangeExit, ModifyPlugins)):
         iteration_dir = strategy_dir(strategy.slug) / "iteration_001"
         iteration_dir.mkdir(parents=True, exist_ok=True)
         sidecar = iteration_dir / "analyst_recommendation.json"

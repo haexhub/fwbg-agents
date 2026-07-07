@@ -24,6 +24,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from fwbg_agents.agents.analyst import (
     Analyst,
     ChangeExit,
+    ModifyPlugins,
     TuneParams,
     _best_symbol_metrics_from_results,
 )
@@ -82,7 +83,8 @@ async def _run_runner_background(strategy_id: int) -> None:
 async def _run_analyst_background(strategy_id: int) -> None:
     async with SessionLocal() as session:
         s = (await session.execute(select(Strategy).where(Strategy.id == strategy_id))).scalar_one()
-        analyst = Analyst(session)
+        client = FwbgClient(base_url=settings.fwbg_api_url)
+        analyst = Analyst(session, fwbg_client=client)
         try:
             rec = await analyst.analyze(s)
             results_path = strategy_dir(s.slug) / "iteration_001" / "fwbg_results.json"
@@ -101,10 +103,10 @@ async def _run_analyst_background(strategy_id: int) -> None:
                 log.warning("analyst recommendation rejected: %s", exc)
                 return
 
-            # TuneParams / ChangeExit → queue a child PROPOSED strategy for
-            # the auto-runner to pick up on the next free slot.
-            # AddIndicator stays manual — a plugin must be authored first.
-            if isinstance(rec, (TuneParams, ChangeExit)):
+            # TuneParams / ChangeExit / ModifyPlugins → queue a child PROPOSED
+            # strategy for the auto-runner to pick up on the next free slot.
+            # AddIndicator is picked up by the auto-runner's plugin-author chain.
+            if isinstance(rec, (TuneParams, ChangeExit, ModifyPlugins)):
                 try:
                     child_id = await reiterate(session, strategy_id)
                     log.info(
@@ -117,6 +119,8 @@ async def _run_analyst_background(strategy_id: int) -> None:
                     )
         except Exception:
             log.exception("analyst background task failed for strategy %s", strategy_id)
+        finally:
+            await client.aclose()
 
 
 # ---------------------------------------------------------------------------

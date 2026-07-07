@@ -65,6 +65,121 @@ _PHASE_TO_FIELD: dict[str, str] = {
 
 _INLINE_PIPELINE_PHASES = ("indicators", "preprocessing", "feature_selection", "data_loading")
 
+# Sections a ModifyPlugins op may touch. The first three live inside an inline
+# `pipeline` dict as {name, params} entries; `extra_filters` (and any legacy
+# preset-string pipeline) is a top-level list of plain slugs.
+_MODIFY_INLINE_SECTIONS = ("indicators", "preprocessing", "feature_selection")
+_MODIFY_SECTIONS = (*_MODIFY_INLINE_SECTIONS, "extra_filters")
+
+
+def _apply_plugin_op(payload: dict, op: dict) -> None:
+    """Apply one ModifyPlugins op to a strategy payload in place.
+
+    Deterministic — no LLM. Raises TranslatorError on any inconsistency
+    (unknown section, slug not present for remove/replace, duplicate add);
+    catalog membership of the new slug is checked later by
+    `validate_strategy_json` against the live catalog.
+    """
+    action = op.get("action")
+    section = op.get("section")
+    slug = op.get("slug")
+    params = op.get("params") or {}
+    replaces = op.get("replaces")
+
+    if action not in ("add", "remove", "replace") or not isinstance(slug, str) or not slug:
+        raise TranslatorError(f"invalid modify_plugins op: {op}")
+    if section not in _MODIFY_SECTIONS:
+        raise TranslatorError(
+            f"modify_plugins: unknown section {section!r} "
+            f"(must be one of {list(_MODIFY_SECTIONS)})"
+        )
+    if action == "replace" and (not isinstance(replaces, str) or not replaces):
+        raise TranslatorError(f"modify_plugins: replace op needs 'replaces': {op}")
+
+    pipeline = payload.get("pipeline")
+    if section in _MODIFY_INLINE_SECTIONS and isinstance(pipeline, dict):
+        entries = pipeline.setdefault(section, [])
+
+        def _idx(name: str) -> int | None:
+            for i, e in enumerate(entries):
+                if isinstance(e, dict) and e.get("name") == name:
+                    return i
+            return None
+
+        if action == "add":
+            if _idx(slug) is not None:
+                raise TranslatorError(
+                    f"modify_plugins: {slug!r} already present in pipeline.{section}"
+                )
+            entries.append({"name": slug, "params": params})
+        elif action == "remove":
+            i = _idx(slug)
+            if i is None:
+                raise TranslatorError(
+                    f"modify_plugins: {slug!r} not found in pipeline.{section}"
+                )
+            entries.pop(i)
+        else:  # replace
+            i = _idx(replaces)
+            if i is None:
+                raise TranslatorError(
+                    f"modify_plugins: {replaces!r} not found in pipeline.{section}"
+                )
+            entries[i] = {"name": slug, "params": params}
+        return
+
+    # Top-level slug-list fields: extra_filters always, and the pipeline
+    # sections when the pipeline is a legacy preset string.
+    entries = payload.setdefault(section, [])
+    if not isinstance(entries, list):
+        raise TranslatorError(f"modify_plugins: {section} is not a list")
+    if params:
+        log.warning(
+            "modify_plugins: params for %r dropped — %s is a plain slug list",
+            slug,
+            section,
+        )
+    if action == "add":
+        if slug in entries:
+            raise TranslatorError(
+                f"modify_plugins: {slug!r} already present in {section}"
+            )
+        entries.append(slug)
+    elif action == "remove":
+        if slug not in entries:
+            raise TranslatorError(f"modify_plugins: {slug!r} not found in {section}")
+        entries.remove(slug)
+    else:  # replace
+        if replaces not in entries:
+            raise TranslatorError(
+                f"modify_plugins: {replaces!r} not found in {section}"
+            )
+        entries[entries.index(replaces)] = slug
+
+
+def _child_universe(parent: Strategy, target_assets: list[str]) -> list | None:
+    """suggested_universe for a re-iteration child.
+
+    With `target_assets` the child's universe narrows to exactly those
+    symbols (keeping the parent's per-symbol timeframe hints where present);
+    otherwise the parent's universe is inherited unchanged.
+    """
+    if not target_assets:
+        return parent.suggested_universe
+    tf_by_symbol: dict[str, str] = {}
+    for e in parent.suggested_universe or []:
+        if isinstance(e, dict) and e.get("scope") == "symbol":
+            value, tf = e.get("value"), e.get("timeframe")
+            if isinstance(value, str) and isinstance(tf, str) and tf:
+                tf_by_symbol.setdefault(value, tf)
+    universe: list[dict] = []
+    for sym in target_assets:
+        entry: dict = {"scope": "symbol", "value": sym}
+        if tf_by_symbol.get(sym):
+            entry["timeframe"] = tf_by_symbol[sym]
+        universe.append(entry)
+    return universe
+
 
 def _validate_inline_params(
     strategy: dict,
@@ -334,14 +449,20 @@ class Translator:
     async def run_reiterate(self, parent: Strategy) -> Strategy:
         """Apply an Analyst recommendation sidecar deterministically and create a child Strategy.
 
-        Deterministic by design — no LLM. TuneParams replaces an entry in
+        Deterministic by design — no LLM. TuneParams replaces entries in
         `optimization.grid_params`; ChangeExit swaps `exit_strategies` with the
-        sidecar's `new_exit_strategy`. Parent stays in its current state; child
-        is a fresh PROPOSED row with `parent_strategy_id=parent.id`.
+        sidecar's `new_exit_strategy`; ModifyPlugins applies its ops to the
+        plugin composition. Parent stays in its current state; child is a
+        fresh PROPOSED row with `parent_strategy_id=parent.id`. The child's
+        `suggested_universe` narrows to the sidecar's `target_assets` when
+        present, else inherits the parent's.
 
         Sidecar JSON shape (mirroring `recommendations._rec_to_dict`):
-        - tune_params: {kind, confidence, reasoning, param, new_range}
-        - change_exit: {kind, confidence, reasoning, from_exit, to_exit, new_exit_strategy}
+        - tune_params: {kind, ..., params: [{param, new_range}, ...], target_assets}
+          (legacy single {param, new_range} sidecars still apply)
+        - change_exit: {kind, ..., from_exit, to_exit, new_exit_strategy, target_assets}
+        - modify_plugins: {kind, ..., ops: [{action, section, slug, params, replaces}],
+          target_assets}
         """
         now = datetime.now(UTC)
         ar = AgentRun(
@@ -377,16 +498,21 @@ class Translator:
             child_payload = json.loads(json.dumps(parent_payload))  # deep copy
             kind = rec.get("kind")
             if kind == "tune_params":
-                param = rec.get("param")
-                new_range = rec.get("new_range")
-                if not param or not isinstance(new_range, list):
-                    raise TranslatorError(
-                        f"tune_params sidecar missing param/new_range: {rec}"
-                    )
+                tunes = rec.get("params")
+                if not isinstance(tunes, list):
+                    # Legacy pre-M8 single-param sidecar shape.
+                    tunes = [{"param": rec.get("param"), "new_range": rec.get("new_range")}]
                 grid = child_payload.setdefault("optimization", {}).setdefault(
                     "grid_params", {}
                 )
-                grid[param] = new_range
+                for entry in tunes:
+                    param = entry.get("param") if isinstance(entry, dict) else None
+                    new_range = entry.get("new_range") if isinstance(entry, dict) else None
+                    if not param or not isinstance(new_range, list):
+                        raise TranslatorError(
+                            f"tune_params entry missing param/new_range: {entry}"
+                        )
+                    grid[param] = new_range
             elif kind == "change_exit":
                 new_exit = rec.get("new_exit_strategy")
                 if not isinstance(new_exit, dict):
@@ -395,9 +521,16 @@ class Translator:
                         "populate it for M4 reiterate; see ChangeExit.new_exit_strategy)"
                     )
                 child_payload["exit_strategies"] = [new_exit]
+            elif kind == "modify_plugins":
+                ops = rec.get("ops")
+                if not isinstance(ops, list) or not ops:
+                    raise TranslatorError(f"modify_plugins sidecar missing ops: {rec}")
+                for op in ops:
+                    _apply_plugin_op(child_payload, op)
             else:
                 raise TranslatorError(
-                    f"reiterate only handles tune_params/change_exit, got kind={kind!r}"
+                    "reiterate only handles tune_params/change_exit/modify_plugins, "
+                    f"got kind={kind!r}"
                 )
 
             child_slug = await generate_slug(
@@ -417,6 +550,10 @@ class Translator:
             except StrategyValidationError as exc:
                 raise TranslatorError(str(exc)) from exc
 
+            target_assets = [
+                a for a in (rec.get("target_assets") or []) if isinstance(a, str) and a
+            ]
+
             now2 = datetime.now(UTC)
             child = Strategy(
                 slug=child_slug,
@@ -425,6 +562,7 @@ class Translator:
                 parent_strategy_id=parent.id,
                 asset_class=parent.asset_class,
                 strategy_family=parent.strategy_family,
+                suggested_universe=_child_universe(parent, target_assets),
                 created_at=now2,
                 updated_at=now2,
             )
@@ -595,6 +733,7 @@ class Translator:
                 parent_strategy_id=parent.id,
                 asset_class=parent.asset_class,
                 strategy_family=parent.strategy_family,
+                suggested_universe=parent.suggested_universe,
                 created_at=now2,
                 updated_at=now2,
             )
