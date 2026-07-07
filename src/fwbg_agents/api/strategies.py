@@ -38,6 +38,7 @@ from fwbg_agents.persistence.models import (
     StrategyTag,
     Transition,
 )
+from fwbg_agents.tools.api_errors import describe_api_error
 from fwbg_agents.tools.fwbg_paper_reader import read_paper_positions, read_paper_summary
 
 log = logging.getLogger(__name__)
@@ -366,7 +367,7 @@ async def _run_paper_analyze_background(strategy_id: int, agent_run_id: int) -> 
             if ar.status != AgentRunStatus.FAILED.value:
                 ar.status = AgentRunStatus.FAILED.value
                 ar.ended_at = datetime.now(UTC)
-                ar.error = str(exc)
+                ar.error = describe_api_error(exc) or str(exc)
                 await session.commit()
 
 

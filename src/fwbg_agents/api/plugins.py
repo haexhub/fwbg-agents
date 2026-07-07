@@ -27,6 +27,7 @@ from fwbg_agents.orchestrator.plugin_flow import (
     reiterate_with_plugin,
 )
 from fwbg_agents.persistence.database import SessionLocal, get_session
+from fwbg_agents.tools.api_errors import describe_api_error
 from fwbg_agents.persistence.models import (
     AgentRun,
     AgentRunStatus,
@@ -173,7 +174,7 @@ async def _run_author_background(strategy_id: int, agent_run_id: int) -> None:
             log.exception("author background task failed (agent_run %s)", agent_run_id)
             ar.status = AgentRunStatus.FAILED.value
             ar.ended_at = datetime.now(UTC)
-            ar.error = str(exc)
+            ar.error = describe_api_error(exc) or str(exc)
             await session.commit()
 
 
@@ -200,7 +201,7 @@ async def _run_evaluator_background(plugin_id: int, agent_run_id: int) -> None:
             log.exception("evaluate background task failed (agent_run %s)", agent_run_id)
             ar.status = AgentRunStatus.FAILED.value
             ar.ended_at = datetime.now(UTC)
-            ar.error = str(exc)
+            ar.error = describe_api_error(exc) or str(exc)
             await session.commit()
 
 
@@ -331,7 +332,7 @@ async def _run_reiterate_with_plugin_background(
             )
             ar.status = AgentRunStatus.FAILED.value
             ar.ended_at = datetime.now(UTC)
-            ar.error = str(exc)
+            ar.error = describe_api_error(exc) or str(exc)
             await session.commit()
 
 

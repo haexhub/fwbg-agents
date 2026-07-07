@@ -46,6 +46,7 @@ from fwbg_agents.persistence.models import (
     StrategyTag,
     Transition,
 )
+from fwbg_agents.tools.api_errors import describe_api_error
 from fwbg_agents.tools.fwbg_client import (
     FwbgClient,
     FwbgClientError,
@@ -102,7 +103,7 @@ async def _generate_valid_hypothesis(
             log.warning("researcher attempt %d/%d failed: %s", attempt, fanout_n, exc)
             errors.append(exc)
 
-    reasons = "; ".join(str(e) for e in errors)
+    reasons = "; ".join(describe_api_error(e) or str(e) for e in errors)
     raise ResearcherFanoutExhaustedError(f"all {fanout_n} attempts failed: {reasons}")
 
 

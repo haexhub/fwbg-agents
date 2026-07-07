@@ -60,6 +60,7 @@ from fwbg_agents.persistence.models import (
     Strategy,
     StrategyState,
 )
+from fwbg_agents.tools.api_errors import describe_api_error
 from fwbg_agents.tools.fwbg_client import FwbgClientError, safe_fwbg_strategy_name
 
 log = logging.getLogger(__name__)
@@ -234,7 +235,7 @@ class Runner:
         except Exception as exc:
             ar.status = AgentRunStatus.FAILED.value
             ar.ended_at = datetime.now(UTC)
-            error_str = str(exc) or repr(exc)
+            error_str = describe_api_error(exc) or str(exc) or repr(exc)
             if isinstance(exc, httpx.TransportError):
                 error_str = f"transient: {error_str}"
             ar.error = error_str
