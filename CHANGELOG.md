@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.14.0](https://github.com/haexhub/fwbg-agents/compare/v0.13.3...v0.14.0) (2026-07-07)
+
+
+### Features
+
+* **analyst:** family history, per-asset analysis, modify_plugins, auto plugin chain ([8298e54](https://github.com/haexhub/fwbg-agents/commit/8298e54db94e5b39e850ea7f5ab9ea57d160eb7d))
+* **analyst:** family history, per-asset analysis, modify_plugins, auto plugin chain ([5754894](https://github.com/haexhub/fwbg-agents/commit/5754894b610465c2fe104ca8c77d504e1cf905a6))
+
+
+### Bug Fixes
+
+* **auto_runner:** unblock pipeline when analyst returns ChangeExit(new_exit_strategy=None) ([ba9f80b](https://github.com/haexhub/fwbg-agents/commit/ba9f80b5bececdfb5316b59dd2fa6c16d0cd448e))
+* **auto_runner:** unblock pipeline when analyst returns ChangeExit(new_exit_strategy=None) ([f06ae45](https://github.com/haexhub/fwbg-agents/commit/f06ae454783afb994a87a528b2aa26d3ba41043e))
+
 ## [0.13.3](https://github.com/haexhub/fwbg-agents/compare/v0.13.2...v0.13.3) (2026-07-06)
 
 
