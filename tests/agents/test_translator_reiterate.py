@@ -291,3 +291,199 @@ async def test_reiterate_copies_hypothesis_into_child_dir(db_with_parent):
     assert child_hyp.is_file()
     data = json.loads(child_hyp.read_text())
     assert data["strategy_family"] == "ORB"
+
+
+@pytest.mark.asyncio
+async def test_reiterate_multi_tune_params_sets_all_grid_entries(db_with_parent):
+    SessionMaker, parent_id, _parent_slug, it_dir = db_with_parent
+    _write_sidecar(
+        it_dir,
+        {
+            "kind": "tune_params",
+            "confidence": 0.7,
+            "reasoning": "tp and sl both off",
+            "params": [
+                {"param": "sl_mult", "new_range": [1.5, 2.0, 2.5]},
+                {"param": "tp_mult", "new_range": [4.0, 5.0, 6.0]},
+            ],
+        },
+    )
+    async with SessionMaker() as session:
+        parent = (
+            await session.execute(select(Strategy).where(Strategy.id == parent_id))
+        ).scalar_one()
+        child = await Translator(session).run_reiterate(parent)
+
+    from fwbg_agents.config import settings
+
+    child_json = json.loads(
+        (settings.data_dir / "strategies" / child.slug / "iteration_001" / "strategy.json").read_text()
+    )
+    grid = child_json["optimization"]["grid_params"]
+    assert grid["sl_mult"] == [1.5, 2.0, 2.5]
+    assert grid["tp_mult"] == [4.0, 5.0, 6.0]
+
+
+@pytest.mark.asyncio
+async def test_reiterate_modify_plugins_toplevel_add_remove(db_with_parent):
+    """Legacy preset-string pipeline → ops hit the top-level slug list."""
+    SessionMaker, parent_id, _parent_slug, it_dir = db_with_parent
+    # Seed a top-level indicators list on the parent payload.
+    parent_json = json.loads((it_dir / "strategy.json").read_text())
+    parent_json["indicators"] = ["opening_range"]
+    (it_dir / "strategy.json").write_text(json.dumps(parent_json, indent=2))
+
+    _write_sidecar(
+        it_dir,
+        {
+            "kind": "modify_plugins",
+            "confidence": 0.6,
+            "reasoning": "atr adds regime context",
+            "ops": [
+                {"action": "add", "section": "indicators", "slug": "atr"},
+                {"action": "remove", "section": "indicators", "slug": "opening_range"},
+            ],
+        },
+    )
+    async with SessionMaker() as session:
+        parent = (
+            await session.execute(select(Strategy).where(Strategy.id == parent_id))
+        ).scalar_one()
+        child = await Translator(session).run_reiterate(parent)
+
+    from fwbg_agents.config import settings
+
+    child_json = json.loads(
+        (settings.data_dir / "strategies" / child.slug / "iteration_001" / "strategy.json").read_text()
+    )
+    assert child_json["indicators"] == ["atr"]
+
+
+@pytest.mark.asyncio
+async def test_reiterate_modify_plugins_inline_pipeline_ops(db_with_parent):
+    """Inline pipeline dict → ops edit the {name, params} entries in place."""
+    SessionMaker, parent_id, _parent_slug, it_dir = db_with_parent
+    from tests.agents.test_translator_fresh import VALID_OUTPUT
+
+    parent_json = json.loads(json.dumps(VALID_OUTPUT))
+    parent_json["optimization"] = {"grid_params": {}}
+    (it_dir / "strategy.json").write_text(json.dumps(parent_json, indent=2))
+
+    _write_sidecar(
+        it_dir,
+        {
+            "kind": "modify_plugins",
+            "confidence": 0.6,
+            "reasoning": "swap atr params",
+            "ops": [
+                {"action": "remove", "section": "indicators", "slug": "atr"},
+                {
+                    "action": "add",
+                    "section": "indicators",
+                    "slug": "atr",
+                    "params": {"period": 21},
+                },
+            ],
+        },
+    )
+    async with SessionMaker() as session:
+        parent = (
+            await session.execute(select(Strategy).where(Strategy.id == parent_id))
+        ).scalar_one()
+        child = await Translator(session).run_reiterate(parent)
+
+    from fwbg_agents.config import settings
+
+    child_json = json.loads(
+        (settings.data_dir / "strategies" / child.slug / "iteration_001" / "strategy.json").read_text()
+    )
+    names = [e["name"] for e in child_json["pipeline"]["indicators"]]
+    assert names == ["opening_range", "atr"]
+    atr_entry = child_json["pipeline"]["indicators"][-1]
+    assert atr_entry["params"] == {"period": 21}
+
+
+@pytest.mark.asyncio
+async def test_reiterate_modify_plugins_unknown_slug_fails(db_with_parent):
+    SessionMaker, parent_id, _parent_slug, it_dir = db_with_parent
+    _write_sidecar(
+        it_dir,
+        {
+            "kind": "modify_plugins",
+            "confidence": 0.6,
+            "reasoning": "bogus",
+            "ops": [{"action": "add", "section": "indicators", "slug": "not_a_plugin"}],
+        },
+    )
+    async with SessionMaker() as session:
+        parent = (
+            await session.execute(select(Strategy).where(Strategy.id == parent_id))
+        ).scalar_one()
+        with pytest.raises(TranslatorError):
+            await Translator(session).run_reiterate(parent)
+
+
+@pytest.mark.asyncio
+async def test_reiterate_target_assets_narrows_child_universe(db_with_parent):
+    SessionMaker, parent_id, _parent_slug, it_dir = db_with_parent
+    async with SessionMaker() as session:
+        parent = (
+            await session.execute(select(Strategy).where(Strategy.id == parent_id))
+        ).scalar_one()
+        parent.suggested_universe = [
+            {"scope": "symbol", "value": "EURUSD", "timeframe": "MINUTE_15"},
+            {"scope": "symbol", "value": "GBPUSD"},
+            {"scope": "asset_class", "value": "FOREX"},
+        ]
+        await session.commit()
+
+    _write_sidecar(
+        it_dir,
+        {
+            "kind": "tune_params",
+            "confidence": 0.7,
+            "reasoning": "edge only on EURUSD",
+            "param": "sl_mult",
+            "new_range": [1.5, 2.0],
+            "target_assets": ["EURUSD"],
+        },
+    )
+    async with SessionMaker() as session:
+        parent = (
+            await session.execute(select(Strategy).where(Strategy.id == parent_id))
+        ).scalar_one()
+        child = await Translator(session).run_reiterate(parent)
+
+    assert child.suggested_universe == [
+        {"scope": "symbol", "value": "EURUSD", "timeframe": "MINUTE_15"}
+    ]
+
+
+@pytest.mark.asyncio
+async def test_reiterate_without_target_assets_inherits_parent_universe(db_with_parent):
+    SessionMaker, parent_id, _parent_slug, it_dir = db_with_parent
+    universe = [{"scope": "symbol", "value": "EURUSD"}]
+    async with SessionMaker() as session:
+        parent = (
+            await session.execute(select(Strategy).where(Strategy.id == parent_id))
+        ).scalar_one()
+        parent.suggested_universe = universe
+        await session.commit()
+
+    _write_sidecar(
+        it_dir,
+        {
+            "kind": "tune_params",
+            "confidence": 0.7,
+            "reasoning": "...",
+            "param": "sl_mult",
+            "new_range": [1.5, 2.0],
+        },
+    )
+    async with SessionMaker() as session:
+        parent = (
+            await session.execute(select(Strategy).where(Strategy.id == parent_id))
+        ).scalar_one()
+        child = await Translator(session).run_reiterate(parent)
+
+    assert child.suggested_universe == universe

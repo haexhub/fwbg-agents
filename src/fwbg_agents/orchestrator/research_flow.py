@@ -37,6 +37,7 @@ from fwbg_agents.orchestrator.hypotheses import (
     generate_slug,
 )
 from fwbg_agents.orchestrator.lifecycle import strategy_dir
+from fwbg_agents.orchestrator.lineage import generation_depth
 from fwbg_agents.orchestrator.live_catalog import fetch_live_catalog, researcher_summary
 from fwbg_agents.persistence.database import SessionLocal
 from fwbg_agents.persistence.models import (
@@ -340,6 +341,7 @@ async def reiterate(
     Preconditions (raise `ReiteratePreconditionError`):
     - Parent must exist.
     - Parent must be in BACKTESTED state.
+    - Parent must be below `settings.reiterate_max_depth` in its chain.
     - Parent must have an `analyst_recommendation.json` sidecar at
       `data/strategies/<slug>/iteration_001/`.
     """
@@ -353,6 +355,14 @@ async def reiterate(
         raise ReiteratePreconditionError(
             f"parent {parent.slug} is in state {parent.current_state!r}; "
             "reiterate requires BACKTESTED"
+        )
+
+    depth = await generation_depth(session, parent)
+    if depth >= settings.reiterate_max_depth:
+        raise ReiteratePreconditionError(
+            f"parent {parent.slug} is at generation depth {depth}; "
+            f"reiterate_max_depth={settings.reiterate_max_depth} reached — "
+            "the chain must end in promote or abandon"
         )
 
     sidecar = strategy_dir(parent.slug) / "iteration_001" / "analyst_recommendation.json"
