@@ -106,6 +106,17 @@ class Settings(BaseSettings):
     # backtested automatically, one at a time.
     runner_auto_poll_seconds: float = 60.0
     runner_auto_max_attempts: int = 2
+    reiterate_max_depth: int = Field(
+        default=5,
+        ge=1,
+        le=20,
+        description=(
+            "Max generation depth of an iteration chain (root = 1). Once a "
+            "strategy at this depth is analyzed, reiterate refuses to create "
+            "another child — the Analyst is told it is on its final iteration "
+            "and should promote or abandon."
+        ),
+    )
 
     # Plugin authoring (M5d: Planner/Implementer split)
     plugin_planner_model: str = Field(

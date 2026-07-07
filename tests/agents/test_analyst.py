@@ -180,9 +180,34 @@ async def test_analyst_returns_tune_params(db_and_backtested):
         s = (await session.execute(select(Strategy).where(Strategy.id == strategy_id))).scalar_one()
         rec = await Analyst(session, model=test_model).analyze(s)
 
+    # Legacy single-param shape is coerced into the params list.
     assert isinstance(rec, TuneParams)
-    assert rec.param == "tp_multiplier"
-    assert rec.new_range == [1.5, 2.0, 2.5]
+    assert rec.params[0].param == "tp_multiplier"
+    assert rec.params[0].new_range == [1.5, 2.0, 2.5]
+
+
+async def test_analyst_returns_multi_tune_params(db_and_backtested):
+    SessionMaker, strategy_id, _ = db_and_backtested
+    test_model = _stub_model(
+        "final_result_TuneParams",
+        {
+            "kind": "tune_params",
+            "confidence": 0.6,
+            "reasoning": "tp and sl both off",
+            "params": [
+                {"param": "tp_multiplier", "new_range": [1.5, 2.0, 2.5]},
+                {"param": "sl_multiplier", "new_range": [0.5, 1.0]},
+            ],
+            "target_assets": ["EURUSD"],
+        },
+    )
+    async with SessionMaker() as session:
+        s = (await session.execute(select(Strategy).where(Strategy.id == strategy_id))).scalar_one()
+        rec = await Analyst(session, model=test_model).analyze(s)
+
+    assert isinstance(rec, TuneParams)
+    assert [p.param for p in rec.params] == ["tp_multiplier", "sl_multiplier"]
+    assert rec.target_assets == ["EURUSD"]
 
 
 async def test_analyst_returns_change_exit(db_and_backtested):
@@ -195,6 +220,7 @@ async def test_analyst_returns_change_exit(db_and_backtested):
             "reasoning": "static SL gets stopped on noise",
             "from_exit": "static_sl",
             "to_exit": "atr_trailing_sl",
+            "new_exit_strategy": {"name": "atr_trailing_sl", "params": {"atr_mult": 2.0}},
         },
     )
     async with SessionMaker() as session:
@@ -204,6 +230,7 @@ async def test_analyst_returns_change_exit(db_and_backtested):
     assert isinstance(rec, ChangeExit)
     assert rec.from_exit == "static_sl"
     assert rec.to_exit == "atr_trailing_sl"
+    assert rec.new_exit_strategy == {"name": "atr_trailing_sl", "params": {"atr_mult": 2.0}}
 
 
 async def test_analyst_returns_add_indicator(db_and_backtested, monkeypatch, tmp_path):

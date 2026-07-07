@@ -32,6 +32,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from fwbg_agents.agents.analyst import (
     Analyst,
     ChangeExit,
+    ModifyPlugins,
     TuneParams,
     _best_symbol_metrics_from_results,
 )
@@ -39,6 +40,14 @@ from fwbg_agents.agents.researcher import ResearcherInput
 from fwbg_agents.agents.runner import Runner
 from fwbg_agents.config import settings
 from fwbg_agents.orchestrator.lifecycle import strategy_dir, transition_strategy
+from fwbg_agents.orchestrator.lineage import generation_depth
+from fwbg_agents.orchestrator.plugin_flow import (
+    PluginAuthorError,
+    _find_latest_sidecar,
+    author_plugin_from_strategy,
+    evaluate_plugin,
+    reiterate_with_plugin,
+)
 from fwbg_agents.orchestrator.recommendations import validate_and_apply
 from fwbg_agents.orchestrator.research_flow import reiterate, research_and_translate
 from fwbg_agents.orchestrator.run_janitor import ORPHAN_ERROR, TRANSIENT_ERROR
@@ -46,6 +55,8 @@ from fwbg_agents.persistence.database import SessionLocal
 from fwbg_agents.persistence.models import (
     AgentRun,
     AgentRunStatus,
+    Plugin,
+    PluginState,
     Strategy,
     StrategyState,
 )
@@ -197,6 +208,90 @@ async def pick_next_backtested_unanalyzed(session: AsyncSession) -> int | None:
     return None
 
 
+async def pick_next_add_indicator_pending(session: AsyncSession) -> int | None:
+    """Oldest BACKTESTED strategy with an add_indicator sidecar and an unused
+    auto plugin-author budget (one attempt — any prior plugin_planner run for
+    the strategy, DONE or FAILED, consumes it; manual API retries stay open).
+    """
+    rows = (
+        await session.execute(
+            select(Strategy)
+            .where(Strategy.current_state == StrategyState.BACKTESTED.value)
+            .order_by(Strategy.created_at)
+        )
+    ).scalars().all()
+    for s in rows:
+        if _find_latest_sidecar(s.slug) is None:
+            continue
+        attempts = (
+            await session.execute(
+                select(func.count())
+                .select_from(AgentRun)
+                .where(
+                    AgentRun.agent_name == "plugin_planner",
+                    AgentRun.strategy_id == s.id,
+                )
+            )
+        ).scalar_one()
+        if attempts == 0:
+            return s.id
+    return None
+
+
+async def _author_and_reiterate(session: AsyncSession, sid: int) -> None:
+    """Drive one add_indicator sidecar through the full plugin chain:
+    PluginPlanner → PluginImplementer → PluginEvaluator → reiterate-with-plugin.
+
+    Any failure leaves the strategy in BACKTESTED with its plugin-author
+    attempt consumed (AgentRun rows carry the post-mortem trail); a verified
+    plugin ends with a child PROPOSED strategy that the auto-runner backtests
+    on the next free slot.
+    """
+    try:
+        plugin_id = await author_plugin_from_strategy(session, sid)
+    except PluginAuthorError as exc:
+        log.warning(
+            "runner auto mode: plugin author failed for strategy %s: %s", sid, exc
+        )
+        return
+    except Exception:
+        log.exception(
+            "runner auto mode: plugin author crashed for strategy %s", sid
+        )
+        return
+
+    try:
+        await evaluate_plugin(session, plugin_id)
+    except Exception:
+        log.exception(
+            "runner auto mode: plugin evaluation crashed for plugin %s", plugin_id
+        )
+        return
+
+    plugin = (
+        await session.execute(select(Plugin).where(Plugin.id == plugin_id))
+    ).scalar_one()
+    if plugin.current_state != PluginState.VERIFIED.value:
+        log.warning(
+            "runner auto mode: plugin %s did not verify (state=%s); "
+            "strategy %s stays in BACKTESTED",
+            plugin.slug, plugin.current_state, sid,
+        )
+        return
+
+    try:
+        child_id = await reiterate_with_plugin(session, sid, plugin.slug)
+        log.info(
+            "runner auto mode: plugin %s verified; iteration queued as "
+            "strategy %s (parent %s)",
+            plugin.slug, child_id, sid,
+        )
+    except Exception:
+        log.exception(
+            "runner auto mode: reiterate-with-plugin failed for strategy %s", sid
+        )
+
+
 async def abandon_capped_proposed(session: AsyncSession) -> int:
     """Abandon PROPOSED strategies that have exhausted their backtest retry
     budget. They can never be auto-picked again, so leaving them PROPOSED
@@ -258,11 +353,14 @@ async def _analyze_and_apply(session: AsyncSession, sid: int) -> None:
     s = (
         await session.execute(select(Strategy).where(Strategy.id == sid))
     ).scalar_one()
+    client = FwbgClient(base_url=settings.fwbg_api_url)
     try:
-        rec = await Analyst(session).analyze(s)
+        rec = await Analyst(session, fwbg_client=client).analyze(s)
     except Exception:
         log.exception("runner auto mode: analyst failed for strategy %s", sid)
         return
+    finally:
+        await client.aclose()
 
     results_path = strategy_dir(s.slug) / "iteration_001" / "fwbg_results.json"
     metrics: dict[str, float] = {}
@@ -283,10 +381,18 @@ async def _analyze_and_apply(session: AsyncSession, sid: int) -> None:
         )
         return
 
-    # TuneParams / ChangeExit → create a child PROPOSED strategy so the
-    # auto-runner picks it up on the next free slot.
-    # AddIndicator stays manual — a plugin must be authored first.
-    if isinstance(rec, (TuneParams, ChangeExit)):
+    # TuneParams / ChangeExit / ModifyPlugins → create a child PROPOSED
+    # strategy so the auto-runner picks it up on the next free slot.
+    # AddIndicator is drained by the plugin-author chain (see tick()).
+    if isinstance(rec, (TuneParams, ChangeExit, ModifyPlugins)):
+        depth = await generation_depth(session, s)
+        if depth >= settings.reiterate_max_depth:
+            log.info(
+                "runner auto mode: strategy %s is at generation depth %d "
+                "(reiterate_max_depth=%d); not queueing another iteration",
+                sid, depth, settings.reiterate_max_depth,
+            )
+            return
         try:
             child_id = await reiterate(session, sid)
             log.info(
@@ -353,6 +459,19 @@ async def tick() -> int | None:
             await _analyze_and_apply(session, pending)
         return pending
 
+    # Nothing to analyze either → drive one pending add_indicator request
+    # through the plugin chain (author → evaluate → reiterate-with-plugin)
+    # so those strategies stop dead-ending in BACKTESTED.
+    async with SessionLocal() as session:
+        pending = await pick_next_add_indicator_pending(session)
+    if pending is not None:
+        log.info(
+            "runner auto mode: authoring requested plugin for strategy %s", pending
+        )
+        async with SessionLocal() as session:
+            await _author_and_reiterate(session, pending)
+        return pending
+
     return None
 
 
@@ -372,25 +491,42 @@ async def run_loop() -> None:
 
 
 async def _active_strategy_count(session: AsyncSession) -> int:
-    """Count strategies that are actively being worked on (PROPOSED or BACKTESTED).
+    """Count strategies that are genuinely in-flight: PROPOSED + BACKTESTED-unanalyzed.
 
-    The fill loop uses this instead of a raw PROPOSED count so that a strategy
-    currently being backtested or waiting for the analyst does not trigger new
-    research prematurely. New research is only started once the entire iteration
-    chain for the current strategy has resolved (promoted to paper or abandoned).
+    BACKTESTED strategies that already have a successful analyst run are NOT counted —
+    they are done with their current iteration (exhausted reiterate chain,
+    add_indicator waiting on plugin author, or ChangeExit with null new_exit_strategy).
+    Counting them would permanently block the pipeline-fill trigger and prevent new
+    research from starting.
     """
-    return (
+    proposed = (
+        await session.execute(
+            select(func.count())
+            .select_from(Strategy)
+            .where(Strategy.current_state == StrategyState.PROPOSED.value)
+        )
+    ).scalar_one()
+
+    analyzed_ids = (
+        select(AgentRun.strategy_id)
+        .where(
+            AgentRun.agent_name == "analyst",
+            AgentRun.status == AgentRunStatus.DONE.value,
+            AgentRun.strategy_id.isnot(None),
+        )
+    )
+    unanalyzed_backtested = (
         await session.execute(
             select(func.count())
             .select_from(Strategy)
             .where(
-                Strategy.current_state.in_([
-                    StrategyState.PROPOSED.value,
-                    StrategyState.BACKTESTED.value,
-                ])
+                Strategy.current_state == StrategyState.BACKTESTED.value,
+                ~Strategy.id.in_(analyzed_ids),
             )
         )
     ).scalar_one()
+
+    return int(proposed) + int(unanalyzed_backtested)
 
 
 async def _research_is_busy(session: AsyncSession) -> bool:

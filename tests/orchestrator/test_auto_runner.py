@@ -204,3 +204,162 @@ async def test_pick_next_backtested_unanalyzed(env):
 
     async with Session() as session:
         assert await auto_runner.pick_next_backtested_unanalyzed(session) == bt
+
+
+async def test_pick_next_add_indicator_pending(env):
+    from fwbg_agents.config import settings
+
+    Session, make_strategy, add_run = env
+    sid = await make_strategy("orb__forex__ai1", state=StrategyState.BACKTESTED)
+    (settings.data_dir / "strategies" / "orb__forex__ai1" / "iteration_001"
+     / "add_indicator_request.json").write_text(
+        json.dumps({"capability": "pivot zones", "phase": "indicators"})
+    )
+
+    async with Session() as session:
+        assert await auto_runner.pick_next_add_indicator_pending(session) == sid
+
+    # Any prior plugin_planner run (even FAILED) consumes the auto attempt.
+    await add_run("plugin_planner", AgentRunStatus.FAILED, sid)
+    async with Session() as session:
+        assert await auto_runner.pick_next_add_indicator_pending(session) is None
+
+
+async def test_pick_next_add_indicator_requires_sidecar(env):
+    Session, make_strategy, _ = env
+    await make_strategy("orb__forex__nosc", state=StrategyState.BACKTESTED)
+    async with Session() as session:
+        assert await auto_runner.pick_next_add_indicator_pending(session) is None
+
+
+async def test_author_and_reiterate_happy_path(env, monkeypatch):
+    from fwbg_agents.persistence.models import Plugin, PluginState
+
+    Session, make_strategy, _ = env
+    sid = await make_strategy("orb__forex__ai2", state=StrategyState.BACKTESTED)
+
+    async with Session() as s:
+        now = datetime.now(UTC)
+        plugin = Plugin(
+            slug="pivot_zones", current_state=PluginState.VERIFIED.value,
+            kind="indicator", created_at=now, updated_at=now,
+        )
+        s.add(plugin)
+        await s.commit()
+        await s.refresh(plugin)
+        plugin_id = plugin.id
+
+    calls: dict[str, object] = {}
+
+    async def fake_author(session, strategy_id):
+        calls["author"] = strategy_id
+        return plugin_id
+
+    async def fake_evaluate(session, pid):
+        calls["evaluate"] = pid
+        return 1
+
+    async def fake_reiterate_with_plugin(session, strategy_id, plugin_slug):
+        calls["reiterate"] = (strategy_id, plugin_slug)
+        return 999
+
+    monkeypatch.setattr(auto_runner, "author_plugin_from_strategy", fake_author)
+    monkeypatch.setattr(auto_runner, "evaluate_plugin", fake_evaluate)
+    monkeypatch.setattr(auto_runner, "reiterate_with_plugin", fake_reiterate_with_plugin)
+
+    async with Session() as session:
+        await auto_runner._author_and_reiterate(session, sid)
+
+    assert calls == {
+        "author": sid,
+        "evaluate": plugin_id,
+        "reiterate": (sid, "pivot_zones"),
+    }
+
+
+async def test_author_and_reiterate_stops_when_plugin_unverified(env, monkeypatch):
+    from fwbg_agents.persistence.models import Plugin, PluginState
+
+    Session, make_strategy, _ = env
+    sid = await make_strategy("orb__forex__ai3", state=StrategyState.BACKTESTED)
+
+    async with Session() as s:
+        now = datetime.now(UTC)
+        plugin = Plugin(
+            slug="broken_plugin", current_state=PluginState.AUTHORED.value,
+            kind="indicator", created_at=now, updated_at=now,
+        )
+        s.add(plugin)
+        await s.commit()
+        await s.refresh(plugin)
+        plugin_id = plugin.id
+
+    async def fake_author(session, strategy_id):
+        return plugin_id
+
+    async def fake_evaluate(session, pid):
+        return 1  # evaluation ran but did not verify
+
+    async def fail_reiterate(session, strategy_id, plugin_slug):
+        raise AssertionError("must not reiterate with an unverified plugin")
+
+    monkeypatch.setattr(auto_runner, "author_plugin_from_strategy", fake_author)
+    monkeypatch.setattr(auto_runner, "evaluate_plugin", fake_evaluate)
+    monkeypatch.setattr(auto_runner, "reiterate_with_plugin", fail_reiterate)
+
+    async with Session() as session:
+        await auto_runner._author_and_reiterate(session, sid)  # must not raise
+
+
+async def _run_analyze_with_fake_analyst(Session, monkeypatch, sid):
+    """Drive _analyze_and_apply with a canned TuneParams recommendation."""
+    from fwbg_agents.agents.analyst import TuneParams
+
+    class _FakeClient:
+        def __init__(self, *a, **kw): ...
+        async def aclose(self): ...
+
+    class _FakeAnalyst:
+        def __init__(self, session, **kw): ...
+
+        async def analyze(self, s):
+            return TuneParams(
+                confidence=0.6, reasoning="x",
+                params=[{"param": "sl_mult", "new_range": [1.0, 2.0]}],
+            )
+
+    reiterated: list[int] = []
+
+    async def fake_reiterate(session, strategy_id):
+        reiterated.append(strategy_id)
+        return 999
+
+    monkeypatch.setattr(auto_runner, "FwbgClient", _FakeClient)
+    monkeypatch.setattr(auto_runner, "Analyst", _FakeAnalyst)
+    monkeypatch.setattr(auto_runner, "reiterate", fake_reiterate)
+
+    async with Session() as session:
+        await auto_runner._analyze_and_apply(session, sid)
+    return reiterated
+
+
+async def test_analyze_and_apply_respects_depth_cap(env, monkeypatch):
+    from fwbg_agents.config import settings
+
+    Session, make_strategy, _ = env
+    sid = await make_strategy("orb__forex__deep", state=StrategyState.BACKTESTED)
+
+    monkeypatch.setattr(settings, "reiterate_max_depth", 1)  # root is already at 1
+    reiterated = await _run_analyze_with_fake_analyst(Session, monkeypatch, sid)
+    assert reiterated == []
+
+
+async def test_analyze_and_apply_reiterates_below_depth_cap(env, monkeypatch):
+    from fwbg_agents.config import settings
+
+    Session, make_strategy, _ = env
+    sid = await make_strategy("orb__forex__shallow", state=StrategyState.BACKTESTED)
+
+    monkeypatch.setattr(settings, "reiterate_max_depth", 5)
+    reiterated = await _run_analyze_with_fake_analyst(Session, monkeypatch, sid)
+    assert reiterated == [sid]

@@ -21,6 +21,8 @@ from fwbg_agents.agents.analyst import (
     Abandon,
     AddIndicator,
     ChangeExit,
+    ModifyPlugins,
+    PluginOp,
     Promote,
     TuneParams,
 )
@@ -167,6 +169,7 @@ async def test_tune_params_records_sidecar_no_transition(db_and_backtested):
 
     async with SessionMaker() as session:
         s = (await session.execute(select(Strategy).where(Strategy.id == sid))).scalar_one()
+        # Legacy single-param kwargs — coerced into the params list.
         rec = TuneParams(
             confidence=0.6, reasoning="tp too tight", param="tp_mult", new_range=[1.5, 2.0, 2.5]
         )
@@ -184,7 +187,7 @@ async def test_tune_params_records_sidecar_no_transition(db_and_backtested):
     assert sidecar.is_file()
     rec_persisted = json.loads(sidecar.read_text())
     assert rec_persisted["kind"] == "tune_params"
-    assert rec_persisted["param"] == "tp_mult"
+    assert rec_persisted["params"] == [{"param": "tp_mult", "new_range": [1.5, 2.0, 2.5]}]
 
     async with SessionMaker() as v:
         s = (await v.execute(select(Strategy).where(Strategy.id == sid))).scalar_one()
@@ -203,6 +206,7 @@ async def test_change_exit_records_sidecar_no_transition(db_and_backtested):
             reasoning="static SL too tight",
             from_exit="static_sl",
             to_exit="atr_trailing_sl",
+            new_exit_strategy={"name": "atr_trailing_sl", "params": {}},
         )
         tr = await validate_and_apply(session, s, rec, metrics=_BAD_METRICS)
         assert tr is None
@@ -254,4 +258,32 @@ async def test_add_indicator_writes_sidecar_no_transition(db_and_backtested):
     async with SessionMaker() as v:
         s = (await v.execute(select(Strategy).where(Strategy.id == sid))).scalar_one()
         assert s.current_state == StrategyState.BACKTESTED.value  # unchanged
+        assert (await v.execute(select(Transition))).scalars().all() == []
+
+
+async def test_modify_plugins_records_sidecar_no_transition(db_and_backtested):
+    SessionMaker, sid, tmp_path, _criteria = db_and_backtested
+    async with SessionMaker() as session:
+        s = (await session.execute(select(Strategy).where(Strategy.id == sid))).scalar_one()
+        rec = ModifyPlugins(
+            confidence=0.6,
+            reasoning="atr filter should cut chop",
+            ops=[PluginOp(action="add", section="indicators", slug="atr")],
+            target_assets=["EURUSD"],
+        )
+        tr = await validate_and_apply(session, s, rec, metrics=_BAD_METRICS)
+        assert tr is None
+
+    sidecar = (
+        tmp_path / "data" / "strategies" / "demo_v1" / "iteration_001"
+        / "analyst_recommendation.json"
+    )
+    rec_persisted = json.loads(sidecar.read_text())
+    assert rec_persisted["kind"] == "modify_plugins"
+    assert rec_persisted["ops"][0]["slug"] == "atr"
+    assert rec_persisted["target_assets"] == ["EURUSD"]
+
+    async with SessionMaker() as v:
+        s = (await v.execute(select(Strategy).where(Strategy.id == sid))).scalar_one()
+        assert s.current_state == StrategyState.BACKTESTED.value
         assert (await v.execute(select(Transition))).scalars().all() == []
