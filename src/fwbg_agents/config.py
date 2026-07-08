@@ -24,11 +24,23 @@ class Settings(BaseSettings):
     )
     anthropic_model: str = Field(default="claude-opus-4-7")
     llm_timeout_seconds: float = Field(
-        default=120.0,
+        default=600.0,
         description=(
-            "Per-request timeout for every LLM call. Without it the Anthropic "
-            "SDK defaults to a 600s read timeout x retries (~30 min), so a "
-            "wedged proxy freezes an agent for half an hour."
+            "Per-request read timeout for every LLM call, in seconds. 600s "
+            "matches Anthropic's non-streaming ceiling so a legitimately long "
+            "Opus generation isn't guillotined. The old 120s cut real requests "
+            "off, and the SDK's default 3 attempts turned that into ~6min "
+            "stacked failures. Bounded together with llm_max_retries."
+        ),
+    )
+    llm_max_retries: int = Field(
+        default=1,
+        ge=0,
+        le=5,
+        description=(
+            "Anthropic client retry budget per LLM call. The SDK default is 2 "
+            "(=3 attempts); 1 keeps one retry for transient 429/529/connection "
+            "blips while bounding a wedged-proxy hang to 2 x llm_timeout_seconds."
         ),
     )
 
