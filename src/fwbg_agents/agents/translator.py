@@ -45,6 +45,7 @@ from fwbg_agents.persistence.models import (
     StrategyTag,
     Transition,
 )
+from fwbg_agents.tools.api_errors import describe_api_error
 from fwbg_agents.tools.fwbg_client import FwbgClient
 from fwbg_agents.tools.llm import model_for, prompt_path_for
 
@@ -442,7 +443,7 @@ class Translator:
         except Exception as exc:
             ar.status = AgentRunStatus.FAILED.value
             ar.ended_at = datetime.now(UTC)
-            ar.error = str(exc)
+            ar.error = describe_api_error(exc)
             await self.session.commit()
             raise
 
@@ -630,7 +631,7 @@ class Translator:
         except Exception as exc:
             ar.status = AgentRunStatus.FAILED.value
             ar.ended_at = datetime.now(UTC)
-            ar.error = str(exc)
+            ar.error = describe_api_error(exc)
             await self.session.commit()
             raise
 
@@ -865,6 +866,6 @@ class Translator:
         except Exception as exc:
             ar.status = AgentRunStatus.FAILED.value
             ar.ended_at = datetime.now(UTC)
-            ar.error = str(exc)
+            ar.error = describe_api_error(exc)
             await self.session.commit()
             raise

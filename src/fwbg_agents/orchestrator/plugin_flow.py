@@ -42,6 +42,7 @@ from fwbg_agents.persistence.models import (
     Strategy,
     StrategyState,
 )
+from fwbg_agents.tools.api_errors import describe_api_error
 
 log = logging.getLogger(__name__)
 
@@ -210,12 +211,18 @@ async def author_plugin_from_strategy(
         )
     except PluginPlannerError as exc:
         await _finish_agent_run(
-            session, planner_ar, status=AgentRunStatus.FAILED, error=str(exc)
+            session,
+            planner_ar,
+            status=AgentRunStatus.FAILED,
+            error=describe_api_error(exc),
         )
         raise PluginAuthorError(f"planner failed: {exc}") from exc
     except Exception as exc:  # belt-and-suspenders for unexpected
         await _finish_agent_run(
-            session, planner_ar, status=AgentRunStatus.FAILED, error=str(exc)
+            session,
+            planner_ar,
+            status=AgentRunStatus.FAILED,
+            error=describe_api_error(exc),
         )
         raise
 
@@ -258,7 +265,10 @@ async def author_plugin_from_strategy(
         raise PluginAuthorError(f"implementer failed: {exc}") from exc
     except Exception as exc:
         await _finish_agent_run(
-            session, impl_ar, status=AgentRunStatus.FAILED, error=str(exc)
+            session,
+            impl_ar,
+            status=AgentRunStatus.FAILED,
+            error=describe_api_error(exc),
         )
         raise
 

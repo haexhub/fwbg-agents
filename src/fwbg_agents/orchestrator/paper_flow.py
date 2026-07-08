@@ -41,6 +41,7 @@ from fwbg_agents.persistence.models import (
     Strategy,
     StrategyState,
 )
+from fwbg_agents.tools.api_errors import describe_api_error
 from fwbg_agents.tools.fwbg_paper_reader import (
     read_paper_positions,
     read_paper_summary,
@@ -170,7 +171,7 @@ async def paper_analyze(
     except Exception as exc:
         log.exception("paper_analyze: slug=%s FAILED", strategy.slug)
         ar.status = AgentRunStatus.FAILED.value
-        ar.error = str(exc)
+        ar.error = describe_api_error(exc)
         ar.ended_at = datetime.now(UTC)
         try:
             await session.commit()

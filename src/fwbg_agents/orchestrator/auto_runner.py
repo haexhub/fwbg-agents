@@ -60,6 +60,7 @@ from fwbg_agents.persistence.models import (
     Strategy,
     StrategyState,
 )
+from fwbg_agents.tools.api_errors import describe_api_error
 from fwbg_agents.tools.fwbg_client import FwbgClient
 from fwbg_agents.tools.search import BraveClient, FallbackSearchClient, TavilyClient
 from fwbg_agents.tools.secrets import get_secret
@@ -582,7 +583,7 @@ async def _fill_pipeline_background(agent_run_id: int) -> None:
                 "pipeline fill: research failed (agent_run %s)", agent_run_id
             )
             ar.status = AgentRunStatus.FAILED.value
-            ar.error = str(exc)
+            ar.error = describe_api_error(exc)
             ar.ended_at = datetime.now(UTC)
             await session.commit()
         finally:

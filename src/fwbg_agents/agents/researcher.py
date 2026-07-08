@@ -40,6 +40,7 @@ from fwbg_agents.persistence.models import (
     AgentRunStatus,
     LlmCall,
 )
+from fwbg_agents.tools.api_errors import describe_api_error
 from fwbg_agents.tools.llm import model_for, prompt_path_for
 from fwbg_agents.tools.search import SearchProvider, SearchResult, SearchUnavailableError
 
@@ -227,12 +228,12 @@ class Researcher:
         except Exception as exc:
             ar.status = AgentRunStatus.FAILED.value
             ar.ended_at = datetime.now(UTC)
-            ar.error = str(exc)
+            ar.error = describe_api_error(exc)
             await self.session.commit()
             event_bus.emit({
                 "type": "agent_run_failed",
                 "agent_run_id": ar.id,
                 "agent_name": "researcher",
-                "error": str(exc),
+                "error": ar.error,
             })
             raise
