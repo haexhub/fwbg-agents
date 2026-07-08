@@ -3,6 +3,7 @@ constitution."""
 
 from __future__ import annotations
 
+import re
 from typing import get_args
 
 import pytest
@@ -68,6 +69,16 @@ def test_capability_length_bounded():
         _valid_spec(capability="short")  # < 10 chars
 
 
+def test_capability_must_be_single_line():
+    with pytest.raises(ValidationError):
+        _valid_spec(capability="Flags RSI extremes.\nAlso computes momentum.")
+
+
+def test_param_type_must_be_canonical():
+    with pytest.raises(ValidationError):
+        SpecParam(name="period", type="integer", description="Lookback bars")
+
+
 def test_index_entry_is_compact():
     entry = spec_index_entry(_valid_spec())
     assert entry == {
@@ -101,8 +112,13 @@ def test_render_needs_clarification_marker():
 
 
 def test_constitution_lists_every_canonical_kind_and_phase():
+    # Exact set comparison against the backticked names in the two vocabulary
+    # bullets of section II — substring checks would let singular kinds pass
+    # via their plural phase forms ("indicator" in "indicators").
     text = load_constitution()
-    for kind in get_args(PluginKindLit):
-        assert kind in text, f"constitution missing kind {kind!r}"
-    for phase in get_args(PluginPhaseLit):
-        assert phase in text, f"constitution missing phase {phase!r}"
+    kind_block = text.split("- **kind**", 1)[1].split("- **phase**", 1)[0]
+    phase_block = text.split("- **phase**", 1)[1].split("\n\n", 1)[0]
+    assert set(re.findall(r"`([a-z_]+)`", kind_block)) == set(get_args(PluginKindLit))
+    assert set(re.findall(r"`([a-z_]+)`", phase_block)) == set(
+        get_args(PluginPhaseLit)
+    )

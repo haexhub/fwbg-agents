@@ -1,9 +1,10 @@
 """PluginSpec — the structured "what" artifact for a plugin/indicator.
 
 Adapted from spec-kit's `spec.md`: this is the WHAT (capability, interface,
-acceptance criteria), separate from the HOW (the PluginPlan / plan.md). It
-replaces the old free-form ``spec_md: str`` (min_length=80, never validated,
-never read) with a validated model + a markdown renderer.
+acceptance criteria), separate from the HOW (the PluginPlan / plan.md). From
+Phase 3 of the speckit plan it replaces the old free-form ``spec_md: str`` on
+``PluginAuthorResult`` (length-checked only, written to disk, never parsed)
+with a validated model + a markdown renderer.
 
 The ``capability`` line is the duplicate-detection anchor: a new capability is
 matched against the ``capability`` of every existing plugin spec before a new
@@ -15,8 +16,9 @@ spec, the contract, and the catalog share one vocabulary.
 
 from __future__ import annotations
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+from fwbg_agents.agents.plugin_planner import SLUG_PATTERN, ParamTypeLit
 from fwbg_agents.orchestrator.plugin_contract import PluginKindLit
 
 SPEC_FILENAME = "spec.md"
@@ -28,7 +30,7 @@ class SpecParam(BaseModel):
 
     model_config = ConfigDict(extra="forbid", frozen=True)
     name: str = Field(min_length=1, pattern=r"^[a-z][a-z0-9_]*$")
-    type: str = Field(min_length=1)
+    type: ParamTypeLit
     description: str = Field(min_length=1)
     default: int | float | bool | str | list | None = None
 
@@ -38,7 +40,7 @@ class PluginSpec(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    slug: str = Field(min_length=2, max_length=64, pattern=r"^[a-z][a-z0-9_-]*$")
+    slug: str = Field(min_length=2, max_length=64, pattern=SLUG_PATTERN)
     name: str = Field(min_length=1)
     kind: PluginKindLit
     # One-line capability statement — the dedup anchor. Kept short on purpose.
@@ -52,6 +54,13 @@ class PluginSpec(BaseModel):
     assumptions: list[str] = []
     needs_clarification: list[str] = []
     version: str = Field(default="0.1.0", min_length=1)
+
+    @field_validator("capability")
+    @classmethod
+    def _capability_is_single_line(cls, v: str) -> str:
+        if "\n" in v:
+            raise ValueError("capability must be a single line")
+        return v
 
 
 def spec_index_entry(spec: PluginSpec) -> dict[str, str]:

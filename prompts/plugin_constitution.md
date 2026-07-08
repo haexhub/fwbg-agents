@@ -1,8 +1,9 @@
 # Plugin Constitution
 
 > The non-negotiable principles every fwbg plugin/indicator MUST satisfy.
-> Adapted from spec-kit's `constitution.md`. Loaded by the speckit workflow and
-> injected into the authoring agents. Keep in sync with `prompts/plugin_authoring.md`
+> Adapted from spec-kit's `constitution.md`. Loaded via
+> `fwbg_agents.speckit.load_constitution()`; injected into the authoring agents
+> from Phase 2 of the speckit plan on. Keep in sync with `prompts/plugin_authoring.md`
 > (the detailed SDK conventions) and the `fwbg_sdk` base classes.
 
 ## I. One capability per plugin — no duplicates
@@ -54,7 +55,8 @@ for all divisions.
 
 ## VI. Naming & identity
 
-- `name` (class attr) == directory slug, snake_case.
+- `name` (class attr) == directory slug: lowercase letters/digits with `_` or
+  `-` (the existing corpus has both forms — `adx`, `fancy-ma`).
 - Class name is PascalCase-slug + phase suffix
   (`Indicator`/`Preprocessor`/`Selector`/`RiskManager`).
 - Feature columns are snake_case, prefixed with the slug, and MUST exactly

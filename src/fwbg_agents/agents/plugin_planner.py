@@ -61,20 +61,28 @@ PluginPhaseLit = Literal[
     "validation",
 ]
 
+# Slug allows both snake_case and kebab-case (matches PluginContract.name
+# convention; existing plugins use both forms — "adx", "fancy-ma" etc.).
+# Shared with PluginSpec.slug so spec and plan can't drift apart.
+SLUG_PATTERN = r"^[a-z][a-z0-9_-]*$"
+
+# Canonical param-type vocabulary, shared with SpecParam.type.
+ParamTypeLit = Literal[
+    "int",
+    "float",
+    "bool",
+    "string",
+    "list[int]",
+    "list[float]",
+    "list[string]",
+    "choice",
+]
+
 
 class ParamSpec(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
     name: str = Field(min_length=1, pattern=r"^[a-z][a-z0-9_]*$")
-    type: Literal[
-        "int",
-        "float",
-        "bool",
-        "string",
-        "list[int]",
-        "list[float]",
-        "list[string]",
-        "choice",
-    ]
+    type: ParamTypeLit
     default: int | float | bool | str | list[Any] | None
     description: str = Field(min_length=1)
     min: int | float | None = None
@@ -86,9 +94,7 @@ class ParamSpec(BaseModel):
 
 class PluginPlan(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
-    # Slug allows both snake_case and kebab-case (matches PluginContract.name
-    # convention; existing plugins use both forms — "adx", "fancy-ma" etc.).
-    slug: str = Field(min_length=2, max_length=64, pattern=r"^[a-z][a-z0-9_-]*$")
+    slug: str = Field(min_length=2, max_length=64, pattern=SLUG_PATTERN)
     class_name: str = Field(min_length=2, pattern=r"^[A-Z][A-Za-z0-9]+$")
     phase: PluginPhaseLit
     version: str = Field(default="0.1.0", min_length=1)
