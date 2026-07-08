@@ -1,9 +1,10 @@
 """Backfill speckit spec.md for the existing fwbg plugin corpus (Phase 1).
 
-Reads each catalogued plugin's source, generates a validated PluginSpec via the
-LLM, and writes a co-located spec.md next to the plugin in the fwbg repo. The
-resulting specs are the corpus the dedup gate (Phase 2) matches new capabilities
-against.
+Reads each existing plugin's source (every plugin dir on disk, not just the
+manifest-declared ones — the manifests are incomplete), generates a validated
+PluginSpec via the LLM, and writes a co-located spec.md next to the plugin in
+the fwbg repo. The resulting specs are the corpus the dedup gate (Phase 2)
+matches new capabilities against.
 
 Idempotent: skips a plugin that already has a spec.md unless --force. Run it
 where the haex-claude-proxy is reachable (it makes one LLM call per plugin).
@@ -22,7 +23,6 @@ import logging
 from pathlib import Path
 
 from fwbg_agents.config import settings
-from fwbg_agents.orchestrator.plugin_catalog import discover_fwbg_plugins
 from fwbg_agents.speckit import SPEC_FILENAME, render_spec_md
 from fwbg_agents.speckit.spec_generator import (
     CATEGORY_TO_KIND,
@@ -30,6 +30,15 @@ from fwbg_agents.speckit.spec_generator import (
 )
 
 log = logging.getLogger("backfill_plugin_specs")
+
+# Plugin bundle roots under the fwbg repo (mirror plugin_catalog's discovery
+# roots). We walk the filesystem rather than the bundle manifests because the
+# manifests are known to be incomplete (many real plugins are undeclared), and
+# every existing plugin should get a spec.
+_PLUGIN_ROOTS = (
+    Path("src/fwbg/plugins"),
+    Path("packages/fwbg-premium/src/fwbg_premium/plugins"),
+)
 
 
 def _read_plugin_source(plugin_dir: Path) -> str:
@@ -45,18 +54,28 @@ def _read_plugin_source(plugin_dir: Path) -> str:
     return "\n\n".join(parts)
 
 
-def _iter_catalogued_plugins(fwbg_root: Path):
-    """Yield (slug, category, plugin_dir) for every catalogued plugin on disk."""
-    catalog = discover_fwbg_plugins(fwbg_root)
-    for category, slugs in sorted(catalog.items()):
-        for slug, manifest in sorted(slugs.items()):
-            plugin_dir = manifest.source_path.parent / category / slug
-            yield slug, category, plugin_dir
+def _iter_plugins(fwbg_root: Path):
+    """Yield (slug, category, plugin_dir) for every plugin dir on disk
+    (<root>/<bundle>/<category>/<slug>/__init__.py), whether or not it is
+    declared in a bundle manifest."""
+    for rel in _PLUGIN_ROOTS:
+        base = fwbg_root / rel
+        if not base.is_dir():
+            continue
+        for bundle in sorted(base.iterdir()):
+            if not bundle.is_dir():
+                continue
+            for cat_dir in sorted(bundle.iterdir()):
+                if not cat_dir.is_dir():
+                    continue
+                for slug_dir in sorted(cat_dir.iterdir()):
+                    if (slug_dir / "__init__.py").is_file():
+                        yield slug_dir.name, cat_dir.name, slug_dir
 
 
 async def backfill(*, fwbg_root: Path, dry_run: bool, force: bool, limit: int | None) -> int:
     done = 0
-    for slug, category, plugin_dir in _iter_catalogued_plugins(fwbg_root):
+    for slug, category, plugin_dir in _iter_plugins(fwbg_root):
         if limit is not None and done >= limit:
             break
         kind = CATEGORY_TO_KIND.get(category)

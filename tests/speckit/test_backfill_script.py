@@ -21,6 +21,7 @@ def _load_backfill_module():
 def _fake_fwbg_tree(root: Path) -> Path:
     bundle = root / "src" / "fwbg" / "plugins" / "fwbg-core"
     (bundle).mkdir(parents=True)
+    # Manifest declares only "foo"; "bar" exists on disk but is undeclared.
     (bundle / "manifest.json").write_text(
         json.dumps({"version": "1.0.0", "plugins": {"indicators": ["foo"]}})
     )
@@ -28,15 +29,20 @@ def _fake_fwbg_tree(root: Path) -> Path:
     foo.mkdir(parents=True)
     (foo / "__init__.py").write_text("class FooIndicator:  # SRCMARKER\n    pass\n")
     (foo / "tests.py").write_text("def test_x():  # TESTMARKER\n    pass\n")
+    bar = bundle / "indicators" / "bar"
+    bar.mkdir(parents=True)
+    (bar / "__init__.py").write_text("class BarIndicator:\n    pass\n")
     return foo
 
 
-def test_iter_catalogued_resolves_plugin_dirs(tmp_path):
+def test_iter_plugins_finds_declared_and_undeclared(tmp_path):
     mod = _load_backfill_module()
     foo_dir = _fake_fwbg_tree(tmp_path)
-    entries = list(mod._iter_catalogued_plugins(tmp_path))
+    entries = list(mod._iter_plugins(tmp_path))
+    slugs = {slug for slug, _cat, _dir in entries}
+    # both the manifest-declared "foo" and the undeclared "bar" are covered
+    assert {"foo", "bar"} <= slugs
     assert ("foo", "indicators", foo_dir) in entries
-    assert foo_dir.is_dir()
 
 
 def test_read_plugin_source_excludes_tests(tmp_path):
