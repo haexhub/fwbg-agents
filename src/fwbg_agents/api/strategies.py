@@ -28,6 +28,7 @@ from fwbg_agents.orchestrator.lifecycle import (
     transition_strategy,
 )
 from fwbg_agents.orchestrator.paper_flow import paper_analyze
+from fwbg_agents.persistence.agent_runs import fail_agent_run
 from fwbg_agents.persistence.database import SessionLocal, get_session
 from fwbg_agents.persistence.models import (
     AgentRun,
@@ -364,10 +365,7 @@ async def _run_paper_analyze_background(strategy_id: int, agent_run_id: int) -> 
             # row could end up in an inconsistent state.
             await session.refresh(ar)
             if ar.status != AgentRunStatus.FAILED.value:
-                ar.status = AgentRunStatus.FAILED.value
-                ar.ended_at = datetime.now(UTC)
-                ar.error = str(exc)
-                await session.commit()
+                await fail_agent_run(session, ar, exc)
 
 
 @router.post("/strategies/{strategy_id}/paper-analyze", status_code=202)

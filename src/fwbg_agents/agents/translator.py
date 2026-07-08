@@ -36,6 +36,7 @@ from fwbg_agents.orchestrator.strategy_validator import (
     StrategyValidationError,
     validate_strategy_json,
 )
+from fwbg_agents.persistence.agent_runs import fail_agent_run
 from fwbg_agents.persistence.models import (
     AgentRun,
     AgentRunStatus,
@@ -440,10 +441,7 @@ class Translator:
 
             return strategy_path
         except Exception as exc:
-            ar.status = AgentRunStatus.FAILED.value
-            ar.ended_at = datetime.now(UTC)
-            ar.error = str(exc)
-            await self.session.commit()
+            await fail_agent_run(self.session, ar, exc)
             raise
 
     async def run_reiterate(self, parent: Strategy) -> Strategy:
@@ -628,10 +626,7 @@ class Translator:
             await self.session.refresh(child)
             return child
         except Exception as exc:
-            ar.status = AgentRunStatus.FAILED.value
-            ar.ended_at = datetime.now(UTC)
-            ar.error = str(exc)
-            await self.session.commit()
+            await fail_agent_run(self.session, ar, exc)
             raise
 
     async def run_reiterate_with_plugin(
@@ -863,8 +858,5 @@ class Translator:
             await self.session.refresh(child)
             return child
         except Exception as exc:
-            ar.status = AgentRunStatus.FAILED.value
-            ar.ended_at = datetime.now(UTC)
-            ar.error = str(exc)
-            await self.session.commit()
+            await fail_agent_run(self.session, ar, exc)
             raise

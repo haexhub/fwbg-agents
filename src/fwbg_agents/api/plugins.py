@@ -26,6 +26,7 @@ from fwbg_agents.orchestrator.plugin_flow import (
     lookup_plugin_capability,
     reiterate_with_plugin,
 )
+from fwbg_agents.persistence.agent_runs import fail_agent_run
 from fwbg_agents.persistence.database import SessionLocal, get_session
 from fwbg_agents.persistence.models import (
     AgentRun,
@@ -171,10 +172,7 @@ async def _run_author_background(strategy_id: int, agent_run_id: int) -> None:
             await session.commit()
         except Exception as exc:
             log.exception("author background task failed (agent_run %s)", agent_run_id)
-            ar.status = AgentRunStatus.FAILED.value
-            ar.ended_at = datetime.now(UTC)
-            ar.error = str(exc)
-            await session.commit()
+            await fail_agent_run(session, ar, exc)
 
 
 async def _run_evaluator_background(plugin_id: int, agent_run_id: int) -> None:
@@ -198,10 +196,7 @@ async def _run_evaluator_background(plugin_id: int, agent_run_id: int) -> None:
             await session.commit()
         except Exception as exc:
             log.exception("evaluate background task failed (agent_run %s)", agent_run_id)
-            ar.status = AgentRunStatus.FAILED.value
-            ar.ended_at = datetime.now(UTC)
-            ar.error = str(exc)
-            await session.commit()
+            await fail_agent_run(session, ar, exc)
 
 
 @router.post("/strategies/{strategy_id}/author-plugin", status_code=202)
@@ -329,10 +324,7 @@ async def _run_reiterate_with_plugin_background(
                 "reiterate-with-plugin background task failed (agent_run %s)",
                 agent_run_id,
             )
-            ar.status = AgentRunStatus.FAILED.value
-            ar.ended_at = datetime.now(UTC)
-            ar.error = str(exc)
-            await session.commit()
+            await fail_agent_run(session, ar, exc)
 
 
 @router.post("/strategies/{strategy_id}/reiterate-with-plugin", status_code=202)

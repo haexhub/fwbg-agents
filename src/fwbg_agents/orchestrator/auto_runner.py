@@ -51,6 +51,7 @@ from fwbg_agents.orchestrator.plugin_flow import (
 from fwbg_agents.orchestrator.recommendations import validate_and_apply
 from fwbg_agents.orchestrator.research_flow import reiterate, research_and_translate
 from fwbg_agents.orchestrator.run_janitor import ORPHAN_ERROR, TRANSIENT_ERROR
+from fwbg_agents.persistence.agent_runs import fail_agent_run
 from fwbg_agents.persistence.database import SessionLocal
 from fwbg_agents.persistence.models import (
     AgentRun,
@@ -581,10 +582,7 @@ async def _fill_pipeline_background(agent_run_id: int) -> None:
             log.exception(
                 "pipeline fill: research failed (agent_run %s)", agent_run_id
             )
-            ar.status = AgentRunStatus.FAILED.value
-            ar.error = str(exc)
-            ar.ended_at = datetime.now(UTC)
-            await session.commit()
+            await fail_agent_run(session, ar, exc)
         finally:
             await fwbg.aclose()
             await tavily.aclose()
