@@ -35,12 +35,12 @@ from fwbg_agents.orchestrator.hypotheses import (
     validate_hypothesis,
 )
 from fwbg_agents.orchestrator.prior_art import PriorArtMatch, lookup_prior_art
+from fwbg_agents.persistence.agent_runs import fail_agent_run
 from fwbg_agents.persistence.models import (
     AgentRun,
     AgentRunStatus,
     LlmCall,
 )
-from fwbg_agents.tools.api_errors import describe_api_error
 from fwbg_agents.tools.llm import model_for, prompt_path_for
 from fwbg_agents.tools.search import SearchProvider, SearchResult, SearchUnavailableError
 
@@ -226,14 +226,11 @@ class Researcher:
                 await self.session.commit()
             raise
         except Exception as exc:
-            ar.status = AgentRunStatus.FAILED.value
-            ar.ended_at = datetime.now(UTC)
-            ar.error = describe_api_error(exc)
-            await self.session.commit()
+            msg = await fail_agent_run(self.session, ar, exc)
             event_bus.emit({
                 "type": "agent_run_failed",
                 "agent_run_id": ar.id,
                 "agent_name": "researcher",
-                "error": ar.error,
+                "error": msg,
             })
             raise

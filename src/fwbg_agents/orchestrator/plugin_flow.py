@@ -33,6 +33,7 @@ from fwbg_agents.config import settings
 from fwbg_agents.orchestrator.lifecycle import strategy_dir, transition_plugin
 from fwbg_agents.orchestrator.plugin_catalog import load_catalog, reset_fwbg_cache
 from fwbg_agents.orchestrator.plugin_contract import dump_contract
+from fwbg_agents.persistence.agent_runs import fail_agent_run
 from fwbg_agents.persistence.models import (
     AgentRun,
     AgentRunStatus,
@@ -42,7 +43,6 @@ from fwbg_agents.persistence.models import (
     Strategy,
     StrategyState,
 )
-from fwbg_agents.tools.api_errors import describe_api_error
 
 log = logging.getLogger(__name__)
 
@@ -210,20 +210,10 @@ async def author_plugin_from_strategy(
             parent_strategy=strategy, sidecar=sidecar, catalog=catalog
         )
     except PluginPlannerError as exc:
-        await _finish_agent_run(
-            session,
-            planner_ar,
-            status=AgentRunStatus.FAILED,
-            error=describe_api_error(exc),
-        )
+        await fail_agent_run(session, planner_ar, exc)
         raise PluginAuthorError(f"planner failed: {exc}") from exc
     except Exception as exc:  # belt-and-suspenders for unexpected
-        await _finish_agent_run(
-            session,
-            planner_ar,
-            status=AgentRunStatus.FAILED,
-            error=describe_api_error(exc),
-        )
+        await fail_agent_run(session, planner_ar, exc)
         raise
 
     await _persist_llm_call(session, planner_ar, planner_result.llm)
@@ -264,12 +254,7 @@ async def author_plugin_from_strategy(
         )
         raise PluginAuthorError(f"implementer failed: {exc}") from exc
     except Exception as exc:
-        await _finish_agent_run(
-            session,
-            impl_ar,
-            status=AgentRunStatus.FAILED,
-            error=describe_api_error(exc),
-        )
+        await fail_agent_run(session, impl_ar, exc)
         raise
 
     for meta in impl_result.llm_calls:

@@ -42,13 +42,13 @@ from fwbg_agents.orchestrator.lifecycle import check_backtest_criteria, strategy
 from fwbg_agents.orchestrator.lineage import render_family_history
 from fwbg_agents.orchestrator.live_catalog import LiveCatalog, fetch_live_catalog
 from fwbg_agents.orchestrator.plugin_catalog import PluginCatalog
+from fwbg_agents.persistence.agent_runs import fail_agent_run
 from fwbg_agents.persistence.models import (
     AgentRun,
     AgentRunStatus,
     LlmCall,
     Strategy,
 )
-from fwbg_agents.tools.api_errors import describe_api_error
 from fwbg_agents.tools.fwbg_client import FwbgClient
 from fwbg_agents.tools.llm import model_for, prompt_path_for
 
@@ -508,8 +508,5 @@ class Analyst:
 
             return result.output
         except Exception as exc:
-            ar.status = AgentRunStatus.FAILED.value
-            ar.ended_at = datetime.now(UTC)
-            ar.error = describe_api_error(exc)
-            await self.session.commit()
+            await fail_agent_run(self.session, ar, exc)
             raise

@@ -54,13 +54,13 @@ from fwbg_agents.orchestrator.universe import (
     plan_universe_attempts,
     timeframes_by_symbol,
 )
+from fwbg_agents.persistence.agent_runs import fail_agent_run
 from fwbg_agents.persistence.models import (
     AgentRun,
     AgentRunStatus,
     Strategy,
     StrategyState,
 )
-from fwbg_agents.tools.api_errors import describe_api_error
 from fwbg_agents.tools.fwbg_client import FwbgClientError, safe_fwbg_strategy_name
 
 log = logging.getLogger(__name__)
@@ -233,13 +233,9 @@ class Runner:
                 f"all {len(attempts)} universe attempt(s) exhausted; last: {last_reason}"
             )
         except Exception as exc:
-            ar.status = AgentRunStatus.FAILED.value
-            ar.ended_at = datetime.now(UTC)
-            error_str = describe_api_error(exc)
-            if isinstance(exc, httpx.TransportError):
-                error_str = f"transient: {error_str}"
-            ar.error = error_str
-            await self.session.commit()
+            await fail_agent_run(
+                self.session, ar, exc, transient=isinstance(exc, httpx.TransportError)
+            )
             raise
 
     async def _resolve_assets(
