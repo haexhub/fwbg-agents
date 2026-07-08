@@ -8,6 +8,7 @@ capability tradeoffs justify it.
 
 from pathlib import Path
 
+from anthropic import AsyncAnthropic
 from pydantic_ai.models.anthropic import AnthropicModel, AnthropicModelSettings
 from pydantic_ai.providers.anthropic import AnthropicProvider
 
@@ -24,16 +25,21 @@ AVAILABLE_CLAUDE_MODELS: tuple[str, ...] = (
 
 
 def _build_model(model_name: str) -> AnthropicModel:
-    provider = AnthropicProvider(
+    # Own the Anthropic client so we control both the per-request timeout and
+    # the retry budget. The SDK default (max_retries=2 = 3 attempts) turned a
+    # too-short 120s timeout into ~6min stacked failures on every long Opus
+    # call. A generous timeout lets a legitimately long generation finish;
+    # llm_max_retries bounds a wedged-proxy hang to a small multiple of it.
+    client = AsyncAnthropic(
         base_url=settings.anthropic_base_url,
         api_key=settings.anthropic_api_key,
+        timeout=settings.llm_timeout_seconds,
+        max_retries=settings.llm_max_retries,
     )
+    provider = AnthropicProvider(anthropic_client=client)
     return AnthropicModel(
         model_name=model_name,
         provider=provider,
-        # Bound every request so a wedged proxy can't freeze an agent for the
-        # SDK's ~30-min default; pydantic-ai surfaces this as a ret/timeout error
-        # the flow can fail on, rather than an unbounded await.
         settings=AnthropicModelSettings(timeout=settings.llm_timeout_seconds),
     )
 
