@@ -122,7 +122,7 @@ async def _run_research_background(input: ResearcherInput, agent_run_id: int) ->
             log.exception("research background task failed (agent_run %s)", agent_run_id)
             ar.status = AgentRunStatus.FAILED.value
             ar.ended_at = datetime.now(UTC)
-            ar.error = describe_api_error(exc) or str(exc)
+            ar.error = describe_api_error(exc)
             await session.commit()
         finally:
             await fwbg.aclose()
@@ -148,7 +148,7 @@ async def _run_reiterate_background(parent_id: int, agent_run_id: int) -> None:
             log.exception("reiterate background task failed (agent_run %s)", agent_run_id)
             ar.status = AgentRunStatus.FAILED.value
             ar.ended_at = datetime.now(UTC)
-            ar.error = describe_api_error(exc) or str(exc)
+            ar.error = describe_api_error(exc)
             await session.commit()
         finally:
             await fwbg.aclose()

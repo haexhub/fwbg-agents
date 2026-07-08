@@ -103,7 +103,7 @@ async def _generate_valid_hypothesis(
             log.warning("researcher attempt %d/%d failed: %s", attempt, fanout_n, exc)
             errors.append(exc)
 
-    reasons = "; ".join(describe_api_error(e) or str(e) for e in errors)
+    reasons = "; ".join(describe_api_error(e) for e in errors)
     raise ResearcherFanoutExhaustedError(f"all {fanout_n} attempts failed: {reasons}")
 
 

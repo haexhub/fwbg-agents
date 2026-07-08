@@ -2,11 +2,8 @@
 
 from __future__ import annotations
 
-import asyncio
-
 import anthropic
 import httpx
-import pytest
 from pydantic_ai.exceptions import ModelHTTPError
 
 from fwbg_agents.tools.api_errors import describe_api_error
@@ -46,10 +43,15 @@ def test_credit_balance_400():
     assert describe_api_error(exc) == "Anthropic credit balance exhausted."
 
 
-def test_generic_400_keeps_status_and_snippet():
-    exc = _model_http_error(400, "some unexpected validation failure")
+def test_400_with_insufficient_elsewhere_is_not_credit_balance():
+    exc = _model_http_error(400, "insufficient tool_result blocks in message")
     msg = describe_api_error(exc)
-    assert msg is not None
+    assert "credit balance" not in msg.lower()
+    assert "HTTP 400" in msg
+
+
+def test_generic_400_keeps_status_and_snippet():
+    msg = describe_api_error(_model_http_error(400, "some unexpected validation failure"))
     assert "HTTP 400" in msg
     assert "some unexpected validation failure" in msg
 
@@ -61,9 +63,7 @@ def test_auth_401():
 
 
 def test_permission_403():
-    msg = describe_api_error(_model_http_error(403))
-    assert msg is not None
-    assert "permission denied" in msg.lower()
+    assert "permission denied" in describe_api_error(_model_http_error(403)).lower()
 
 
 def test_server_error_5xx_includes_code():
@@ -74,7 +74,6 @@ def test_server_error_5xx_includes_code():
 
 def test_unknown_status_falls_back_to_generic_with_status():
     msg = describe_api_error(_model_http_error(418, "teapot"))
-    assert msg is not None
     assert "HTTP 418" in msg
     assert "teapot" in msg
 
@@ -95,31 +94,29 @@ def test_anthropic_sdk_overloaded():
     assert describe_api_error(exc) == "Anthropic API is overloaded. Retry later."
 
 
-def test_httpx_timeout():
+def test_httpx_timeout_is_not_attributed_to_anthropic():
     msg = describe_api_error(httpx.ReadTimeout("timed out"))
-    assert msg is not None
     assert "timeout" in msg.lower()
+    assert "anthropic" not in msg.lower()
 
 
-def test_asyncio_timeout():
-    msg = describe_api_error(asyncio.TimeoutError())
-    assert msg is not None
+def test_builtin_timeout():
+    msg = describe_api_error(TimeoutError("backtest poll exceeded cap"))
     assert "timeout" in msg.lower()
+    assert "backtest poll exceeded cap" in msg
 
 
-def test_httpx_connect_error():
+def test_httpx_connect_error_is_not_attributed_to_anthropic():
     msg = describe_api_error(httpx.ConnectError("connection refused"))
-    assert msg is not None
     assert "connection" in msg.lower()
+    assert "anthropic" not in msg.lower()
 
 
 def test_anthropic_sdk_timeout():
     exc = anthropic.APITimeoutError(
         request=httpx.Request("POST", "https://api.anthropic.com/v1/messages")
     )
-    msg = describe_api_error(exc)
-    assert msg is not None
-    assert "timeout" in msg.lower()
+    assert describe_api_error(exc) == "Timeout reaching the Anthropic API. Retry later."
 
 
 def test_fwbg_client_error_with_body():
@@ -133,13 +130,32 @@ def test_fwbg_client_error_without_body():
     assert describe_api_error(FwbgClientError(500, "")) == "fwbg API error (HTTP 500)."
 
 
-def test_non_api_exception_returns_none():
-    assert describe_api_error(ValueError("x")) is None
+def test_fwbg_long_body_is_kept():
+    body = "x" * 600
+    msg = describe_api_error(FwbgClientError(422, body))
+    assert body in msg
+
+
+def test_non_api_exception_falls_back_to_str():
+    assert describe_api_error(ValueError("x")) == "x"
+
+
+def test_empty_message_falls_back_to_repr():
+    assert describe_api_error(ValueError()) == "ValueError()"
+
+
+def test_wrapped_api_error_is_classified_via_cause():
+    try:
+        try:
+            raise _model_http_error(429)
+        except ModelHTTPError as inner:
+            raise RuntimeError(f"planner failed: {inner}") from inner
+    except RuntimeError as exc:
+        msg = describe_api_error(exc)
+    assert msg == "Anthropic API rate limit reached — too many requests. Retry later."
 
 
 def test_long_body_is_truncated():
-    exc = _model_http_error(418, "y" * 500)
-    msg = describe_api_error(exc)
-    assert msg is not None
+    msg = describe_api_error(_model_http_error(418, "y" * 500))
     assert "…" in msg
     assert len(msg) < 300

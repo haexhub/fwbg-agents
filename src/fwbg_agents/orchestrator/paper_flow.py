@@ -171,7 +171,7 @@ async def paper_analyze(
     except Exception as exc:
         log.exception("paper_analyze: slug=%s FAILED", strategy.slug)
         ar.status = AgentRunStatus.FAILED.value
-        ar.error = describe_api_error(exc) or str(exc)
+        ar.error = describe_api_error(exc)
         ar.ended_at = datetime.now(UTC)
         try:
             await session.commit()

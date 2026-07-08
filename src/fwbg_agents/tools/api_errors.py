@@ -4,23 +4,19 @@ Every agent used to store ``str(exc)`` straight into ``AgentRun.error``, so an
 API failure surfaced in the UI as the opaque Anthropic SDK text ("Request timed
 out or interrupted. This could be due to a network timeout..."). This module
 maps the known API/transport exceptions — Anthropic (raw SDK *and* via
-pydantic-ai's ``ModelHTTPError``), httpx/asyncio transport errors, and the fwbg
-backtest client — to short, categorized English messages.
+pydantic-ai's ``ModelHTTPError``), httpx transport errors, and the fwbg
+backtest client — to short, categorized English messages. Unknown exceptions
+fall back to ``str(exc)``, and wrapped errors are classified via their
+``__cause__`` chain.
 """
 
 from __future__ import annotations
 
-import asyncio
-
+import anthropic
 import httpx
 from pydantic_ai.exceptions import ModelHTTPError
 
 from fwbg_agents.tools.fwbg_client import FwbgClientError
-
-try:  # anthropic is a hard dependency, but stay defensive.
-    import anthropic
-except ImportError:  # pragma: no cover
-    anthropic = None
 
 
 def _snippet(body: str | None, limit: int = 160) -> str:
@@ -37,20 +33,12 @@ def _anthropic_status_body(exc: BaseException) -> tuple[int | None, str]:
     """Extract (HTTP status, body text) from an Anthropic/pydantic-ai HTTP error."""
     if isinstance(exc, ModelHTTPError):
         return exc.status_code, "" if exc.body is None else str(exc.body)
-    if anthropic is not None and isinstance(exc, anthropic.APIStatusError):
-        status = getattr(exc, "status_code", None)
-        if status is None:
-            status = getattr(getattr(exc, "response", None), "status_code", None)
-        body = getattr(exc, "message", "") or ""
-        extra = getattr(exc, "body", None)
-        if extra:
-            body = f"{body} {extra}".strip()
-        return status, body
+    if isinstance(exc, anthropic.APIStatusError):
+        return exc.status_code, f"{exc.message or ''} {exc.body or ''}".strip()
     return None, ""
 
 
 def _describe_status(status: int, body: str) -> str:
-    low = (body or "").lower()
     if status == 429:
         return "Anthropic API rate limit reached — too many requests. Retry later."
     if status == 529:
@@ -63,6 +51,7 @@ def _describe_status(status: int, body: str) -> str:
             "use this resource."
         )
     if status == 400:
+        low = body.lower()
         if (
             "prompt is too long" in low
             or "context length" in low
@@ -71,7 +60,7 @@ def _describe_status(status: int, body: str) -> str:
             or "too many tokens" in low
         ):
             return "Context window exceeded — the prompt is too large for the model."
-        if "credit balance" in low or "insufficient" in low:
+        if "credit balance" in low:
             return "Anthropic credit balance exhausted."
         return f"Anthropic API rejected the request (HTTP 400){_snippet(body)}."
     if 500 <= status < 600:
@@ -79,29 +68,30 @@ def _describe_status(status: int, body: str) -> str:
     return f"Anthropic API error (HTTP {status}){_snippet(body)}."
 
 
-def describe_api_error(exc: BaseException) -> str | None:
-    """Return a clear, human-readable message for a known API/transport error,
-    or None if `exc` is not an API error (caller should fall back to str(exc))."""
-    # fwbg backtest HTTP API.
+def _classify(exc: BaseException) -> str | None:
+    """Message for a known API/transport error, or None if unrecognized."""
+    # fwbg backtest HTTP API. No tight snippet cap: fwbg 422 validation
+    # bodies carry the actionable detail and used to be persisted in full.
     if isinstance(exc, FwbgClientError):
-        return f"fwbg API error (HTTP {exc.status}){_snippet(exc.body)}."
+        return f"fwbg API error (HTTP {exc.status}){_snippet(exc.body, limit=1000)}."
 
-    # Transport-level timeouts (check before generic connection errors, since
-    # httpx.ConnectTimeout / anthropic.APITimeoutError are also connection errors).
-    timeout_types: tuple[type[BaseException], ...] = (
-        httpx.TimeoutException,
-        asyncio.TimeoutError,
-    )
-    if anthropic is not None:
-        timeout_types += (anthropic.APITimeoutError,)
-    if isinstance(exc, timeout_types):
-        return "Network timeout reaching the Anthropic API. Retry later."
+    # Anthropic transport errors (APITimeoutError subclasses APIConnectionError,
+    # so check it first).
+    if isinstance(exc, anthropic.APITimeoutError):
+        return "Timeout reaching the Anthropic API. Retry later."
+    if isinstance(exc, anthropic.APIConnectionError):
+        return "Connection error reaching the Anthropic API. Retry later."
 
-    connection_types: tuple[type[BaseException], ...] = (httpx.ConnectError,)
-    if anthropic is not None:
-        connection_types += (anthropic.APIConnectionError,)
-    if isinstance(exc, connection_types):
-        return "Network connection error reaching the Anthropic API. Retry later."
+    # Generic transport errors: httpx also talks to the fwbg backend and the
+    # search providers, so don't attribute these to Anthropic. Timeouts before
+    # connection errors (httpx.ConnectTimeout is both).
+    if isinstance(exc, httpx.TimeoutException | TimeoutError):
+        return f"Network timeout during an API call{_snippet(str(exc))}. Retry later."
+    if isinstance(exc, httpx.ConnectError):
+        return (
+            f"Network connection error during an API call{_snippet(str(exc))}. "
+            "Retry later."
+        )
 
     # HTTP status errors from Anthropic (raw SDK or wrapped by pydantic-ai).
     status, body = _anthropic_status_body(exc)
@@ -109,3 +99,18 @@ def describe_api_error(exc: BaseException) -> str | None:
         return _describe_status(status, body)
 
     return None
+
+
+def describe_api_error(exc: BaseException) -> str:
+    """Return a clear, human-readable message for a known API/transport error,
+    walking the ``__cause__`` chain for wrapped errors; falls back to
+    ``str(exc)`` (or ``repr(exc)`` if empty) for everything else."""
+    seen: set[int] = set()
+    cur: BaseException | None = exc
+    while cur is not None and id(cur) not in seen:
+        seen.add(id(cur))
+        msg = _classify(cur)
+        if msg is not None:
+            return msg
+        cur = cur.__cause__
+    return str(exc) or repr(exc)

@@ -214,7 +214,7 @@ async def author_plugin_from_strategy(
             session,
             planner_ar,
             status=AgentRunStatus.FAILED,
-            error=describe_api_error(exc) or str(exc),
+            error=describe_api_error(exc),
         )
         raise PluginAuthorError(f"planner failed: {exc}") from exc
     except Exception as exc:  # belt-and-suspenders for unexpected
@@ -222,7 +222,7 @@ async def author_plugin_from_strategy(
             session,
             planner_ar,
             status=AgentRunStatus.FAILED,
-            error=describe_api_error(exc) or str(exc),
+            error=describe_api_error(exc),
         )
         raise
 
@@ -268,7 +268,7 @@ async def author_plugin_from_strategy(
             session,
             impl_ar,
             status=AgentRunStatus.FAILED,
-            error=describe_api_error(exc) or str(exc),
+            error=describe_api_error(exc),
         )
         raise
 

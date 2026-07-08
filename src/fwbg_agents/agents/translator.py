@@ -443,7 +443,7 @@ class Translator:
         except Exception as exc:
             ar.status = AgentRunStatus.FAILED.value
             ar.ended_at = datetime.now(UTC)
-            ar.error = describe_api_error(exc) or str(exc)
+            ar.error = describe_api_error(exc)
             await self.session.commit()
             raise
 
@@ -631,7 +631,7 @@ class Translator:
         except Exception as exc:
             ar.status = AgentRunStatus.FAILED.value
             ar.ended_at = datetime.now(UTC)
-            ar.error = describe_api_error(exc) or str(exc)
+            ar.error = describe_api_error(exc)
             await self.session.commit()
             raise
 
@@ -866,6 +866,6 @@ class Translator:
         except Exception as exc:
             ar.status = AgentRunStatus.FAILED.value
             ar.ended_at = datetime.now(UTC)
-            ar.error = describe_api_error(exc) or str(exc)
+            ar.error = describe_api_error(exc)
             await self.session.commit()
             raise
