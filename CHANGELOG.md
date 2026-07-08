@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.15.0](https://github.com/haexhub/fwbg-agents/compare/v0.14.0...v0.15.0) (2026-07-08)
+
+
+### Features
+
+* **speckit:** Phase 0 — PluginSpec, renderer, constitution ([fe2f53f](https://github.com/haexhub/fwbg-agents/commit/fe2f53fc65ba40981c5c627cd09532f8f5e9e34a))
+* **speckit:** Phase 0 foundation — PluginSpec, renderer, constitution ([dec5070](https://github.com/haexhub/fwbg-agents/commit/dec5070d5dd9c549b2e77218989619d785e77a42))
+
+
+### Bug Fixes
+
+* classify API errors into clear messages ([45d75b1](https://github.com/haexhub/fwbg-agents/commit/45d75b1cc686fe314026885ffe245409367bc78c))
+* classify API errors into clear messages instead of raw SDK text ([5f8c801](https://github.com/haexhub/fwbg-agents/commit/5f8c801df332951ad1d2fbc80c76aa04677726ce))
+* **review:** address code-review findings on speckit Phase 0 ([1794bcb](https://github.com/haexhub/fwbg-agents/commit/1794bcb8baf66eb7e34d0e3edfda1a7371932f43))
+* **review:** address code-review findings on the API error classifier ([68fc836](https://github.com/haexhub/fwbg-agents/commit/68fc836835ebf5ec0b4fe7decb7edf3baf385bb9))
+
 ## [0.14.0](https://github.com/haexhub/fwbg-agents/compare/v0.13.3...v0.14.0) (2026-07-07)
 
 
