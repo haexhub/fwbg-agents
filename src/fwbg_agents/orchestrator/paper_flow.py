@@ -35,13 +35,13 @@ from fwbg_agents.orchestrator.criteria_paper import (
     load_paper_criteria,
 )
 from fwbg_agents.orchestrator.lifecycle import strategy_dir
+from fwbg_agents.persistence.agent_runs import fail_agent_run
 from fwbg_agents.persistence.models import (
     AgentRun,
     AgentRunStatus,
     Strategy,
     StrategyState,
 )
-from fwbg_agents.tools.api_errors import describe_api_error
 from fwbg_agents.tools.fwbg_paper_reader import (
     read_paper_positions,
     read_paper_summary,
@@ -170,11 +170,5 @@ async def paper_analyze(
         return ar
     except Exception as exc:
         log.exception("paper_analyze: slug=%s FAILED", strategy.slug)
-        ar.status = AgentRunStatus.FAILED.value
-        ar.error = describe_api_error(exc)
-        ar.ended_at = datetime.now(UTC)
-        try:
-            await session.commit()
-        except Exception:
-            log.exception("paper_analyze: also failed to persist FAILED status")
+        await fail_agent_run(session, ar, exc)
         raise
