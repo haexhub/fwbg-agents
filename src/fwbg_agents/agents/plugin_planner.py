@@ -28,8 +28,10 @@ from fwbg_agents.agents.plugin_authoring_shared import (
     render_strategy_excerpt,
 )
 from fwbg_agents.config import settings
+from fwbg_agents.orchestrator.live_catalog import LiveCatalog
 from fwbg_agents.orchestrator.plugin_catalog import PluginCatalog
 from fwbg_agents.persistence.models import Strategy
+from fwbg_agents.tools.fwbg_client import FwbgClient
 from fwbg_agents.tools.llm import model_for, prompt_path_for
 
 log = logging.getLogger(__name__)
@@ -188,8 +190,10 @@ class PluginPlanner:
         *,
         parent_strategy: Strategy,
         sidecar: dict[str, Any],
-        catalog: PluginCatalog,
+        live: LiveCatalog,
+        client: FwbgClient | None = None,
     ) -> PlannerRunResult:
+        catalog = live.catalog
         sidecar_phase = sidecar.get("phase")
         if sidecar_phase not in _PHASE_MAPPING:
             raise PluginPlannerError(
@@ -207,7 +211,13 @@ class PluginPlanner:
 
         strategy_excerpt = render_strategy_excerpt(parent_strategy)
         category = sidecar.get("category") or sidecar_phase
-        examples = get_fwbg_plugin_examples(catalog, category=category, n=3)
+        # Example source is fetched over HTTP from fwbg; skip when no client is
+        # wired (e.g. unit tests exercising only the plan schema).
+        examples = (
+            await get_fwbg_plugin_examples(live, client, category=category, n=3)
+            if client is not None
+            else []
+        )
         user_prompt = _render_user_prompt(
             strategy_excerpt=strategy_excerpt,
             sidecar_json=json.dumps(sidecar, indent=2, default=str),

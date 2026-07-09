@@ -23,7 +23,6 @@ from pydantic_ai.models.function import AgentInfo, FunctionModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
-from fwbg_agents.orchestrator.plugin_catalog import _load_fwbg_cached
 from fwbg_agents.orchestrator.plugin_flow import (
     AuthorPluginPreconditionError,
     PluginAuthorError,
@@ -159,12 +158,10 @@ def _stub_model(*responses: dict[str, Any]) -> FunctionModel:
 
 
 @pytest_asyncio.fixture
-async def author_env(tmp_path, monkeypatch):
+async def author_env(tmp_path, monkeypatch, patch_live_catalog):
     from fwbg_agents.config import settings
 
     monkeypatch.setattr(settings, "data_dir", tmp_path / "agents_data")
-    monkeypatch.setattr(settings, "fwbg_repo_root", tmp_path / "no-fwbg")
-    _load_fwbg_cached.cache_clear()
 
     db_url = f"sqlite+aiosqlite:///{tmp_path}/orchestrator.db"
     engine = create_async_engine(db_url, future=True)

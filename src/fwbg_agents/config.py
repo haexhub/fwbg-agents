@@ -82,7 +82,7 @@ class Settings(BaseSettings):
     )
     fwbg_repo_root: Path = Field(
         default=Path.home() / "Projekte" / "fwbg",
-        description="Root of the fwbg source tree; scanned for plugin manifests by PluginCatalog.",
+        description="fwbg source tree root; read off disk only by the dev-time backfill script.",
     )
     fwbg_data_dir: Path = Field(
         default=Path.home() / "Projekte" / "fwbg" / "data",

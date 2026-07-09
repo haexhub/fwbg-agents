@@ -116,6 +116,42 @@ async def test_get_run_returns_results():
     await http.aclose()
 
 
+async def test_get_plugin_source_returns_source():
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.method == "GET"
+        assert request.url.path == "/api/plugins/fwbg-core.indicators.adx/source"
+        return httpx.Response(
+            200,
+            json={
+                "fqn": "fwbg-core.indicators.adx",
+                "filename": "__init__.py",
+                "source": "class Adx(BaseIndicator): ...",
+            },
+        )
+
+    http = _mock_client(handler)
+    client = FwbgClient(base_url="http://fwbg-test", http=http)
+
+    out = await client.get_plugin_source("fwbg-core.indicators.adx")
+
+    assert out["filename"] == "__init__.py"
+    assert out["source"].startswith("class Adx")
+    await http.aclose()
+
+
+async def test_get_plugin_source_404_raises_fwbg_client_error():
+    def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(404, json={"detail": "Plugin not found: nope"})
+
+    http = _mock_client(handler)
+    client = FwbgClient(base_url="http://fwbg-test", http=http)
+
+    with pytest.raises(FwbgClientError) as exc:
+        await client.get_plugin_source("nope")
+    assert "404" in str(exc.value)
+    await http.aclose()
+
+
 async def test_non_200_raises_fwbg_client_error():
     def handler(_request: httpx.Request) -> httpx.Response:
         return httpx.Response(404, json={"detail": "Run not found"})

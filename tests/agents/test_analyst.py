@@ -37,7 +37,6 @@ from fwbg_agents.agents.analyst import (
 from fwbg_agents.orchestrator.plugin_catalog import (
     PluginCatalog,
     PluginManifest,
-    _load_fwbg_cached,
 )
 from fwbg_agents.persistence.database import Base
 from fwbg_agents.persistence.models import (
@@ -56,6 +55,12 @@ def _stub_model(tool_name: str, args: dict) -> FunctionModel:
         return ModelResponse(parts=[ToolCallPart(tool_name, args)])
 
     return FunctionModel(handler)
+
+
+@pytest.fixture(autouse=True)
+def _api_only_catalog(patch_live_catalog):
+    """The catalog is API-only; the Analyst tests don't wire a FwbgClient, so
+    use the shared DB-only fetch_live_catalog stub (see conftest)."""
 
 
 @pytest_asyncio.fixture
@@ -235,11 +240,6 @@ async def test_analyst_returns_change_exit(db_and_backtested):
 
 async def test_analyst_returns_add_indicator(db_and_backtested, monkeypatch, tmp_path):
     SessionMaker, strategy_id, _ = db_and_backtested
-    # Point catalog at an empty fwbg root so the rendered prompt's snapshot is
-    # empty-ish — keeps the test independent of the host's fwbg checkout.
-    _load_fwbg_cached.cache_clear()
-    from fwbg_agents.config import settings as _settings
-    monkeypatch.setattr(_settings, "fwbg_repo_root", tmp_path / "no-fwbg")
 
     test_model = _stub_model(
         "final_result_AddIndicator",
@@ -313,9 +313,6 @@ async def test_analyst_add_indicator_survives_invalid_enums(
     plural category + bogus phase must yield a normalised AddIndicator and a
     DONE AgentRun rather than 'Exceeded maximum output retries (3)'."""
     SessionMaker, strategy_id, _ = db_and_backtested
-    _load_fwbg_cached.cache_clear()
-    from fwbg_agents.config import settings as _settings
-    monkeypatch.setattr(_settings, "fwbg_repo_root", tmp_path / "no-fwbg")
 
     test_model = _stub_model(
         "final_result_AddIndicator",

@@ -6,9 +6,9 @@ in PROPOSED with the slug appended to the right list-field (`indicators` /
 `feature_selection` / `preprocessing` / `extra_filters`).
 
 The plugin must already be in the catalog (caller's responsibility): we
-seed a Plugin row in VERIFIED so `load_catalog()` picks it up; the fwbg
-repo-root manifest scan is monkeypatched to an empty tmpdir so only DB-
-side plugins land in the catalog.
+seed a Plugin row in VERIFIED so the merged catalog picks it up. The catalog
+is API-only, so `fetch_live_catalog` is stubbed (via the shared
+`patch_live_catalog` fixture) to a hermetic DB-only catalog — no live fwbg.
 """
 
 from __future__ import annotations
@@ -22,7 +22,6 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from fwbg_agents.agents.translator import Translator, TranslatorError
-from fwbg_agents.orchestrator.plugin_catalog import _load_fwbg_cached
 from fwbg_agents.persistence.database import Base
 from fwbg_agents.persistence.models import (
     AgentRun,
@@ -102,20 +101,18 @@ def _sidecar(
     }
 
 
+@pytest.fixture(autouse=True)
+def _stub_catalog(patch_live_catalog):
+    """Catalog is API-only; these tests don't wire a FwbgClient, so use the
+    shared DB-only fetch_live_catalog stub (see conftest)."""
+
+
 @pytest_asyncio.fixture
 async def db_with_parent(tmp_path, monkeypatch):
-    """Seed: parent in BACKTESTED + iteration_001 files on disk.
-
-    Also monkeypatches fwbg_repo_root to an empty tmpdir so load_catalog
-    sees only DB-side plugins, and clears the fwbg-discovery cache.
-    """
+    """Seed: parent in BACKTESTED + iteration_001 files on disk."""
     from fwbg_agents.config import settings
 
     monkeypatch.setattr(settings, "data_dir", tmp_path / "agents_data")
-    empty_fwbg_root = tmp_path / "empty_fwbg"
-    empty_fwbg_root.mkdir()
-    monkeypatch.setattr(settings, "fwbg_repo_root", empty_fwbg_root)
-    _load_fwbg_cached.cache_clear()
 
     db_url = f"sqlite+aiosqlite:///{tmp_path}/translator_reiter_plugin.db"
     engine = create_async_engine(db_url, future=True)
@@ -153,7 +150,6 @@ async def db_with_parent(tmp_path, monkeypatch):
     (it_dir / "hypothesis.json").write_text(json.dumps(PARENT_HYPOTHESIS, indent=2))
 
     yield Session, parent_id, parent_slug, it_dir
-    _load_fwbg_cached.cache_clear()
     await engine.dispose()
 
 
@@ -349,10 +345,6 @@ async def test_run_reiterate_with_plugin_rejects_parent_not_backtested(tmp_path,
     from fwbg_agents.config import settings
 
     monkeypatch.setattr(settings, "data_dir", tmp_path / "agents_data")
-    empty_fwbg_root = tmp_path / "empty_fwbg"
-    empty_fwbg_root.mkdir()
-    monkeypatch.setattr(settings, "fwbg_repo_root", empty_fwbg_root)
-    _load_fwbg_cached.cache_clear()
 
     db_url = f"sqlite+aiosqlite:///{tmp_path}/translator_reiter_plugin_pre.db"
     engine = create_async_engine(db_url, future=True)
