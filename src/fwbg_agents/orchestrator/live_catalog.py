@@ -5,7 +5,8 @@ The Researcher and Translator must always see the CURRENT set of plugins
 adopted over time and presets are user-curated, so a frozen in-repo list
 goes stale. `fetch_live_catalog` asks fwbg (GET /api/plugins,
 /api/exit-modifiers, /api/entry-modifiers, /api/presets/*) on every research
-run and merges the result with agent-authored plugins from the DB.
+run. Agent-authored plugins appear here after being registered with fwbg
+via POST /api/plugins (Phase 3.2).
 
 fwbg is the single source of truth: there is NO filesystem fallback. If the
 API is unreachable the error propagates so the caller fails loudly rather than
@@ -18,15 +19,12 @@ import logging
 from typing import Any
 
 from pydantic import BaseModel, Field
-from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from fwbg_agents.orchestrator.plugin_catalog import (
     PluginCatalog,
     PluginManifest,
-    merge_with_db,
 )
-from fwbg_agents.persistence.models import Plugin
 from fwbg_agents.tools.fwbg_client import FwbgClient
 
 log = logging.getLogger(__name__)
@@ -35,8 +33,6 @@ log = logging.getLogger(__name__)
 # except `model`). fwbg has no `filters` phase — its filter/position-sizing
 # plugins carry phase `risk_management`, but the validator queries the catalog
 # category `filters` (for `extra_filters`), so we route risk_management→filters.
-# This matches `plugin_catalog._KIND_TO_CATEGORY`, which maps the DB `filter`
-# and `risk_management` kinds to the same `filters` bucket.
 _PHASE_TO_CATEGORY: dict[str, str] = {
     "indicators": "indicators",
     "preprocessing": "preprocessing",
@@ -165,10 +161,7 @@ async def _fetch_from_api(session: AsyncSession, fwbg: FwbgClient) -> LiveCatalo
         )
         details.setdefault(category, []).append(_detail(p))
 
-    # Agent-authored VERIFIED/ADOPTED plugins shadow fwbg entries, as in the
-    # filesystem path.
-    db_plugins = list((await session.execute(select(Plugin))).scalars().all())
-    catalog = merge_with_db(by_category, db_plugins)
+    catalog = PluginCatalog(by_category=by_category)
 
     exit_modifiers = [_detail(m) for m in await fwbg.get_exit_modifiers()]
     entry_modifiers = [_detail(m) for m in await fwbg.get_entry_modifiers()]
