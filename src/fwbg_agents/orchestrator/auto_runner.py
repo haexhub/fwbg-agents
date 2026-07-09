@@ -211,8 +211,13 @@ async def pick_next_backtested_unanalyzed(session: AsyncSession) -> int | None:
 
 async def pick_next_add_indicator_pending(session: AsyncSession) -> int | None:
     """Oldest BACKTESTED strategy with an add_indicator sidecar and an unused
-    auto plugin-author budget (one attempt — any prior plugin_planner run for
-    the strategy, DONE or FAILED, consumes it; manual API retries stay open).
+    auto plugin-author budget.
+
+    The budget is consumed only when the full chain completed (plugin_implementer
+    DONE) or when plugin_planner has been attempted >= runner_auto_max_attempts
+    times. A plugin_implementer timeout does NOT consume the budget — the
+    strategy gets another auto-retry up to the cap.
+    Manual API retries remain open regardless.
     """
     rows = (
         await session.execute(
@@ -224,7 +229,20 @@ async def pick_next_add_indicator_pending(session: AsyncSession) -> int | None:
     for s in rows:
         if _find_latest_sidecar(s.slug) is None:
             continue
-        attempts = (
+        implementer_done = (
+            await session.execute(
+                select(func.count())
+                .select_from(AgentRun)
+                .where(
+                    AgentRun.agent_name == "plugin_implementer",
+                    AgentRun.strategy_id == s.id,
+                    AgentRun.status == AgentRunStatus.DONE.value,
+                )
+            )
+        ).scalar_one()
+        if implementer_done > 0:
+            continue
+        planner_attempts = (
             await session.execute(
                 select(func.count())
                 .select_from(AgentRun)
@@ -234,7 +252,7 @@ async def pick_next_add_indicator_pending(session: AsyncSession) -> int | None:
                 )
             )
         ).scalar_one()
-        if attempts == 0:
+        if planner_attempts < settings.runner_auto_max_attempts:
             return s.id
     return None
 
