@@ -219,8 +219,24 @@ async def test_pick_next_add_indicator_pending(env):
     async with Session() as session:
         assert await auto_runner.pick_next_add_indicator_pending(session) == sid
 
-    # Any prior plugin_planner run (even FAILED) consumes the auto attempt.
+    # A failed plugin_planner does NOT yet consume the budget (cap=2).
     await add_run("plugin_planner", AgentRunStatus.FAILED, sid)
+    async with Session() as session:
+        assert await auto_runner.pick_next_add_indicator_pending(session) == sid
+
+    # Second failed planner hits the cap → no more auto-retries.
+    await add_run("plugin_planner", AgentRunStatus.FAILED, sid)
+    async with Session() as session:
+        assert await auto_runner.pick_next_add_indicator_pending(session) is None
+
+    # A successful plugin_implementer also closes the budget (chain completed).
+    sid2 = await make_strategy("orb__forex__ai1b", state=StrategyState.BACKTESTED)
+    (settings.data_dir / "strategies" / "orb__forex__ai1b" / "iteration_001"
+     / "add_indicator_request.json").write_text(
+        json.dumps({"capability": "pivot zones", "phase": "indicators"})
+    )
+    await add_run("plugin_planner", AgentRunStatus.DONE, sid2)
+    await add_run("plugin_implementer", AgentRunStatus.DONE, sid2)
     async with Session() as session:
         assert await auto_runner.pick_next_add_indicator_pending(session) is None
 
