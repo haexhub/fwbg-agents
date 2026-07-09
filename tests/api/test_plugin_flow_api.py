@@ -37,7 +37,6 @@ async def client_with_db(tmp_path, monkeypatch):
     from fwbg_agents.config import settings
 
     monkeypatch.setattr(settings, "data_dir", tmp_path / "data")
-    monkeypatch.setattr(settings, "fwbg_repo_root", tmp_path / "no-fwbg")
 
     db_url = f"sqlite+aiosqlite:///{tmp_path}/api.db"
     engine = create_async_engine(db_url, future=True)

@@ -8,6 +8,7 @@ unchanged (POST /strategies/{id}/author-plugin still returns the same shape).
 
 from __future__ import annotations
 
+import contextlib
 import json
 import logging
 import re
@@ -31,7 +32,7 @@ from fwbg_agents.agents.plugin_planner import (
 from fwbg_agents.agents.translator import Translator
 from fwbg_agents.config import settings
 from fwbg_agents.orchestrator.lifecycle import strategy_dir, transition_plugin
-from fwbg_agents.orchestrator.plugin_catalog import load_catalog, reset_fwbg_cache
+from fwbg_agents.orchestrator.live_catalog import fetch_live_catalog
 from fwbg_agents.orchestrator.plugin_contract import dump_contract
 from fwbg_agents.persistence.agent_runs import fail_agent_run
 from fwbg_agents.persistence.models import (
@@ -43,6 +44,7 @@ from fwbg_agents.persistence.models import (
     Strategy,
     StrategyState,
 )
+from fwbg_agents.tools.fwbg_client import FwbgClient
 
 log = logging.getLogger(__name__)
 
@@ -195,26 +197,33 @@ async def author_plugin_from_strategy(
             f"cannot parse sidecar at {sidecar_path}: {exc}"
         ) from exc
 
-    catalog = await load_catalog(session)
-
-    # --- Phase 1: PluginPlanner -----------------------------------------------
-    planner_ar = await _start_agent_run(
-        session,
-        agent_name="plugin_planner",
-        strategy_id=strategy.id,
-        input_artifact_path=str(sidecar_path),
-    )
+    # fwbg is the single source of truth for the plugin catalog + example
+    # source: fetch the live catalog and reuse the client for the planner's
+    # in-tree examples. No filesystem fallback — a dead API fails loudly.
+    client = FwbgClient(base_url=settings.fwbg_api_url)
     try:
-        planner = PluginPlanner(model=planner_model)
-        planner_result = await planner.run_plan(
-            parent_strategy=strategy, sidecar=sidecar, catalog=catalog
+        live = await fetch_live_catalog(session, client)
+
+        # --- Phase 1: PluginPlanner -------------------------------------------
+        planner_ar = await _start_agent_run(
+            session,
+            agent_name="plugin_planner",
+            strategy_id=strategy.id,
+            input_artifact_path=str(sidecar_path),
         )
-    except PluginPlannerError as exc:
-        await fail_agent_run(session, planner_ar, exc)
-        raise PluginAuthorError(f"planner failed: {exc}") from exc
-    except Exception as exc:  # belt-and-suspenders for unexpected
-        await fail_agent_run(session, planner_ar, exc)
-        raise
+        try:
+            planner = PluginPlanner(model=planner_model)
+            planner_result = await planner.run_plan(
+                parent_strategy=strategy, sidecar=sidecar, live=live, client=client
+            )
+        except PluginPlannerError as exc:
+            await fail_agent_run(session, planner_ar, exc)
+            raise PluginAuthorError(f"planner failed: {exc}") from exc
+        except Exception as exc:  # belt-and-suspenders for unexpected
+            await fail_agent_run(session, planner_ar, exc)
+            raise
+    finally:
+        await client.aclose()
 
     await _persist_llm_call(session, planner_ar, planner_result.llm)
     await _finish_agent_run(
@@ -333,7 +342,13 @@ async def author_plugin_from_strategy(
 
 async def evaluate_plugin(session: AsyncSession, plugin_id: int) -> int:
     """Run PluginEvaluator for a plugin in AUTHORED state.
-    Returns the verification_run_id."""
+    Returns the verification_run_id.
+
+    After a successful evaluation (VERIFIED), the plugin is registered with the
+    fwbg backend so it appears immediately in GET /api/plugins without requiring
+    a restart. Failures to register are logged but do not fail the evaluation —
+    merge_with_db provides a fallback until Phase 3.3 removes it.
+    """
     plugin = (
         await session.execute(select(Plugin).where(Plugin.id == plugin_id))
     ).scalar_one_or_none()
@@ -346,7 +361,56 @@ async def evaluate_plugin(session: AsyncSession, plugin_id: int) -> int:
         )
 
     evaluator = PluginEvaluator(session)
-    return await evaluator.run(plugin)
+    vr_id = await evaluator.run(plugin)
+
+    await session.refresh(plugin)
+    if plugin.current_state == PluginState.VERIFIED.value:
+        await _register_verified_plugin_in_fwbg(plugin)
+
+    return vr_id
+
+
+async def _register_verified_plugin_in_fwbg(plugin: Plugin) -> None:
+    """Ship a VERIFIED plugin to fwbg's registry via POST /api/plugins.
+
+    Best-effort: logs a warning on failure rather than raising, so a transient
+    fwbg outage does not roll back a correct evaluation result.
+    """
+    plugin_code_path = _plugin_dir(plugin.slug) / "v1" / "plugin.py"
+    try:
+        python_code = plugin_code_path.read_text(encoding="utf-8")
+    except OSError as exc:
+        log.warning(
+            "register_plugin: cannot read plugin.py for %s at %s: %s",
+            plugin.slug, plugin_code_path, exc,
+        )
+        return
+
+    spec_md = ""
+    if plugin.spec_path:
+        with contextlib.suppress(OSError):
+            spec_md = Path(plugin.spec_path).read_text(encoding="utf-8")
+
+    client = FwbgClient(base_url=settings.fwbg_api_url)
+    try:
+        await client.register_plugin(
+            slug=plugin.slug,
+            python_code=python_code,
+            kind=plugin.kind,
+            spec_md=spec_md,
+            overwrite=True,
+        )
+        log.info(
+            "register_plugin: %s registered in fwbg as agent-authored:%s",
+            plugin.slug, plugin.slug,
+        )
+    except Exception as exc:
+        log.warning(
+            "register_plugin: failed to register %s in fwbg (%s) — best-effort",
+            plugin.slug, exc,
+        )
+    finally:
+        await client.aclose()
 
 
 async def reiterate_with_plugin(
@@ -414,10 +478,12 @@ async def reiterate_with_plugin(
             f"not match sidecar capability={parent_capability!r}"
         )
 
-    reset_fwbg_cache()
-
-    translator = Translator(session)
-    child = await translator.run_reiterate_with_plugin(parent, plugin_slug, sidecar)
+    client = FwbgClient(base_url=settings.fwbg_api_url)
+    try:
+        translator = Translator(session, fwbg_client=client)
+        child = await translator.run_reiterate_with_plugin(parent, plugin_slug, sidecar)
+    finally:
+        await client.aclose()
     return child.id
 
 

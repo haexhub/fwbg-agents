@@ -10,28 +10,32 @@ from __future__ import annotations
 import ast
 import json
 import logging
-from pathlib import Path
 
 from pydantic import BaseModel, ConfigDict, Field
 
 from fwbg_agents.config import settings
-from fwbg_agents.orchestrator.plugin_catalog import PluginCatalog
+from fwbg_agents.orchestrator.live_catalog import LiveCatalog
 from fwbg_agents.orchestrator.plugin_contract import PluginContract, PluginKindLit
 from fwbg_agents.persistence.models import Strategy
+from fwbg_agents.tools.fwbg_client import FwbgClient
 
 log = logging.getLogger(__name__)
 
 _PLUGIN_EXAMPLES_HARD_CAP = 5
 _SOURCE_TRUNCATE_CHARS = 4000
 
-# PluginContract.kind / AddIndicator.category are singular; fwbg bundle
-# manifests use plural directory names. The mapping is hand-curated because
-# English plurals aren't algorithmically reliable.
+# PluginContract.kind / AddIndicator.category are singular; the live catalog's
+# plugin_details are keyed by the plural API category (see
+# live_catalog._PHASE_TO_CATEGORY). The mapping is hand-curated because English
+# plurals aren't algorithmically reliable. Filter/risk kinds route to `filters`
+# to match the API category (fwbg has no distinct `filters` phase).
 _CATEGORY_TO_BUNDLE_DIR: dict[str, str] = {
     "indicator": "indicators",
     "model": "models",
     "exit_strategy": "exit_strategies",
-    "risk_management": "risk_management",
+    "risk_management": "filters",
+    "filter": "filters",
+    "filters": "filters",
     "entry_modifier": "entry_modifiers",
     "preprocessing": "preprocessing",
     "feature_selection": "feature_selection",
@@ -74,45 +78,22 @@ def validate_python_syntax(code: str) -> SyntaxCheck:
     return SyntaxCheck(ok=True)
 
 
-def _read_plugin_source(bundle_manifest: Path, plural_category: str, slug: str) -> str | None:
-    """Read the most likely `plugin.py`-equivalent file for a plugin slug.
-
-    Layout: bundle_dir/<plural_category>/<slug>/{plugin.py, <slug>.py, *.py}.
-    Returns None when nothing readable is found; the caller filters those out.
-    """
-    bundle_dir = bundle_manifest.parent
-    slug_dir = bundle_dir / plural_category / slug
-    if not slug_dir.is_dir():
-        return None
-
-    for filename in ("plugin.py", f"{slug}.py"):
-        candidate = slug_dir / filename
-        if candidate.is_file():
-            try:
-                return candidate.read_text()[:_SOURCE_TRUNCATE_CHARS]
-            except OSError:
-                return None
-
-    # Fall back to the first non-test python file in the slug dir.
-    for candidate in sorted(slug_dir.glob("*.py")):
-        if candidate.name.startswith("test_"):
-            continue
-        try:
-            return candidate.read_text()[:_SOURCE_TRUNCATE_CHARS]
-        except OSError:
-            continue
-    return None
-
-
-def get_fwbg_plugin_examples(
-    catalog: PluginCatalog,
+async def get_fwbg_plugin_examples(
+    live: LiveCatalog,
+    client: FwbgClient,
     *,
     category: PluginKindLit,
     n: int = 3,
 ) -> list[FwbgPluginExample]:
     """Return up to `min(n, 5)` plugin source samples for the given singular
-    category. Values above the hard cap of 5 are silently clamped (with a
-    warning). Unreadable plugin dirs are skipped. Unknown category returns []."""
+    category, fetched over HTTP from fwbg (the single source of truth).
+
+    The LiveCatalog's `plugin_details` for a category come straight from
+    GET /api/plugins, so they only ever contain fwbg-registered (never
+    agent-authored) plugins. Each carries an `fqn`; we fetch its source via
+    `client.get_plugin_source(fqn)`. Values above the hard cap of 5 are silently
+    clamped (with a warning). Per-plugin fetch failures are logged and skipped.
+    Unknown category returns []."""
     if n > _PLUGIN_EXAMPLES_HARD_CAP:
         log.warning(
             "get_fwbg_plugin_examples: clamping n=%d to hard cap %d",
@@ -127,23 +108,26 @@ def get_fwbg_plugin_examples(
     if bundle_dir is None:
         return []
 
-    candidates = catalog.by_category.get(bundle_dir, {})
+    entries = sorted(
+        live.plugin_details.get(bundle_dir, []), key=lambda e: e.get("name", "")
+    )
     out: list[FwbgPluginExample] = []
-    for slug in sorted(candidates):
+    for entry in entries:
         if len(out) >= n:
             break
-        manifest = candidates[slug]
-        # Only fwbg-core / fwbg-premium provenance — agent-authored plugins
-        # haven't proven themselves yet.
-        if manifest.provenance == "agent-authored":
+        fqn = entry.get("fqn")
+        if not fqn:
             continue
-        source = _read_plugin_source(manifest.source_path, bundle_dir, slug)
-        if source is None:
+        try:
+            data = await client.get_plugin_source(fqn)
+        except Exception as exc:
+            log.warning("could not fetch source for plugin %s: %s", fqn, exc)
             continue
+        source = (data.get("source") or "")[:_SOURCE_TRUNCATE_CHARS]
         out.append(
             FwbgPluginExample(
-                slug=slug,
-                path=str(manifest.source_path.parent / bundle_dir / slug),
+                slug=entry.get("name", "") or fqn,
+                path=data.get("filename") or fqn,
                 source=source,
             )
         )

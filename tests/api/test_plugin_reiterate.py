@@ -18,7 +18,6 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from fwbg_agents.main import app
-from fwbg_agents.orchestrator.plugin_catalog import _load_fwbg_cached
 from fwbg_agents.persistence.database import Base, get_session
 from fwbg_agents.persistence.models import (
     AgentRun,
@@ -69,14 +68,10 @@ DEFAULT_CAPABILITY = "detect strong trends"
 
 
 @pytest_asyncio.fixture
-async def client_with_db(tmp_path, monkeypatch):
+async def client_with_db(tmp_path, monkeypatch, patch_live_catalog):
     from fwbg_agents.config import settings
 
     monkeypatch.setattr(settings, "data_dir", tmp_path / "data")
-    empty_fwbg_root = tmp_path / "empty_fwbg"
-    empty_fwbg_root.mkdir()
-    monkeypatch.setattr(settings, "fwbg_repo_root", empty_fwbg_root)
-    _load_fwbg_cached.cache_clear()
 
     db_url = f"sqlite+aiosqlite:///{tmp_path}/reiter.db"
     engine = create_async_engine(db_url, future=True)
@@ -96,7 +91,6 @@ async def client_with_db(tmp_path, monkeypatch):
     app.dependency_overrides.clear()
     await session.close()
     await engine.dispose()
-    _load_fwbg_cached.cache_clear()
 
 
 async def _seed_parent_in_state(

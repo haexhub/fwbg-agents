@@ -119,6 +119,15 @@ class FwbgClient:
         data = await self._get("/api/plugins")
         return data if isinstance(data, list) else data.get("plugins", [])
 
+    async def get_plugin_source(self, fqn: str) -> dict[str, Any]:
+        """Return a plugin's Python source (GET /api/plugins/{fqn}/source).
+
+        Response shape: {"fqn", "filename", "source"}. Raises FwbgClientError
+        on any non-2xx response (incl. 404 for an unknown fqn or a plugin whose
+        source file cannot be located).
+        """
+        return await self._get(f"/api/plugins/{fqn}/source")
+
     async def get_exit_modifiers(self) -> list[dict[str, Any]]:
         """Return available exit modifiers (GET /api/exit-modifiers)."""
         data = await self._get("/api/exit-modifiers")
@@ -221,3 +230,39 @@ class FwbgClient:
         """Return all assets with symbol/asset_class/currencies from fwbg's registry."""
         data = await self._get("/api/assets")
         return data.get("assets", [])
+
+    async def register_plugin(
+        self,
+        *,
+        slug: str,
+        python_code: str,
+        kind: str,
+        description: str = "",
+        spec_md: str = "",
+        tests_code: str = "",
+        version: str = "1.0.0",
+        overwrite: bool = False,
+    ) -> dict[str, Any]:
+        """Register a verified plugin with fwbg (POST /api/plugins).
+
+        Writes the plugin into fwbg's user-plugins directory and refreshes the
+        registry, so it appears immediately in GET /api/plugins as
+        ``agent-authored:<slug>``.
+
+        Returns ``{"fqn": "agent-authored:<slug>", "category": ..., "slug": ...}``.
+        Raises FwbgClientError on any non-2xx response (incl. 422 when fwbg's
+        own validation rejects the code).
+        """
+        return await self._post(
+            "/api/plugins",
+            {
+                "slug": slug,
+                "python_code": python_code,
+                "kind": kind,
+                "description": description,
+                "spec_md": spec_md,
+                "tests_code": tests_code,
+                "version": version,
+                "overwrite": overwrite,
+            },
+        )

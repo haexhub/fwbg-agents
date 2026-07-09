@@ -29,6 +29,7 @@ from fwbg_agents.agents.plugin_planner import (
     _render_user_prompt,
     planner_model,
 )
+from fwbg_agents.orchestrator.live_catalog import LiveCatalog
 from fwbg_agents.orchestrator.plugin_catalog import (
     PluginCatalog,
     PluginManifest,
@@ -76,11 +77,11 @@ def _build_parent_strategy(slug: str = "parent_v1") -> Strategy:
     return s
 
 
-def _empty_catalog() -> PluginCatalog:
-    return PluginCatalog(by_category={})
+def _empty_live() -> LiveCatalog:
+    return LiveCatalog(catalog=PluginCatalog(by_category={}), plugin_details={})
 
 
-def _catalog_with(slug: str, category: str = "indicators") -> PluginCatalog:
+def _live_with(slug: str, category: str = "indicators") -> LiveCatalog:
     manifest = PluginManifest(
         name=slug,
         category=category,
@@ -88,7 +89,10 @@ def _catalog_with(slug: str, category: str = "indicators") -> PluginCatalog:
         version="0.1.0",
         source_path=Path("/nonexistent"),
     )
-    return PluginCatalog(by_category={category: {slug: manifest}})
+    return LiveCatalog(
+        catalog=PluginCatalog(by_category={category: {slug: manifest}}),
+        plugin_details={},
+    )
 
 
 def _valid_plan_args(
@@ -157,11 +161,10 @@ def _patch_data_dir(tmp_path, monkeypatch):
 
 async def test_planner_happy_path_indicator_phase(tmp_path: Path):
     parent = _build_parent_strategy()
-    catalog = _empty_catalog()
     planner = PluginPlanner(model=_stub_model(_valid_plan_args()))
 
     result = await planner.run_plan(
-        parent_strategy=parent, sidecar=_SIDECAR_INDICATORS, catalog=catalog
+        parent_strategy=parent, sidecar=_SIDECAR_INDICATORS, live=_empty_live()
     )
 
     assert isinstance(result.plan, PluginPlan)
@@ -177,7 +180,7 @@ async def test_planner_writes_plan_json_that_round_trips(tmp_path: Path):
     planner = PluginPlanner(model=_stub_model(_valid_plan_args()))
 
     result = await planner.run_plan(
-        parent_strategy=parent, sidecar=_SIDECAR_INDICATORS, catalog=_empty_catalog()
+        parent_strategy=parent, sidecar=_SIDECAR_INDICATORS, live=_empty_live()
     )
 
     on_disk = json.loads(result.plan_path.read_text(encoding="utf-8"))
@@ -195,7 +198,7 @@ async def test_planner_raises_on_phase_mismatch():
         await planner.run_plan(
             parent_strategy=parent,
             sidecar=_SIDECAR_INDICATORS,
-            catalog=_empty_catalog(),
+            live=_empty_live(),
         )
     assert "phase mismatch" in str(exc_info.value)
 
@@ -209,19 +212,20 @@ async def test_planner_raises_on_unknown_sidecar_phase():
         await planner.run_plan(
             parent_strategy=parent,
             sidecar=bad_sidecar,
-            catalog=_empty_catalog(),
+            live=_empty_live(),
         )
     assert "unknown sidecar phase" in str(exc_info.value)
 
 
 async def test_planner_raises_on_slug_collision():
     parent = _build_parent_strategy()
-    catalog = _catalog_with("fancy_indicator", category="indicators")
     planner = PluginPlanner(model=_stub_model(_valid_plan_args()))
 
     with pytest.raises(PluginPlannerError) as exc_info:
         await planner.run_plan(
-            parent_strategy=parent, sidecar=_SIDECAR_INDICATORS, catalog=catalog
+            parent_strategy=parent,
+            sidecar=_SIDECAR_INDICATORS,
+            live=_live_with("fancy_indicator", category="indicators"),
         )
     assert "slug collision" in str(exc_info.value)
 
@@ -236,7 +240,7 @@ async def test_planner_raises_when_pydantic_schema_invalid():
         await planner.run_plan(
             parent_strategy=parent,
             sidecar=_SIDECAR_INDICATORS,
-            catalog=_empty_catalog(),
+            live=_empty_live(),
         )
     assert "schema validation failed" in str(exc_info.value)
 
@@ -271,7 +275,7 @@ async def test_planner_injects_examples_into_user_prompt(tmp_path: Path):
     await planner.run_plan(
         parent_strategy=parent,
         sidecar=_SIDECAR_INDICATORS,
-        catalog=_empty_catalog(),
+        live=_empty_live(),
     )
 
     # Inspect the user-prompt text from the captured ModelRequest.
@@ -306,3 +310,67 @@ def test_render_user_prompt_includes_examples_section():
     )
     assert "Example: rsi" in out
     assert "class RSIIndicator(BaseIndicator)" in out
+
+
+# ---------------------------------------------------------------------------
+# get_fwbg_plugin_examples — async, HTTP-fetched source
+# ---------------------------------------------------------------------------
+
+
+def _live_with_details(details: dict[str, Any]) -> LiveCatalog:
+    return LiveCatalog(catalog=PluginCatalog(by_category={}), plugin_details=details)
+
+
+class _FakeSourceClient:
+    """Returns source for any fqn; raises for fqns in `fail`."""
+
+    def __init__(self, fail: set[str] | None = None):
+        self._fail = fail or set()
+
+    async def get_plugin_source(self, fqn: str) -> dict[str, Any]:
+        if fqn in self._fail:
+            raise RuntimeError("boom")
+        return {"fqn": fqn, "filename": f"{fqn.rsplit('.', 1)[-1]}.py", "source": f"# src {fqn}"}
+
+
+async def test_get_fwbg_plugin_examples_fetches_source_over_http():
+    from fwbg_agents.agents.plugin_authoring_shared import get_fwbg_plugin_examples
+
+    live = _live_with_details({"indicators": [
+        {"name": "ema", "fqn": "core.indicators.ema", "description": "", "default_params": {}},
+        {"name": "adx", "fqn": "core.indicators.adx", "description": "", "default_params": {}},
+    ]})
+
+    examples = await get_fwbg_plugin_examples(
+        live, _FakeSourceClient(), category="indicator", n=3
+    )
+
+    # sorted by name; source + filename carried through from the API response
+    assert [e.slug for e in examples] == ["adx", "ema"]
+    assert examples[0].source == "# src core.indicators.adx"
+    assert examples[0].path == "adx.py"
+
+
+async def test_get_fwbg_plugin_examples_skips_fetch_failures():
+    from fwbg_agents.agents.plugin_authoring_shared import get_fwbg_plugin_examples
+
+    live = _live_with_details({"indicators": [
+        {"name": "ema", "fqn": "core.indicators.ema"},
+        {"name": "adx", "fqn": "core.indicators.adx"},
+    ]})
+    client = _FakeSourceClient(fail={"core.indicators.adx"})
+
+    examples = await get_fwbg_plugin_examples(
+        live, client, category="indicator", n=3
+    )
+
+    assert [e.slug for e in examples] == ["ema"]
+
+
+async def test_get_fwbg_plugin_examples_unknown_category_is_empty():
+    from fwbg_agents.agents.plugin_authoring_shared import get_fwbg_plugin_examples
+
+    examples = await get_fwbg_plugin_examples(
+        _empty_live(), _FakeSourceClient(), category="not_a_category", n=3
+    )
+    assert examples == []

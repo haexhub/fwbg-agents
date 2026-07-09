@@ -1,4 +1,4 @@
-"""fetch_live_catalog — live fwbg API catalog with offline fallback."""
+"""fetch_live_catalog — live fwbg API catalog (API-only, no fallback)."""
 
 from __future__ import annotations
 
@@ -13,12 +13,17 @@ from fwbg_agents.persistence.database import Base
 class _FakeFwbg:
     async def get_plugins(self):
         return [
-            {"name": "adx", "phase": "indicators", "description": "trend strength",
-             "defaults": {"period": 14}},
-            {"name": "xgboost", "phase": "model", "description": "", "defaults": {}},
-            {"name": "atr_based", "phase": "exit_strategies", "description": "", "defaults": {}},
+            {"name": "adx", "fqn": "fwbg-core.indicators.adx", "phase": "indicators",
+             "description": "trend strength", "defaults": {"period": 14}},
+            {"name": "xgboost", "fqn": "fwbg-core.model.xgboost", "phase": "model",
+             "description": "", "defaults": {}},
+            {"name": "atr_based", "fqn": "fwbg-premium.exit_strategies.atr_based",
+             "phase": "exit_strategies", "description": "", "defaults": {}},
+            {"name": "kelly", "fqn": "fwbg-core.risk_management.kelly",
+             "phase": "risk_management", "description": "", "defaults": {}},
             # unmapped phase — must be ignored, not crashed on
-            {"name": "labeler", "phase": "labeling", "description": "", "defaults": {}},
+            {"name": "labeler", "fqn": "x.labeling.labeler", "phase": "labeling",
+             "description": "", "defaults": {}},
         ]
 
     async def get_exit_modifiers(self):
@@ -83,9 +88,15 @@ async def test_fetch_builds_catalog_from_api(session):
     assert live.catalog.all_slugs_for("indicators") == ["adx"]
     assert live.catalog.all_slugs_for("models") == ["xgboost"]
     assert live.catalog.all_slugs_for("exit_strategies") == ["atr_based"]
+    # fwbg has no `filters` phase — risk_management plugins route to `filters`,
+    # the category the validator queries for extra_filters.
+    assert live.catalog.all_slugs_for("filters") == ["kelly"]
+    assert "risk_management" not in live.catalog.by_category
     # unmapped phases (labeling) are ignored, not crashed on
     assert "labeling" not in live.catalog.by_category
     assert live.plugin_details["indicators"][0]["default_params"] == {"period": 14}
+    # fqn is carried through so the PluginPlanner can fetch example source
+    assert live.plugin_details["indicators"][0]["fqn"] == "fwbg-core.indicators.adx"
     assert live.presets["validations"] == ["validations_preset_v1"]
     assert live.exit_modifiers[0]["name"] == "trailing_stop"
     # datasources carry their actual data availability
@@ -108,19 +119,17 @@ async def test_fetch_builds_catalog_from_api(session):
 
 
 @pytest.mark.asyncio
-async def test_fetch_falls_back_to_filesystem_when_fwbg_down(session, tmp_path, monkeypatch):
-    from fwbg_agents.config import settings
-    from fwbg_agents.orchestrator import plugin_catalog
+async def test_fetch_requires_a_client(session):
+    """API-only: no client means no catalog — raise, never a stale fallback."""
+    with pytest.raises(RuntimeError):
+        await fetch_live_catalog(session, None)
 
-    # Point the filesystem scan at an empty repo so the test is hermetic.
-    monkeypatch.setattr(settings, "fwbg_repo_root", tmp_path / "empty")
-    plugin_catalog._load_fwbg_cached.cache_clear()
 
-    live = await fetch_live_catalog(session, _BrokenFwbg())
-
-    assert not live.from_api
-    assert live.presets == {}
-    assert live.datasources == []
+@pytest.mark.asyncio
+async def test_fetch_propagates_api_errors(session):
+    """API unreachable → the error propagates (no silent filesystem fallback)."""
+    with pytest.raises(ConnectionError):
+        await fetch_live_catalog(session, _BrokenFwbg())
 
 
 @pytest.mark.asyncio
