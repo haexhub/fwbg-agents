@@ -16,18 +16,17 @@ _LIVE_CATALOG_CONSUMERS = (
 
 
 def _db_only_live_catalog():
-    """An async fetch_live_catalog stand-in that builds a DB-only LiveCatalog
-    (agent-authored plugins merged in, empty API catalog) — the API-only
-    equivalent of the retired empty-fwbg-repo test setup. No network."""
-    from sqlalchemy import select
+    """An async fetch_live_catalog stand-in that returns an empty catalog.
 
+    Agent-authored plugins now live in fwbg (registered via POST /api/plugins).
+    Tests that need specific plugins in the catalog should mock get_plugins() on
+    the FwbgClient instead.
+    """
     from fwbg_agents.orchestrator.live_catalog import LiveCatalog
-    from fwbg_agents.orchestrator.plugin_catalog import merge_with_db
-    from fwbg_agents.persistence.models import Plugin
+    from fwbg_agents.orchestrator.plugin_catalog import PluginCatalog
 
     async def _fake(session, fwbg):
-        db_plugins = list((await session.execute(select(Plugin))).scalars().all())
-        return LiveCatalog(catalog=merge_with_db({}, db_plugins), plugin_details={})
+        return LiveCatalog(catalog=PluginCatalog(by_category={}), plugin_details={})
 
     return _fake
 
