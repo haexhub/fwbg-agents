@@ -1,5 +1,23 @@
 # Changelog
 
+## [0.16.0](https://github.com/haexhub/fwbg-agents/compare/v0.15.0...v0.16.0) (2026-07-09)
+
+
+### Features
+
+* get plugin catalog from fwbg API only (single source of truth) ([93f4d57](https://github.com/haexhub/fwbg-agents/commit/93f4d57be8d31a7567c26a780f665e50b10da2ac))
+* plugin catalog from fwbg API only (single source of truth) ([0d9fa5a](https://github.com/haexhub/fwbg-agents/commit/0d9fa5abbcb40230d1d473b23c05a1d665a88930))
+* register VERIFIED plugins in fwbg via POST /api/plugins (Phase 3.2) ([#120](https://github.com/haexhub/fwbg-agents/issues/120)) ([e9fb796](https://github.com/haexhub/fwbg-agents/commit/e9fb79653d954224cc1a81f07d76586221fa944d))
+* remove merge_with_db — fwbg API is sole plugin source (Phase 3.3) ([#121](https://github.com/haexhub/fwbg-agents/issues/121)) ([db27a72](https://github.com/haexhub/fwbg-agents/commit/db27a72abc58e26531ceba0dee6768bc5787fa63))
+* **speckit:** Phase 1 — spec generator + backfill tooling ([a5c3ac0](https://github.com/haexhub/fwbg-agents/commit/a5c3ac048f2646dc7c3abd85c3b1e2517b195379))
+* **speckit:** Phase 1 — spec generator + backfill tooling ([a7b6aed](https://github.com/haexhub/fwbg-agents/commit/a7b6aed309f44bcb8978f2621bea98eaa367fe0e))
+
+
+### Bug Fixes
+
+* stop guillotining long LLM calls (raise timeout, bound retries) ([f5bad6b](https://github.com/haexhub/fwbg-agents/commit/f5bad6bf48ca42662c1db20cbd5317c16e3e31bd))
+* stop guillotining long LLM calls (timeout + retries) ([8ccb558](https://github.com/haexhub/fwbg-agents/commit/8ccb5580949408eb4932317abae1ab5bbbeabf42))
+
 ## [0.15.0](https://github.com/haexhub/fwbg-agents/compare/v0.14.0...v0.15.0) (2026-07-08)
 
 
