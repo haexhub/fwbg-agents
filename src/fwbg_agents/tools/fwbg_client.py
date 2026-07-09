@@ -119,6 +119,15 @@ class FwbgClient:
         data = await self._get("/api/plugins")
         return data if isinstance(data, list) else data.get("plugins", [])
 
+    async def get_plugin_source(self, fqn: str) -> dict[str, Any]:
+        """Return a plugin's Python source (GET /api/plugins/{fqn}/source).
+
+        Response shape: {"fqn", "filename", "source"}. Raises FwbgClientError
+        on any non-2xx response (incl. 404 for an unknown fqn or a plugin whose
+        source file cannot be located).
+        """
+        return await self._get(f"/api/plugins/{fqn}/source")
+
     async def get_exit_modifiers(self) -> list[dict[str, Any]]:
         """Return available exit modifiers (GET /api/exit-modifiers)."""
         data = await self._get("/api/exit-modifiers")

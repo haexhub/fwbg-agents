@@ -28,20 +28,15 @@ from fwbg_agents.persistence.models import (
 
 
 @pytest_asyncio.fixture
-async def isolated_smoke_env(tmp_path, monkeypatch):
+async def isolated_smoke_env(tmp_path, monkeypatch, patch_live_catalog):
     from fwbg_agents import main as fwbg_main
     from fwbg_agents.api import plugins as plugins_api
     from fwbg_agents.config import settings
-    from fwbg_agents.orchestrator.plugin_catalog import _load_fwbg_cached
     from fwbg_agents.persistence import database as db_module
 
     data_dir = tmp_path / "data"
     data_dir.mkdir()
     monkeypatch.setattr(settings, "data_dir", data_dir)
-    fwbg_root = tmp_path / "no-fwbg"
-    fwbg_root.mkdir()
-    monkeypatch.setattr(settings, "fwbg_repo_root", fwbg_root)
-    _load_fwbg_cached.cache_clear()
 
     db_url = f"sqlite+aiosqlite:///{tmp_path}/smoke.db"
     engine = create_async_engine(db_url, future=True)
@@ -83,7 +78,6 @@ async def isolated_smoke_env(tmp_path, monkeypatch):
     yield TestSession
 
     fwbg_main.app.dependency_overrides.clear()
-    _load_fwbg_cached.cache_clear()
     await engine.dispose()
 
 

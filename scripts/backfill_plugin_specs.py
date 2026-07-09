@@ -22,7 +22,6 @@ import logging
 from pathlib import Path
 
 from fwbg_agents.config import settings
-from fwbg_agents.orchestrator.plugin_catalog import discover_fwbg_plugins
 from fwbg_agents.speckit import SPEC_FILENAME, render_spec_md
 from fwbg_agents.speckit.spec_generator import (
     CATEGORY_TO_KIND,
@@ -30,6 +29,12 @@ from fwbg_agents.speckit.spec_generator import (
 )
 
 log = logging.getLogger("backfill_plugin_specs")
+
+# This dev-time tool legitimately reads the fwbg repo off disk (unlike the
+# runtime catalog, which is API-only). Plugins live at
+# <root>/<bundle>/<category>/<slug>/__init__.py under both roots.
+_FWBG_CORE_REL = Path("src/fwbg/plugins")
+_FWBG_PREMIUM_REL = Path("packages/fwbg-premium/src/fwbg_premium/plugins")
 
 
 def _read_plugin_source(plugin_dir: Path) -> str:
@@ -45,18 +50,26 @@ def _read_plugin_source(plugin_dir: Path) -> str:
     return "\n\n".join(parts)
 
 
-def _iter_catalogued_plugins(fwbg_root: Path):
-    """Yield (slug, category, plugin_dir) for every catalogued plugin on disk."""
-    catalog = discover_fwbg_plugins(fwbg_root)
-    for category, slugs in sorted(catalog.items()):
-        for slug, manifest in sorted(slugs.items()):
-            plugin_dir = manifest.source_path.parent / category / slug
-            yield slug, category, plugin_dir
+def _iter_plugins(fwbg_root: Path):
+    """Yield (slug, category, plugin_dir) for EVERY plugin on disk under both
+    roots — not just those declared in a bundle manifest.
+
+    Layout: <root>/<bundle>/<category>/<slug>/__init__.py.
+    """
+    for rel in (_FWBG_CORE_REL, _FWBG_PREMIUM_REL):
+        root = fwbg_root / rel
+        if not root.is_dir():
+            continue
+        for bundle_dir in sorted(p for p in root.iterdir() if p.is_dir()):
+            for category_dir in sorted(p for p in bundle_dir.iterdir() if p.is_dir()):
+                for slug_dir in sorted(p for p in category_dir.iterdir() if p.is_dir()):
+                    if (slug_dir / "__init__.py").is_file():
+                        yield slug_dir.name, category_dir.name, slug_dir
 
 
 async def backfill(*, fwbg_root: Path, dry_run: bool, force: bool, limit: int | None) -> int:
     done = 0
-    for slug, category, plugin_dir in _iter_catalogued_plugins(fwbg_root):
+    for slug, category, plugin_dir in _iter_plugins(fwbg_root):
         if limit is not None and done >= limit:
             break
         kind = CATEGORY_TO_KIND.get(category)

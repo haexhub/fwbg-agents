@@ -31,7 +31,7 @@ from fwbg_agents.agents.plugin_planner import (
 from fwbg_agents.agents.translator import Translator
 from fwbg_agents.config import settings
 from fwbg_agents.orchestrator.lifecycle import strategy_dir, transition_plugin
-from fwbg_agents.orchestrator.plugin_catalog import load_catalog, reset_fwbg_cache
+from fwbg_agents.orchestrator.live_catalog import fetch_live_catalog
 from fwbg_agents.orchestrator.plugin_contract import dump_contract
 from fwbg_agents.persistence.agent_runs import fail_agent_run
 from fwbg_agents.persistence.models import (
@@ -43,6 +43,7 @@ from fwbg_agents.persistence.models import (
     Strategy,
     StrategyState,
 )
+from fwbg_agents.tools.fwbg_client import FwbgClient
 
 log = logging.getLogger(__name__)
 
@@ -195,26 +196,33 @@ async def author_plugin_from_strategy(
             f"cannot parse sidecar at {sidecar_path}: {exc}"
         ) from exc
 
-    catalog = await load_catalog(session)
-
-    # --- Phase 1: PluginPlanner -----------------------------------------------
-    planner_ar = await _start_agent_run(
-        session,
-        agent_name="plugin_planner",
-        strategy_id=strategy.id,
-        input_artifact_path=str(sidecar_path),
-    )
+    # fwbg is the single source of truth for the plugin catalog + example
+    # source: fetch the live catalog and reuse the client for the planner's
+    # in-tree examples. No filesystem fallback — a dead API fails loudly.
+    client = FwbgClient(base_url=settings.fwbg_api_url)
     try:
-        planner = PluginPlanner(model=planner_model)
-        planner_result = await planner.run_plan(
-            parent_strategy=strategy, sidecar=sidecar, catalog=catalog
+        live = await fetch_live_catalog(session, client)
+
+        # --- Phase 1: PluginPlanner -------------------------------------------
+        planner_ar = await _start_agent_run(
+            session,
+            agent_name="plugin_planner",
+            strategy_id=strategy.id,
+            input_artifact_path=str(sidecar_path),
         )
-    except PluginPlannerError as exc:
-        await fail_agent_run(session, planner_ar, exc)
-        raise PluginAuthorError(f"planner failed: {exc}") from exc
-    except Exception as exc:  # belt-and-suspenders for unexpected
-        await fail_agent_run(session, planner_ar, exc)
-        raise
+        try:
+            planner = PluginPlanner(model=planner_model)
+            planner_result = await planner.run_plan(
+                parent_strategy=strategy, sidecar=sidecar, live=live, client=client
+            )
+        except PluginPlannerError as exc:
+            await fail_agent_run(session, planner_ar, exc)
+            raise PluginAuthorError(f"planner failed: {exc}") from exc
+        except Exception as exc:  # belt-and-suspenders for unexpected
+            await fail_agent_run(session, planner_ar, exc)
+            raise
+    finally:
+        await client.aclose()
 
     await _persist_llm_call(session, planner_ar, planner_result.llm)
     await _finish_agent_run(
@@ -414,10 +422,12 @@ async def reiterate_with_plugin(
             f"not match sidecar capability={parent_capability!r}"
         )
 
-    reset_fwbg_cache()
-
-    translator = Translator(session)
-    child = await translator.run_reiterate_with_plugin(parent, plugin_slug, sidecar)
+    client = FwbgClient(base_url=settings.fwbg_api_url)
+    try:
+        translator = Translator(session, fwbg_client=client)
+        child = await translator.run_reiterate_with_plugin(parent, plugin_slug, sidecar)
+    finally:
+        await client.aclose()
     return child.id
 
 

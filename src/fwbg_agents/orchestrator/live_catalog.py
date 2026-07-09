@@ -7,9 +7,9 @@ goes stale. `fetch_live_catalog` asks fwbg (GET /api/plugins,
 /api/exit-modifiers, /api/entry-modifiers, /api/presets/*) on every research
 run and merges the result with agent-authored plugins from the DB.
 
-If fwbg is unreachable the loader degrades to the local filesystem scan
-(`plugin_catalog.load_catalog`) so research keeps working offline — with a
-warning, since the composed strategy may then reference a stale catalog.
+fwbg is the single source of truth: there is NO filesystem fallback. If the
+API is unreachable the error propagates so the caller fails loudly rather than
+composing a strategy against a stale catalog.
 """
 
 from __future__ import annotations
@@ -24,7 +24,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from fwbg_agents.orchestrator.plugin_catalog import (
     PluginCatalog,
     PluginManifest,
-    load_catalog,
     merge_with_db,
 )
 from fwbg_agents.persistence.models import Plugin
@@ -33,14 +32,18 @@ from fwbg_agents.tools.fwbg_client import FwbgClient
 log = logging.getLogger(__name__)
 
 # fwbg plugin phase → PluginCatalog category (phases are already plural
-# except `model`).
+# except `model`). fwbg has no `filters` phase — its filter/position-sizing
+# plugins carry phase `risk_management`, but the validator queries the catalog
+# category `filters` (for `extra_filters`), so we route risk_management→filters.
+# This matches `plugin_catalog._KIND_TO_CATEGORY`, which maps the DB `filter`
+# and `risk_management` kinds to the same `filters` bucket.
 _PHASE_TO_CATEGORY: dict[str, str] = {
     "indicators": "indicators",
     "preprocessing": "preprocessing",
     "feature_selection": "feature_selection",
     "data_loading": "data_loading",
     "exit_strategies": "exit_strategies",
-    "risk_management": "risk_management",
+    "risk_management": "filters",
     "model": "models",
 }
 
@@ -80,7 +83,8 @@ class LiveCatalog(BaseModel):
     # Timeframes fwbg supports (MINUTE_1 … DAY_1), fetched live. Empty when
     # the endpoint is unavailable — validation is then lax.
     timeframes: list[str] = Field(default_factory=list)
-    # True when fwbg answered; False on the offline/filesystem fallback.
+    # Always True now that fwbg is the sole source (no filesystem fallback);
+    # kept for backward compatibility with readers that still check it.
     from_api: bool = True
 
     def datasource_names(self) -> list[str]:
@@ -115,6 +119,10 @@ def researcher_summary(live: LiveCatalog) -> dict[str, Any]:
 def _detail(entry: dict[str, Any]) -> dict[str, Any]:
     return {
         "name": entry.get("name", ""),
+        # fqn is the API's stable plugin id; carried so the PluginPlanner can
+        # fetch example source via GET /api/plugins/{fqn}/source. Empty for
+        # entry/exit modifiers, which are not fetched as source examples.
+        "fqn": entry.get("fqn", ""),
         "description": entry.get("description", ""),
         "default_params": entry.get("defaults", {}) or {},
     }
@@ -123,23 +131,17 @@ def _detail(entry: dict[str, Any]) -> dict[str, Any]:
 async def fetch_live_catalog(
     session: AsyncSession, fwbg: FwbgClient | None
 ) -> LiveCatalog:
-    """Fetch the current catalog from fwbg; degrade to filesystem scan offline."""
-    if fwbg is not None:
-        try:
-            return await _fetch_from_api(session, fwbg)
-        except Exception:
-            log.warning(
-                "could not fetch live catalog from fwbg; falling back to "
-                "filesystem scan (may be stale)",
-                exc_info=True,
-            )
-    catalog = await load_catalog(session)
-    details = {
-        category: [{"name": slug, "description": "", "default_params": {}}
-                   for slug in catalog.all_slugs_for(category)]
-        for category in catalog.by_category
-    }
-    return LiveCatalog(catalog=catalog, plugin_details=details, from_api=False)
+    """Fetch the current catalog from fwbg. fwbg is the single source of truth.
+
+    Raises if no client is configured or the API is unreachable — there is no
+    filesystem fallback (a stale catalog would silently corrupt composition).
+    """
+    if fwbg is None:
+        raise RuntimeError(
+            "fetch_live_catalog requires a FwbgClient; there is no offline "
+            "filesystem fallback"
+        )
+    return await _fetch_from_api(session, fwbg)
 
 
 async def _fetch_from_api(session: AsyncSession, fwbg: FwbgClient) -> LiveCatalog:
