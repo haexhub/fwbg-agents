@@ -13,9 +13,10 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from fwbg_agents.orchestrator.plugin_flow import _register_verified_plugin_in_fwbg
+from fwbg_agents.orchestrator.plugin_flow import (
+    _register_verified_plugin_in_fwbg,
+)
 from fwbg_agents.persistence.models import Plugin, PluginState
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -52,7 +53,11 @@ def _mock_client():
     """Return a mock FwbgClient with register_plugin + aclose as AsyncMocks."""
     inst = AsyncMock()
     inst.register_plugin = AsyncMock(
-        return_value={"fqn": "agent-authored:my_indicator", "slug": "my_indicator", "category": "indicators"}
+        return_value={
+            "fqn": "agent-authored:my_indicator",
+            "slug": "my_indicator",
+            "category": "indicators",
+        }
     )
     inst.aclose = AsyncMock()
     return inst
@@ -137,6 +142,7 @@ async def test_fwbg_error_is_swallowed_not_raised(tmp_path, monkeypatch):
 @pytest.mark.asyncio
 async def test_network_error_is_swallowed_not_raised(tmp_path, monkeypatch):
     import httpx
+
     from fwbg_agents.config import settings
     monkeypatch.setattr(settings, "data_dir", tmp_path)
 
@@ -174,6 +180,7 @@ async def test_missing_plugin_py_skips_registration(tmp_path, monkeypatch):
 async def test_fwbg_client_register_plugin_posts_correct_body():
     """Unit-test the HTTP layer: register_plugin calls POST /api/plugins."""
     import httpx
+
     from fwbg_agents.tools.fwbg_client import FwbgClient
 
     posted: list[dict] = []
@@ -181,7 +188,11 @@ async def test_fwbg_client_register_plugin_posts_correct_body():
     async def _fake_post(request: httpx.Request) -> httpx.Response:
         import json
         posted.append(json.loads(request.content))
-        return httpx.Response(200, json={"fqn": "agent-authored:my_indicator", "slug": "my_indicator", "category": "indicators"})
+        return httpx.Response(200, json={
+            "fqn": "agent-authored:my_indicator",
+            "slug": "my_indicator",
+            "category": "indicators",
+        })
 
     transport = httpx.MockTransport(_fake_post)
     http = httpx.AsyncClient(base_url="http://fwbg", transport=transport)

@@ -8,6 +8,7 @@ unchanged (POST /strategies/{id}/author-plugin still returns the same shape).
 
 from __future__ import annotations
 
+import contextlib
 import json
 import logging
 import re
@@ -387,10 +388,8 @@ async def _register_verified_plugin_in_fwbg(plugin: Plugin) -> None:
 
     spec_md = ""
     if plugin.spec_path:
-        try:
+        with contextlib.suppress(OSError):
             spec_md = Path(plugin.spec_path).read_text(encoding="utf-8")
-        except OSError:
-            pass
 
     client = FwbgClient(base_url=settings.fwbg_api_url)
     try:
@@ -401,11 +400,13 @@ async def _register_verified_plugin_in_fwbg(plugin: Plugin) -> None:
             spec_md=spec_md,
             overwrite=True,
         )
-        log.info("register_plugin: %s registered in fwbg as agent-authored:%s", plugin.slug, plugin.slug)
+        log.info(
+            "register_plugin: %s registered in fwbg as agent-authored:%s",
+            plugin.slug, plugin.slug,
+        )
     except Exception as exc:
         log.warning(
-            "register_plugin: failed to register %s in fwbg (%s) — "
-            "plugin is VERIFIED in the DB and remains visible via merge_with_db",
+            "register_plugin: failed to register %s in fwbg (%s) — best-effort",
             plugin.slug, exc,
         )
     finally:
