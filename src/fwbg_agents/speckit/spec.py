@@ -58,6 +58,7 @@ class PluginSpec(BaseModel):
     @field_validator("capability")
     @classmethod
     def _capability_is_single_line(cls, v: str) -> str:
+        """Validate that the capability field contains no newlines."""
         if "\n" in v:
             raise ValueError("capability must be a single line")
         return v
@@ -70,6 +71,7 @@ def spec_index_entry(spec: PluginSpec) -> dict[str, str]:
 
 
 def _bullets(items: list[str]) -> str:
+    """Format a list of strings as Markdown bullet points, or '- _none_' if empty."""
     return "\n".join(f"- {i}" for i in items) if items else "- _none_"
 
 

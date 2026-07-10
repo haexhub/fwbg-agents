@@ -16,6 +16,11 @@ updates:
       prefix: "chore(deps)"
     labels:
       - "dependencies"
+    ignore:
+      # pydantic-ai is pinned <3 in pyproject; a major must be a deliberate
+      # migration PR (touches tools/llm.py usage extraction), never automerged.
+      - dependency-name: "pydantic-ai"
+        update-types: ["version-update:semver-major"]
     groups:
       data:
         patterns:

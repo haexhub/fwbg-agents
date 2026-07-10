@@ -25,6 +25,7 @@ AVAILABLE_CLAUDE_MODELS: tuple[str, ...] = (
 
 
 def _build_model(model_name: str) -> AnthropicModel:
+    """Construct an AnthropicModel with project-configured timeout and retry settings."""
     # Own the Anthropic client so we control both the per-request timeout and
     # the retry budget. The SDK default (max_retries=2 = 3 attempts) turned a
     # too-short 120s timeout into ~6min stacked failures on every long Opus

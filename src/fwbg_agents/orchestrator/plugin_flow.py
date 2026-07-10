@@ -91,6 +91,7 @@ def _find_latest_sidecar(slug: str) -> Path | None:
 
 
 def _plugin_dir(slug: str) -> Path:
+    """Return the filesystem directory for a plugin's generated artifacts."""
     return settings.data_dir / "plugins" / slug
 
 
@@ -101,6 +102,7 @@ async def _start_agent_run(
     strategy_id: int,
     input_artifact_path: str | None,
 ) -> AgentRun:
+    """Create and persist a new AgentRun row in RUNNING state."""
     now = datetime.now(UTC)
     ar = AgentRun(
         agent_name=agent_name,
@@ -125,6 +127,7 @@ async def _finish_agent_run(
     error: str | None = None,
     plugin_id: int | None = None,
 ) -> None:
+    """Update an AgentRun row with final status, end time, and optional output fields."""
     ar.status = status.value
     ar.ended_at = datetime.now(UTC)
     if output_artifact_path is not None:
@@ -141,6 +144,7 @@ async def _persist_llm_call(
     ar: AgentRun,
     meta: LlmCallMeta,
 ) -> None:
+    """Persist an LlmCall row for token/latency accounting on the given agent run."""
     session.add(
         LlmCall(
             agent_run_id=ar.id,
@@ -193,6 +197,16 @@ async def author_plugin_from_strategy(
     try:
         sidecar = json.loads(sidecar_path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as exc:
+        # A corrupt sidecar fails identically on every retry; record a failed
+        # planner run so the attempt consumes auto-retry budget instead of
+        # being re-picked forever (see pick_next_add_indicator_pending).
+        planner_ar = await _start_agent_run(
+            session,
+            agent_name="plugin_planner",
+            strategy_id=strategy.id,
+            input_artifact_path=str(sidecar_path),
+        )
+        await fail_agent_run(session, planner_ar, exc)
         raise AuthorPluginPreconditionError(
             f"cannot parse sidecar at {sidecar_path}: {exc}"
         ) from exc

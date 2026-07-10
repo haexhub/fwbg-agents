@@ -140,6 +140,7 @@ def _analyst_verdict(slug: str) -> str | None:
 
 
 def _abandon_lessons(strategy: Strategy) -> list[str]:
+    """Extract lessons-learned strings from an abandoned strategy's post-mortem YAML."""
     pm_path = strategy_dir(strategy.slug) / "post_mortem.yaml"
     if not pm_path.is_file():
         return []

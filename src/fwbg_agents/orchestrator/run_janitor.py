@@ -66,6 +66,7 @@ async def fail_orphaned_runs() -> int:
 
 
 def _cap_for(agent_name: str) -> float:
+    """Return the wall-clock stale cap in seconds for the given agent name."""
     return (
         settings.runner_poll_timeout_seconds
         if agent_name in _LONG_CAP_AGENTS

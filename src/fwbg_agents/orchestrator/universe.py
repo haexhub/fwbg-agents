@@ -73,6 +73,7 @@ def plan_universe_attempts(strategy) -> list[UniverseAttempt]:
     seen: set[tuple[tuple[str, ...], tuple[str, ...]]] = set()
 
     def add(assets: list[str], asset_classes: list[str], label: str) -> None:
+        """Append a deduped UniverseAttempt for the given assets/classes combination."""
         key = (tuple(assets), tuple(asset_classes))
         if key in seen:
             return

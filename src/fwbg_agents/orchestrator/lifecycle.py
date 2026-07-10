@@ -72,10 +72,12 @@ VALID_PLUGIN_TRANSITIONS: dict[PluginState, frozenset[PluginState]] = {
 
 
 def strategy_dir(slug: str) -> Path:
+    """Return the filesystem directory for a strategy's artifacts."""
     return settings.data_dir / "strategies" / slug
 
 
 def plugin_dir(slug: str) -> Path:
+    """Return the filesystem directory for a plugin's artifacts."""
     return settings.data_dir / "plugins" / slug
 
 
@@ -114,6 +116,7 @@ def _eval_comparator(expr: str, value: float) -> bool:
 
 
 def _criteria_path(asset_class: str) -> Path:
+    """Return the YAML criteria file path for a given asset class."""
     return settings.criteria_dir / f"{asset_class}.yaml"
 
 
@@ -198,6 +201,7 @@ def _guard_strategy_proposed_to_backtested(_strategy: Strategy, _payload: dict[s
 
 
 def _guard_strategy_backtested_to_paper(strategy: Strategy, payload: dict[str, Any]) -> None:
+    """Enforce backtest criteria before promoting a strategy to paper trading."""
     metrics = payload.get("backtest_metrics") or {}
     if not metrics:
         raise InvalidTransitionError(
@@ -229,11 +233,13 @@ _STRATEGY_GUARDS: dict[
 
 
 def _guard_strategy_abandon(_strategy: Strategy, payload: dict[str, Any]) -> None:
+    """Require a post-mortem path before a strategy can be abandoned."""
     if not payload.get("post_mortem_path"):
         raise InvalidTransitionError("abandon transition requires post_mortem_path in payload")
 
 
 def _guard_plugin_abandon(_plugin: Plugin, payload: dict[str, Any]) -> None:
+    """Require a post-mortem path before a plugin can be abandoned."""
     if not payload.get("post_mortem_path"):
         raise InvalidTransitionError("abandon transition requires post_mortem_path in payload")
 
@@ -312,6 +318,7 @@ async def transition_plugin(
     payload: dict[str, Any] | None = None,
     created_by: str = "system",
 ) -> Transition:
+    """Validate, mkdir, update state, append transition row — atomically."""
     payload = dict(payload or {})
     current = PluginState(plugin.current_state)
     if current in PLUGIN_TERMINAL_STATES:

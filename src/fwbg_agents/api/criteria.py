@@ -40,6 +40,7 @@ def _validate_asset_class(asset_class: str) -> str:
 
 
 def _criteria_path(asset_class: str) -> Path:  # noqa: F821 - forward type only
+    """Return the criteria YAML path for an asset class, with path-traversal guard."""
     from pathlib import Path
 
     p: Path = settings.criteria_dir / f"{asset_class}.yaml"
@@ -70,6 +71,7 @@ async def list_criteria() -> dict[str, Any]:
 
 @router.get("/criteria/{asset_class}")
 async def get_criteria(asset_class: str) -> dict[str, Any]:
+    """Retrieve the criteria YAML for a given asset class."""
     asset_class = _validate_asset_class(asset_class)
     path = _criteria_path(asset_class)
     if not path.is_file():
@@ -121,6 +123,7 @@ def _validate_criteria_schema(data: Any) -> dict[str, Any]:
 
 @router.put("/criteria/{asset_class}")
 async def put_criteria(asset_class: str, body: CriteriaUpdate = Body(...)) -> dict[str, Any]:
+    """Create or replace the criteria YAML for a given asset class."""
     asset_class = _validate_asset_class(asset_class)
     if body.criteria is None and body.yaml_text is None:
         raise HTTPException(status_code=400, detail="provide either criteria or yaml_text")
@@ -141,6 +144,8 @@ async def put_criteria(asset_class: str, body: CriteriaUpdate = Body(...)) -> di
 
 
 class CalibrationRunOut(BaseModel):
+    """Response schema for a completed calibration run."""
+
     id: int
     ran_at: datetime
     runs_scanned: int

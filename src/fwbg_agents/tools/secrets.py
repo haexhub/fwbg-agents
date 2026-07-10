@@ -28,10 +28,12 @@ _ENV_FALLBACK: dict[str, str] = {
 
 
 def _secrets_file() -> Path:
+    """Return the path to the on-disk secrets JSON file."""
     return settings.data_dir / "secrets.json"
 
 
 def _load() -> dict[str, str]:
+    """Load the secrets dict from disk, returning an empty dict on any error."""
     path = _secrets_file()
     if not path.is_file():
         return {}
@@ -43,6 +45,7 @@ def _load() -> dict[str, str]:
 
 
 def _save(data: dict[str, str]) -> None:
+    """Persist the secrets dict to disk with restricted file permissions."""
     path = _secrets_file()
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(data, indent=2, sort_keys=True), encoding="utf-8")

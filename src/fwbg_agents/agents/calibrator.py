@@ -136,6 +136,7 @@ def _compute_sortino(
 
 
 def _trades_per_year(unified: dict[str, Any]) -> float | None:
+    """Compute annualized trade frequency from unified metrics."""
     trades = _safe_float(unified.get("trades"))
     years = _safe_float(unified.get("test_period_years"))
     if trades is None or years is None or years <= 0:
@@ -193,6 +194,7 @@ def _quantiles(values: list[float]) -> dict[str, float] | None:
     n = len(sv)
 
     def q(p: float) -> float:
+        """Linearly interpolated quantile at fractional position p."""
         if n == 1:
             return sv[0]
         idx = p * (n - 1)
