@@ -16,6 +16,7 @@ composing a strategy against a stale catalog.
 from __future__ import annotations
 
 import logging
+from pathlib import Path
 from typing import Any
 
 from pydantic import BaseModel, Field
@@ -161,7 +162,7 @@ async def _fetch_from_api(session: AsyncSession, fwbg: FwbgClient) -> LiveCatalo
             category=category,
             provenance="fwbg-core",
             version=str(p.get("version", "")),
-            source_path=".",
+            source_path=Path("."),
         )
         details.setdefault(category, []).append(_detail(p))
 

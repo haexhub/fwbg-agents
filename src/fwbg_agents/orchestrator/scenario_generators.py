@@ -17,7 +17,7 @@ from __future__ import annotations
 from collections.abc import Callable
 
 import numpy as np
-import pandas as pd
+import pandas as pd  # type: ignore[import-untyped]  # pandas ships no type stubs
 
 _BARS_DEFAULT = 500
 _START_TS = pd.Timestamp("2026-01-01T00:00:00Z")

@@ -71,35 +71,27 @@ class RunnerError(RuntimeError):
 
 
 class _FwbgClientProto(Protocol):
-    """Protocol for the fwbg HTTP client interface used by Runner."""
-
-    async def create_strategy(self, name: str, data: dict[str, Any]) -> dict[str, Any]:
-        """Create a new strategy in fwbg."""
-        ...
-
-    async def start_run(self, strategy_name: str, **kwargs: Any) -> dict[str, Any]:
-        """Start a backtest run for a strategy."""
-        ...
-
-    async def list_runs(self) -> list[dict[str, Any]]:
-        """List all fwbg runs."""
-        ...
-
-    async def get_progress(self, run_id: str) -> dict[str, Any]:
-        """Return live progress for a run."""
-        ...
-
-    async def get_run(self, run_id: str) -> dict[str, Any]:
-        """Return full details for a run."""
-        ...
-
-    async def ensure_data(self, symbol: str, **kwargs: Any) -> dict[str, Any]:
-        """Ensure OHLCV data is available for a symbol."""
-        ...
-
-    async def get_ensure_status(self, task_id: str) -> dict[str, Any]:
-        """Return the status of a data-ensure background task."""
-        ...
+    async def create_strategy(self, name: str, data: dict[str, Any]) -> dict[str, Any]: ...
+    async def start_run(
+        self,
+        strategy_name: str,
+        *,
+        asset_classes: list[str] | None = ...,
+        assets: list[str] | None = ...,
+        description: str | None = ...,
+    ) -> dict[str, Any]: ...
+    async def list_runs(self) -> list[dict[str, Any]]: ...
+    async def get_progress(self, run_id: str) -> dict[str, Any]: ...
+    async def get_run(self, run_id: str) -> dict[str, Any]: ...
+    async def ensure_data(
+        self,
+        symbol: str,
+        *,
+        timeframe: str | None = ...,
+        date_from: str | None = ...,
+        date_to: str | None = ...,
+    ) -> dict[str, Any]: ...
+    async def get_ensure_status(self, task_id: str) -> dict[str, Any]: ...
 
 
 class RunnerResult(BaseModel):
@@ -357,7 +349,7 @@ class Runner:
                     job_id,
                     fwbg_name,
                 )
-                return job_id
+                return job_id  # type: ignore[return-value]  # adopted runs always carry run_id (list_runs contract)
 
             try:
                 start = await self.fwbg.start_run(

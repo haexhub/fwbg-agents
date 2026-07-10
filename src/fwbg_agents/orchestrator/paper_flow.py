@@ -98,7 +98,7 @@ async def paper_analyze(
 
     # Let FileNotFoundError from missing paper-criteria YAML propagate —
     # callers can treat it as "open gate" if they want.
-    criteria = load_paper_criteria(strategy.asset_class)
+    criteria = load_paper_criteria(strategy.asset_class)  # type: ignore[arg-type]  # set for any PAPER_TRADING strategy
 
     fwbg_data_dir = Path(settings.fwbg_data_dir)
     summary = read_paper_summary(strategy.slug, fwbg_data_dir)

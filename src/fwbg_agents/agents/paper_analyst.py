@@ -108,7 +108,7 @@ class PaperAnalyst:
     ) -> PromotePaperToLive | AbandonPaper | ContinueObservation:
         """Run the paper analyst synchronously and return a validated decision."""
         system_prompt = self.prompt_path.read_text()
-        agent = Agent(
+        agent = Agent(  # type: ignore[call-overload]  # pydantic-ai union output_type not matched by overloads
             self.model,
             output_type=PaperAnalystOutput,
             system_prompt=system_prompt,

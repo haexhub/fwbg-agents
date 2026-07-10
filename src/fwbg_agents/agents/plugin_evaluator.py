@@ -19,7 +19,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-import pandas as pd
+import pandas as pd  # type: ignore[import-untyped]  # pandas ships no type stubs
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from fwbg_agents.orchestrator.lifecycle import plugin_dir, transition_plugin
@@ -70,7 +70,7 @@ class PluginEvaluator:
         errors: list[dict[str, Any]] = []
 
         try:
-            contract = load_contract(Path(plugin.contract_path))
+            contract = load_contract(Path(plugin.contract_path))  # type: ignore[arg-type]  # None caught by surrounding try as contract_load_failed
         except Exception as exc:
             errors.append(
                 {
