@@ -196,10 +196,10 @@ async def author_plugin_from_strategy(
 
     try:
         sidecar = json.loads(sidecar_path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as exc:
-        # A corrupt sidecar fails identically on every retry; record a failed
-        # planner run so the attempt consumes auto-retry budget instead of
-        # being re-picked forever (see pick_next_add_indicator_pending).
+    except json.JSONDecodeError as exc:
+        # Corrupt sidecar is a deterministic failure: record a failed planner
+        # run so the attempt consumes auto-retry budget and the strategy is not
+        # re-picked on every tick (see pick_next_add_indicator_pending).
         planner_ar = await _start_agent_run(
             session,
             agent_name="plugin_planner",
@@ -209,6 +209,12 @@ async def author_plugin_from_strategy(
         await fail_agent_run(session, planner_ar, exc)
         raise AuthorPluginPreconditionError(
             f"cannot parse sidecar at {sidecar_path}: {exc}"
+        ) from exc
+    except OSError as exc:
+        # Transient I/O failure: don't charge the retry budget — the file may
+        # be readable on the next tick.
+        raise AuthorPluginPreconditionError(
+            f"cannot read sidecar at {sidecar_path}: {exc}"
         ) from exc
 
     # fwbg is the single source of truth for the plugin catalog + example
@@ -479,9 +485,13 @@ async def reiterate_with_plugin(
 
     try:
         sidecar = json.loads(sidecar_path.read_text())
-    except (OSError, json.JSONDecodeError) as exc:
+    except json.JSONDecodeError as exc:
         raise ReiterateWithPluginPreconditionError(
             f"cannot parse sidecar at {sidecar_path}: {exc}"
+        ) from exc
+    except OSError as exc:
+        raise ReiterateWithPluginPreconditionError(
+            f"cannot read sidecar at {sidecar_path}: {exc}"
         ) from exc
 
     parent_capability = sidecar.get("capability")
