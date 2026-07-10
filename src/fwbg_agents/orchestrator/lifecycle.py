@@ -232,7 +232,10 @@ def _guard_strategy_backtested_to_paper(strategy: Strategy, payload: dict[str, A
         raise InvalidTransitionError(
             "backtested → paper_trading requires backtest_metrics in payload"
         )
-    ok, failed = check_backtest_criteria(asset_class=strategy.asset_class, metrics=metrics)
+    ok, failed = check_backtest_criteria(
+        asset_class=strategy.asset_class,  # type: ignore[arg-type]  # set for any strategy reaching this gate
+        metrics=metrics,
+    )
     if not ok:
         raise InvalidTransitionError(f"criteria not met: {failed}")
 

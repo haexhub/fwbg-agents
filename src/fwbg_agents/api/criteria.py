@@ -11,6 +11,7 @@ import asyncio
 import json
 import logging
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any
 
 import yaml
@@ -39,10 +40,7 @@ def _validate_asset_class(asset_class: str) -> str:
     return asset_class
 
 
-def _criteria_path(asset_class: str) -> Path:  # noqa: F821 - forward type only
-    """Return the criteria YAML path for an asset class, with path-traversal guard."""
-    from pathlib import Path
-
+def _criteria_path(asset_class: str) -> Path:
     p: Path = settings.criteria_dir / f"{asset_class}.yaml"
     # Guard: ensure resolved path stays inside criteria_dir.
     resolved = p.resolve()

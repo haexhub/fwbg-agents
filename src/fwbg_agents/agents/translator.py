@@ -122,7 +122,7 @@ def _apply_plugin_op(payload: dict, op: dict) -> None:
                 )
             entries.pop(i)
         else:  # replace
-            i = _idx(replaces)
+            i = _idx(replaces)  # type: ignore[arg-type]  # validated as non-empty str above
             if i is None:
                 raise TranslatorError(
                     f"modify_plugins: {replaces!r} not found in pipeline.{section}"

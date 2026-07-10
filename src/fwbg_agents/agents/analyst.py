@@ -491,7 +491,7 @@ class Analyst:
                 catalog_snapshot=catalog_snapshot,
             )
 
-            agent = Agent(
+            agent = Agent(  # type: ignore[call-overload]  # pydantic-ai union output_type not matched by overloads
                 self.model,
                 output_type=AnalystRecommendation,
                 system_prompt=system_prompt,
