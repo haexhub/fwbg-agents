@@ -259,7 +259,9 @@ async def _research_and_translate(
     fanout_n: int,
     fwbg_client: FwbgClient,
 ) -> int:
-    """Run research fanout then translate the hypothesis into a persisted strategy; returns strategy id."""
+    """Run research fanout and translate the hypothesis into a persisted strategy.
+
+    Returns the new strategy id."""
     # One live-catalog fetch per research run: the Researcher must see the
     # CURRENT plugin set (it grows as plugins are adopted), not a frozen list.
     live = await fetch_live_catalog(session, fwbg_client)
