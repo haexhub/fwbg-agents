@@ -94,7 +94,21 @@ jobs:
           labels: |
             org.opencontainers.image.source=https://github.com/${{ github.repository }}
 
-      - name: Build and push Docker image
+      - name: Build image locally for smoke test
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          load: true
+          push: false
+          tags: smoke-test:latest
+          cache-from: type=gha
+
+      - name: Smoke test
+        run: |
+          docker run --rm --entrypoint python smoke-test:latest \
+            -c "import alembic, uvicorn, fwbg_agents; print('OK')"
+
+      - name: Push image
         uses: docker/build-push-action@v7
         with:
           context: .
