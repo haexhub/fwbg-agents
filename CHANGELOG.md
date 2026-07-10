@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.16.1](https://github.com/haexhub/fwbg-agents/compare/v0.16.0...v0.16.1) (2026-07-09)
+
+
+### Bug Fixes
+
+* **auto_runner:** retry add_indicator chain when plugin_implementer fails ([a9c1541](https://github.com/haexhub/fwbg-agents/commit/a9c1541ae81ac2b38fa9db628ac9c6585dd63e35))
+* **auto_runner:** retry add_indicator chain when plugin_implementer fails ([dc84bd6](https://github.com/haexhub/fwbg-agents/commit/dc84bd6532e30a37d341575d104678db38c593de))
+
 ## [0.16.0](https://github.com/haexhub/fwbg-agents/compare/v0.15.0...v0.16.0) (2026-07-09)
 
 
