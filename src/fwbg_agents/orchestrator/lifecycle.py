@@ -18,6 +18,7 @@ denormalisation of the latest transition row for fast list queries.
 from __future__ import annotations
 
 import logging
+import math
 import operator
 from collections.abc import Callable, Mapping
 from datetime import UTC, datetime
@@ -120,6 +121,17 @@ def _criteria_path(asset_class: str) -> Path:
     return settings.criteria_dir / f"{asset_class}.yaml"
 
 
+def _metric_float(val: Any) -> float | None:
+    """Coerce a metric value to a finite float, or None if it is not numeric
+    (or is NaN/inf). Lets criteria evaluation reject a malformed metric cleanly
+    instead of raising an unhandled ValueError on a bare `float(val)`."""
+    try:
+        f = float(val)
+    except (TypeError, ValueError):
+        return None
+    return f if math.isfinite(f) else None
+
+
 def check_backtest_criteria(
     *, asset_class: str, metrics: Mapping[str, float]
 ) -> tuple[bool, list[str]]:
@@ -133,13 +145,17 @@ def check_backtest_criteria(
       - `backtest_to_paper.required_any` — at least one group must pass
         entirely.
 
-    Pass-through behaviour: if no YAML exists for the asset class, returns
-    `(True, [])`. The calibrator seeds defaults but M2 still needs to be
-    usable on a fresh checkout.
+    Fail-closed behaviour: if no YAML exists for the asset class, returns
+    `(False, [...])`. The backtested → paper gate is money-adjacent and must
+    not pass unconditionally on a fresh checkout — run POST /calibrate to seed
+    criteria first.
     """
     path = _criteria_path(asset_class)
     if not path.is_file():
-        return True, []
+        return False, [
+            f"no criteria defined for asset class {asset_class!r}; "
+            "run POST /calibrate to seed criteria before promoting to paper"
+        ]
     try:
         data = yaml.safe_load(path.read_text()) or {}
     except yaml.YAMLError as exc:
@@ -156,7 +172,11 @@ def check_backtest_criteria(
             if val is None:
                 failures.append(f"missing metric: {metric}")
                 continue
-            if not _eval_comparator(str(expr), float(val)):
+            fval = _metric_float(val)
+            if fval is None:
+                failures.append(f"{metric}={val!r} is not numeric")
+                continue
+            if not _eval_comparator(str(expr), fval):
                 failures.append(f"{metric}={val} fails {expr}")
 
     for rule in btp.get("hard_blockers", []) or []:
@@ -167,7 +187,11 @@ def check_backtest_criteria(
             if val is None:
                 failures.append(f"missing metric (hard): {metric}")
                 continue
-            if not _eval_comparator(str(expr), float(val)):
+            fval = _metric_float(val)
+            if fval is None:
+                failures.append(f"hard_blocker: {metric}={val!r} is not numeric")
+                continue
+            if not _eval_comparator(str(expr), fval):
                 failures.append(f"hard_blocker: {metric}={val} fails {expr}")
 
     any_groups = btp.get("required_any", []) or []
@@ -179,7 +203,8 @@ def check_backtest_criteria(
                 if metric.startswith("_"):
                     continue
                 val = metrics.get(metric)
-                if val is None or not _eval_comparator(str(expr), float(val)):
+                fval = _metric_float(val)
+                if fval is None or not _eval_comparator(str(expr), fval):
                     group_ok = False
                     break
             if group_ok:

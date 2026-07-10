@@ -20,6 +20,28 @@
 - **Category**: bug / security
 - **Planned at**: commit `dc84bd6`, 2026-07-10
 
+## Resolution (2026-07-10, maintainer-confirmed)
+
+- **Steps 1 & 2 (stop-loss in `strategy_validator._check_exit_strategies`) —
+  REJECTED.** A stop-loss is an **order-level** safety net (it must live on the
+  order so risk is capped even on a server outage), and it must be enforced by
+  fwbg's **pre-trade order validator** — exactly what CLAUDE.md already states
+  ("Pre-trade validators reject orders without SL. SL is sent atomically with
+  entry"). fwbg-agents never places orders (it only reads positions, prompts
+  the LLM, and transitions state), and fwbg exposes no stop-loss exit-strategy
+  slug — SL is a per-exit-strategy param (`sl`/`sl_mult`). A `strategy_validator`
+  check would enforce the right rule at the wrong layer/repo and give a false
+  sense of safety. The real gate belongs in the fwbg repo (a separate audit
+  found it is only PARTIAL there today: a silent 50-point default, no
+  reject-without-SL guard — tracked separately).
+- **Steps 3 & 4 — DONE** on `advisor/001-enforce-deterministic-safety-gates`:
+  missing-criteria YAML now fails **closed** in `check_backtest_criteria`
+  (was fail-open), and the three `float(val)` casts are guarded by
+  `_metric_float` so a malformed metric yields a clean failure instead of an
+  unhandled `ValueError`. Tests: `test_missing_criteria_yaml_blocks_promotion`,
+  `test_non_numeric_metric_fails_cleanly` (plus 3 existing happy-path tests now
+  seed a criteria YAML). Full suite: 538 passed, 1 skipped.
+
 ## Why this matters
 
 The repo's CLAUDE.md declares two critical safety rules: "Stop-loss is
