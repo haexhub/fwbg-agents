@@ -19,6 +19,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+import numpy as np
 import pandas as pd
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -234,7 +235,13 @@ def _evaluate_scenario(
     scenario: PluginContractScenario,
     params: dict[str, Any],
 ) -> list[dict[str, Any]]:
-    """Run compute() and check the contract's three hard-coded invariants.
+    """Run compute() and check the contract's three hard-coded invariants:
+
+    1. length parity — outputs marked ``same_as_input`` match ``len(df)``;
+    2. finite / non-all-NaN — a numeric output must not be entirely NaN and
+       must not contain ±inf (leading warm-up NaNs are legitimate and allowed);
+    3. dtype sanity — an output's values must be numeric or boolean (an
+       object/string-dtype indicator output is always a bug).
 
     Returns a list of error dicts; empty list means the scenario passed.
     """
@@ -272,7 +279,77 @@ def _evaluate_scenario(
                 }
             )
 
+    # Invariants 2 (finite / non-all-NaN) and 3 (dtype) — same value extraction
+    # as the length check above.
+    output_values = _output_values(result, contract)
+    for declared in contract.outputs:
+        value = output_values[declared.name]
+        if value is None:
+            continue  # a missing output is already flagged by length_mismatch
+        errors.extend(
+            _value_invariant_errors(value, declared.name, scenario.name, ts)
+        )
+
     return errors
+
+
+def _output_values(result: Any, contract: PluginContract) -> dict[str, Any]:
+    """Map each declared output name to its observed value, mirroring the
+    extraction convention of `_output_lengths` (single output → the result
+    itself; multi output → a dict keyed by output.name)."""
+    declared = contract.outputs
+    if len(declared) == 1:
+        return {declared[0].name: result}
+    if isinstance(result, dict):
+        return {o.name: result.get(o.name) for o in declared}
+    return {o.name: None for o in declared}
+
+
+def _value_invariant_errors(
+    value: Any, output_name: str, scenario_name: str, ts
+) -> list[dict[str, Any]]:
+    """Finite (Invariant 2) and dtype (Invariant 3) checks for one output.
+
+    Array-like values are inspected as a pandas Series; scalars are checked
+    directly. An all-NaN or ±inf-containing numeric output, or a value that is
+    neither numeric nor boolean, is a violation. Leading warm-up NaNs pass."""
+
+    def _err(kind: str, detail: str) -> dict[str, Any]:
+        return {
+            "scenario_name": scenario_name,
+            "invariant_violated": kind,
+            "traceback": f"output {output_name!r}: {detail}",
+            "ts": ts(),
+        }
+
+    if isinstance(value, pd.Series):
+        series: pd.Series | None = value
+    elif isinstance(value, np.ndarray):
+        series = pd.Series(value)
+    else:
+        series = None
+
+    if series is not None:
+        is_numeric = pd.api.types.is_numeric_dtype(series)
+        is_bool = pd.api.types.is_bool_dtype(series)
+        if not (is_numeric or is_bool):
+            return [_err("wrong_dtype", f"expected numeric/boolean, got dtype {series.dtype}")]
+        if is_numeric and not is_bool:
+            arr = series.to_numpy(dtype="float64", na_value=np.nan)
+            if series.isna().all():
+                return [_err("non_finite_output", "all values are NaN")]
+            if np.isinf(arr).any():
+                return [_err("non_finite_output", "contains ±inf")]
+        return []
+
+    # Scalar output (contract dtype="scalar").
+    if isinstance(value, (bool, np.bool_)):
+        return []
+    if isinstance(value, (int, float, np.number)):
+        if isinstance(value, (float, np.floating)) and not np.isfinite(value):
+            return [_err("non_finite_output", "scalar value is NaN/inf")]
+        return []
+    return [_err("wrong_dtype", f"expected numeric/boolean scalar, got {type(value).__name__}")]
 
 
 def _output_lengths(result: Any, contract: PluginContract) -> dict[str, int]:
