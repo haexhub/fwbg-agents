@@ -241,6 +241,31 @@ def test_contract_check_rejects_module_with_no_classes():
     assert "no class definition found" in check.msg
 
 
+def test_contract_check_rejects_disallowed_import():
+    plan = _make_plan()
+    code = "import os\n" + _VALID_CODE
+    check = contract_check(code, plan)
+    assert not check.ok
+    assert "disallowed import" in check.msg
+    assert "os" in check.msg
+
+
+def test_contract_check_rejects_dynamic_exec():
+    plan = _make_plan()
+    code = _VALID_CODE + "\n_x = eval('1')\n"
+    check = contract_check(code, plan)
+    assert not check.ok
+    assert "disallowed call" in check.msg
+    assert "eval" in check.msg
+
+
+def test_contract_check_accepts_allowed_imports():
+    plan = _make_plan()
+    code = "import numpy as np\nimport math\n" + _VALID_CODE
+    check = contract_check(code, plan)
+    assert check.ok, check.msg
+
+
 # ---------------------------------------------------------------------------
 # PluginImplementer loop tests
 # ---------------------------------------------------------------------------
