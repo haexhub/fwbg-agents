@@ -187,17 +187,19 @@ class Researcher:
                     log.warning("researcher: search_web failed: %s", exc)
                     return []
                 serialized = [r.model_dump() for r in results]
-                for r in serialized:
-                    # Web page text is untrusted input; frame it as data so a
-                    # poisoned result can't inject instructions. url/title/score
-                    # stay untouched (used for provenance + the SSE event).
-                    r["content_snippet"] = _untrusted(r["content_snippet"])
+                # Emit provenance event before wrapping so the UI sees clean titles.
                 event_bus.emit({
                     "type": "research_results",
                     "agent_run_id": agent_run_id,
                     "query": query,
                     "urls": [{"url": r["url"], "title": r["title"]} for r in serialized],
                 })
+                for r in serialized:
+                    # Both title and content_snippet are attacker-controlled web
+                    # text; frame them as data so a poisoned result can't inject
+                    # instructions into the LLM context. url/score stay untouched.
+                    r["title"] = _untrusted(r["title"])
+                    r["content_snippet"] = _untrusted(r["content_snippet"])
                 return serialized
 
             t0 = time.monotonic()

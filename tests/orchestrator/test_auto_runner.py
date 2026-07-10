@@ -245,21 +245,22 @@ async def test_pick_next_add_indicator_pending(env):
 
 
 async def test_pick_next_add_indicator_skips_in_flight_chain(env):
-    """A chain that is currently running (e.g. a manual API attempt) blocks
-    the auto pick — two chains must never race on the same sidecar."""
+    """A chain that is RUNNING or PENDING blocks the auto pick — two chains
+    must never race on the same sidecar."""
     Session, make_strategy, add_run = env
     sid = await make_strategy("orb__forex__ai3", state=StrategyState.BACKTESTED)
     _seed_sidecar("orb__forex__ai3")
 
-    for agent in ("plugin_planner", "plugin_implementer", "plugin_author_flow"):
-        await add_run(agent, AgentRunStatus.RUNNING, sid)
-        async with Session() as session:
-            assert await auto_runner.pick_next_add_indicator_pending(session) is None
-        async with Session() as s:
-            await s.execute(
-                AgentRun.__table__.delete().where(AgentRun.strategy_id == sid)
-            )
-            await s.commit()
+    for status in (AgentRunStatus.RUNNING, AgentRunStatus.PENDING):
+        for agent in ("plugin_planner", "plugin_implementer", "plugin_author_flow"):
+            await add_run(agent, status, sid)
+            async with Session() as session:
+                assert await auto_runner.pick_next_add_indicator_pending(session) is None
+            async with Session() as s:
+                await s.execute(
+                    AgentRun.__table__.delete().where(AgentRun.strategy_id == sid)
+                )
+                await s.commit()
 
     async with Session() as session:
         assert await auto_runner.pick_next_add_indicator_pending(session) == sid

@@ -74,8 +74,10 @@ _ALLOWED_IMPORTS: frozenset[str] = frozenset(
 # Builtins that turn otherwise-static code into an arbitrary-code or
 # file-access vector. `__builtins__` is rejected as a bare name too, since
 # `getattr(__builtins__, "eval")` would sidestep the call check.
+# `globals`/`vars`/`locals` are blocked because `globals()["__builtins__"]`
+# reaches the same object via a string key and evades the name check.
 _DISALLOWED_CALLS: frozenset[str] = frozenset(
-    {"eval", "exec", "compile", "__import__", "open"}
+    {"eval", "exec", "compile", "__import__", "open", "globals", "vars", "locals"}
 )
 
 
@@ -177,7 +179,12 @@ def _check_imports_and_calls(tree: ast.Module) -> str | None:
                     )
         elif isinstance(node, ast.ImportFrom):
             # module is None for `from . import x`; reject relative imports too.
-            root = (node.module or "").split(".")[0]
+            if node.module is None:
+                return (
+                    "disallowed import: relative imports are not permitted in "
+                    "plugin code (interim gate pending sandbox)"
+                )
+            root = node.module.split(".")[0]
             if root not in _ALLOWED_IMPORTS:
                 return (
                     f"disallowed import: {node.module!r} — allowed roots: "

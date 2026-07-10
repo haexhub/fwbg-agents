@@ -266,6 +266,31 @@ def test_contract_check_accepts_allowed_imports():
     assert check.ok, check.msg
 
 
+def test_contract_check_rejects_builtins_reference():
+    plan = _make_plan()
+    code = _VALID_CODE + "\n_b = __builtins__\n"
+    check = contract_check(code, plan)
+    assert not check.ok
+    assert "__builtins__" in check.msg
+
+
+def test_contract_check_rejects_open_call():
+    plan = _make_plan()
+    code = _VALID_CODE + "\n_f = open('/etc/passwd')\n"
+    check = contract_check(code, plan)
+    assert not check.ok
+    assert "disallowed call" in check.msg
+    assert "open" in check.msg
+
+
+def test_contract_check_rejects_relative_import():
+    plan = _make_plan()
+    code = "from . import something\n" + _VALID_CODE
+    check = contract_check(code, plan)
+    assert not check.ok
+    assert "relative imports" in check.msg
+
+
 # ---------------------------------------------------------------------------
 # PluginImplementer loop tests
 # ---------------------------------------------------------------------------
