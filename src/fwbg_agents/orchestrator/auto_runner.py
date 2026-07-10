@@ -414,7 +414,8 @@ def _synthesize_abandon_override_sidecar(slug: str, analyst_reasoning: str) -> d
         "params": tune_params,
         "confidence": 0.3,
         "reasoning": (
-            f"Early-abandon override (depth < min_iterations_before_abandon={settings.min_iterations_before_abandon}). "
+            f"Early-abandon override "
+            f"(depth < min_iterations_before_abandon={settings.min_iterations_before_abandon}). "
             f"Analyst reasoning: {analyst_reasoning}"
         ),
     }
@@ -466,13 +467,15 @@ async def _analyze_and_apply(session: AsyncSession, sid: int) -> None:
                 )
                 child_id = await reiterate(session, sid)
                 log.info(
-                    "runner auto mode: early-abandon override — iteration queued as strategy %d (parent %s)",
+                    "runner auto mode: early-abandon override — "
+                    "iteration queued as strategy %d (parent %s)",
                     child_id, s.slug,
                 )
                 return
             except Exception:
                 log.exception(
-                    "runner auto mode: early-abandon override failed for %s — falling through to abandon",
+                    "runner auto mode: early-abandon override failed for %s"
+                    " — falling through to abandon",
                     s.slug,
                 )
 
