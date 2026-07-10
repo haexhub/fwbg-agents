@@ -1,5 +1,44 @@
 # Changelog
 
+## [0.17.0](https://github.com/haexhub/fwbg-agents/compare/v0.16.1...v0.17.0) (2026-07-10)
+
+
+### Features
+
+* **security:** frame web snippets as untrusted data ([dfc962b](https://github.com/haexhub/fwbg-agents/commit/dfc962b8355e9e076d4c19fd1ca16682cac580a2))
+* **security:** harden LLM code path (plan 004) ([51af7ec](https://github.com/haexhub/fwbg-agents/commit/51af7ec303f97194863b21e18e4bd1f426785f17))
+* **security:** harden the web→LLM→executable-code path ([59a3e3a](https://github.com/haexhub/fwbg-agents/commit/59a3e3a1d9352956c1e5ca8759b6df041449d77e))
+* **security:** import allowlist in contract_check ([9cb030e](https://github.com/haexhub/fwbg-agents/commit/9cb030ee01333b3c84316cb40a6ce6b302948bfd))
+
+
+### Bug Fixes
+
+* **auto_runner:** harden add_indicator retry budget (review findings) ([1e0227b](https://github.com/haexhub/fwbg-agents/commit/1e0227b426b38e4da52acf8991abbb65e8eb0c41))
+* **evaluator:** enforce finite/dtype invariants on plugin outputs ([a7335a6](https://github.com/haexhub/fwbg-agents/commit/a7335a6cb04cfbbdd38639d6d9c4205fbf5a42f1))
+* **evaluator:** enforce finite/dtype invariants on plugin outputs ([b7dd0c3](https://github.com/haexhub/fwbg-agents/commit/b7dd0c3ab92f8ac2edd20e40576048fd24638dfc))
+* **evaluator:** enforce finite/dtype invariants on plugin outputs ([a61b9a7](https://github.com/haexhub/fwbg-agents/commit/a61b9a73b49dce429f84d412d5b0e2e1d504c74f))
+* **lifecycle:** fail-closed criteria gate + guard metric float casts ([44e16eb](https://github.com/haexhub/fwbg-agents/commit/44e16eb1c470b570da72aff6598337cb628f7788))
+* **lifecycle:** fail-closed criteria gate + guard metric float casts ([2ee4f97](https://github.com/haexhub/fwbg-agents/commit/2ee4f9790d44a1f207212ba1d542125ab62e60b6))
+* **lint:** clear pre-existing ruff E501/RUF002 errors blocking CI ([8dbfb98](https://github.com/haexhub/fwbg-agents/commit/8dbfb98c067e6545220529e8d3b5269efc37aa6c))
+* **lint:** clear pre-existing ruff E501/RUF002 errors blocking CI ([31e17fc](https://github.com/haexhub/fwbg-agents/commit/31e17fc91074504dfddf362077eb7c1c2bee6083))
+* **plans:** address code-review findings on dependency-manifest-hygiene ([d97dfd4](https://github.com/haexhub/fwbg-agents/commit/d97dfd47ed1b16d08bc1c3260080f12be5a14e37))
+* **security:** address code-review findings on harden-llm-code-path ([05b02ef](https://github.com/haexhub/fwbg-agents/commit/05b02ef2489171a13d946970b58d5004cf899593))
+* **types:** make `mypy src` clean ([3fbeb07](https://github.com/haexhub/fwbg-agents/commit/3fbeb071f557d3e7bcf124675998ede531eb74e3))
+* **types:** restore pandas type: ignore dropped during conflict resolution ([9d3abbf](https://github.com/haexhub/fwbg-agents/commit/9d3abbf61a48a02ea593688ddb54bc21d74928ac))
+* **types:** restore pandas type: ignore dropped during conflict resolution ([d7cc6b2](https://github.com/haexhub/fwbg-agents/commit/d7cc6b23aad47ce763011b789b487148ec6b9a99))
+* **types:** restore pandas type: ignore[import-untyped] in plugin_evaluator ([4645d60](https://github.com/haexhub/fwbg-agents/commit/4645d6074f5b047d778704fb57bc94cf0f04fb1a))
+
+
+### Documentation
+
+* **docstrings:** add missing docstrings to reach 80%+ coverage ([6fff02f](https://github.com/haexhub/fwbg-agents/commit/6fff02fdd2bca41433d028b4e4dc8c6f52cc7f80))
+* **docstrings:** add missing docstrings to reach 80%+ coverage ([b9d407f](https://github.com/haexhub/fwbg-agents/commit/b9d407f6b1e054327e010fa445b1dc034bd50b58))
+* **plans:** 001 — Steps 3+4 DONE, Steps 1+2 REJECTED (SL is order-level) ([4b281e0](https://github.com/haexhub/fwbg-agents/commit/4b281e01c540dece8e8c16a37ae621cfc4056cf9))
+* **plans:** mark 001 BLOCKED — stop-loss vocabulary is a maintainer decision ([ad523f3](https://github.com/haexhub/fwbg-agents/commit/ad523f3e8fd29f1d256e937e4b9b61869205c39c))
+* **plans:** mark 004 DONE ([56279d5](https://github.com/haexhub/fwbg-agents/commit/56279d590960ef19d26be9c07d31a37fa1f8fc65))
+* **plans:** mark 005 DONE ([958f026](https://github.com/haexhub/fwbg-agents/commit/958f026054166f79af5ae2689d9f99075a927e87))
+* **plans:** mark 005 DONE ([9f355b4](https://github.com/haexhub/fwbg-agents/commit/9f355b46b331551ccd02077526de2b4c0187d4a5))
+
 ## [0.16.1](https://github.com/haexhub/fwbg-agents/compare/v0.16.0...v0.16.1) (2026-07-09)
 
 
