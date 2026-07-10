@@ -11,7 +11,7 @@ STOP conditions, and update your row when done.
 
 | Plan | Title | Priority | Effort | Depends on | Status |
 |------|-------|----------|--------|------------|--------|
-| 001  | Enforce stop-loss + fail-closed criteria gates in code | P1 | M | — | TODO |
+| 001  | Enforce stop-loss + fail-closed criteria gates in code | P1 | M | — | BLOCKED — fwbg has no stop-loss exit-strategy slug; SL is a per-exit-strategy param (`sl`/`sl_mult`), so the check location is a maintainer design decision (Step 1 STOP) |
 | 002  | Dependency manifest hygiene (pydantic-ai pin, anthropic, dead deps) | P1 | S | — | DONE (advisor/002-dependency-manifest-hygiene) |
 | 003  | CI quality gates (mypy clean, scripts linted, coverage measured) | P2 | M | 002 | TODO |
 | 004  | Interim hardening of the web→LLM→executable-code path | P1 | M | — | DONE (advisor/004-harden-llm-code-path) |
