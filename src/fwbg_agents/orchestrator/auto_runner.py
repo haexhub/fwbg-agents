@@ -113,24 +113,38 @@ def set_pipeline_min_proposed(value: int) -> None:
     log.info("pipeline_min_proposed set to %d", value)
 
 
+_IN_FLIGHT_STATUSES = (AgentRunStatus.RUNNING.value, AgentRunStatus.PENDING.value)
+
+
+async def _count_runs(
+    session: AsyncSession,
+    agent_name: str | tuple[str, ...],
+    *,
+    strategy_id: int | None = None,
+    statuses: tuple[str, ...] | None = None,
+) -> int:
+    """Count AgentRun rows for the given agent name(s), optionally scoped to a
+    strategy and/or a set of statuses."""
+    names = (agent_name,) if isinstance(agent_name, str) else agent_name
+    stmt = (
+        select(func.count())
+        .select_from(AgentRun)
+        .where(AgentRun.agent_name.in_(names))
+    )
+    if strategy_id is not None:
+        stmt = stmt.where(AgentRun.strategy_id == strategy_id)
+    if statuses is not None:
+        stmt = stmt.where(AgentRun.status.in_(statuses))
+    return (await session.execute(stmt)).scalar_one()
+
+
 async def pick_next_strategy_id(session: AsyncSession) -> int | None:
     """Oldest PROPOSED strategy that is ready and worth auto-running.
 
     Returns None when a backtest is already active (single-flight) or no
     candidate qualifies.
     """
-    busy = (
-        await session.execute(
-            select(func.count())
-            .select_from(AgentRun)
-            .where(
-                AgentRun.agent_name == "runner",
-                AgentRun.status.in_(
-                    [AgentRunStatus.RUNNING.value, AgentRunStatus.PENDING.value]
-                ),
-            )
-        )
-    ).scalar_one()
+    busy = await _count_runs(session, "runner", statuses=_IN_FLIGHT_STATUSES)
     if busy:
         return None
 
@@ -145,15 +159,17 @@ async def pick_next_strategy_id(session: AsyncSession) -> int | None:
     for s in proposed:
         if not (strategy_dir(s.slug) / "iteration_001" / "strategy.json").is_file():
             continue  # not translated yet
-        attempts = await _genuine_failed_runner_attempts(session, s.id)
+        attempts = await _genuine_failed_attempts(session, "runner", s.id)
         if attempts >= settings.runner_auto_max_attempts:
             continue
         return s.id
     return None
 
 
-async def _genuine_failed_runner_attempts(session: AsyncSession, strategy_id: int) -> int:
-    """Failed runner attempts that count against the retry cap. Orphaned and
+async def _genuine_failed_attempts(
+    session: AsyncSession, agent_name: str, strategy_id: int
+) -> int:
+    """Failed attempts that count against a retry cap. Orphaned and
     transient-network failures were not the strategy's fault, so they are
     excluded."""
     return (
@@ -161,7 +177,7 @@ async def _genuine_failed_runner_attempts(session: AsyncSession, strategy_id: in
             select(func.count())
             .select_from(AgentRun)
             .where(
-                AgentRun.agent_name == "runner",
+                AgentRun.agent_name == agent_name,
                 AgentRun.strategy_id == strategy_id,
                 AgentRun.status == AgentRunStatus.FAILED.value,
                 or_(
@@ -191,17 +207,10 @@ async def pick_next_backtested_unanalyzed(session: AsyncSession) -> int | None:
         )
     ).scalars().all()
     for s in rows:
-        done = (
-            await session.execute(
-                select(func.count())
-                .select_from(AgentRun)
-                .where(
-                    AgentRun.agent_name == "analyst",
-                    AgentRun.strategy_id == s.id,
-                    AgentRun.status == AgentRunStatus.DONE.value,
-                )
-            )
-        ).scalar_one()
+        done = await _count_runs(
+            session, "analyst", strategy_id=s.id,
+            statuses=(AgentRunStatus.DONE.value,),
+        )
         if done == 0 and (
             strategy_dir(s.slug) / "iteration_001" / "fwbg_results.json"
         ).is_file():
@@ -210,14 +219,19 @@ async def pick_next_backtested_unanalyzed(session: AsyncSession) -> int | None:
 
 
 async def pick_next_add_indicator_pending(session: AsyncSession) -> int | None:
-    """Oldest BACKTESTED strategy with an add_indicator sidecar and an unused
+    """Oldest BACKTESTED strategy with an add_indicator sidecar and remaining
     auto plugin-author budget.
 
-    The budget is consumed only when the full chain completed (plugin_implementer
-    DONE) or when plugin_planner has been attempted >= runner_auto_max_attempts
-    times. A plugin_implementer timeout does NOT consume the budget — the
-    strategy gets another auto-retry up to the cap.
-    Manual API retries remain open regardless.
+    Budget = plugin_planner runs that ended DONE plus genuine planner failures
+    (orphaned/transient failures were not the strategy's fault and are free),
+    compared against plugin_author_auto_max_attempts. Every chain attempt runs
+    the planner first, so an implementer failure consumes one budget unit and
+    the strategy is retried up to the cap. Any plugin_implementer DONE row
+    closes the budget — authoring succeeded; evaluator/reiterate failures
+    after that point need a manual retry via the API. A strategy whose chain
+    is currently in flight (RUNNING/PENDING run, e.g. a manual API attempt) is
+    skipped so two chains never race on the same sidecar. Manual API attempts
+    are never blocked here, but their planner runs consume the same budget.
     """
     rows = (
         await session.execute(
@@ -229,31 +243,28 @@ async def pick_next_add_indicator_pending(session: AsyncSession) -> int | None:
     for s in rows:
         if _find_latest_sidecar(s.slug) is None:
             continue
-        implementer_done = (
-            await session.execute(
-                select(func.count())
-                .select_from(AgentRun)
-                .where(
-                    AgentRun.agent_name == "plugin_implementer",
-                    AgentRun.strategy_id == s.id,
-                    AgentRun.status == AgentRunStatus.DONE.value,
-                )
-            )
-        ).scalar_one()
+        implementer_done = await _count_runs(
+            session, "plugin_implementer", strategy_id=s.id,
+            statuses=(AgentRunStatus.DONE.value,),
+        )
         if implementer_done > 0:
             continue
-        planner_attempts = (
-            await session.execute(
-                select(func.count())
-                .select_from(AgentRun)
-                .where(
-                    AgentRun.agent_name == "plugin_planner",
-                    AgentRun.strategy_id == s.id,
-                )
-            )
-        ).scalar_one()
-        if planner_attempts < settings.runner_auto_max_attempts:
-            return s.id
+        planner_done = await _count_runs(
+            session, "plugin_planner", strategy_id=s.id,
+            statuses=(AgentRunStatus.DONE.value,),
+        )
+        planner_failed = await _genuine_failed_attempts(session, "plugin_planner", s.id)
+        if planner_done + planner_failed >= settings.plugin_author_auto_max_attempts:
+            continue
+        in_flight = await _count_runs(
+            session,
+            ("plugin_planner", "plugin_implementer", "plugin_author_flow"),
+            strategy_id=s.id,
+            statuses=_IN_FLIGHT_STATUSES,
+        )
+        if in_flight:
+            continue
+        return s.id
     return None
 
 
@@ -325,7 +336,7 @@ async def abandon_capped_proposed(session: AsyncSession) -> int:
     ).scalars().all()
     abandoned = 0
     for s in proposed:
-        failed = await _genuine_failed_runner_attempts(session, s.id)
+        failed = await _genuine_failed_attempts(session, "runner", s.id)
         if failed < settings.runner_auto_max_attempts:
             continue
         pm_path = strategy_dir(s.slug) / "post_mortem.yaml"
@@ -549,19 +560,9 @@ async def _active_strategy_count(session: AsyncSession) -> int:
 
 
 async def _research_is_busy(session: AsyncSession) -> bool:
-    count = (
-        await session.execute(
-            select(func.count())
-            .select_from(AgentRun)
-            .where(
-                AgentRun.agent_name == "research_flow",
-                AgentRun.status.in_(
-                    [AgentRunStatus.RUNNING.value, AgentRunStatus.PENDING.value]
-                ),
-            )
-        )
-    ).scalar_one()
-    return bool(count)
+    return bool(
+        await _count_runs(session, "research_flow", statuses=_IN_FLIGHT_STATUSES)
+    )
 
 
 async def _fill_pipeline_background(agent_run_id: int) -> None:

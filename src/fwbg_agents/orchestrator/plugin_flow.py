@@ -193,6 +193,16 @@ async def author_plugin_from_strategy(
     try:
         sidecar = json.loads(sidecar_path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as exc:
+        # A corrupt sidecar fails identically on every retry; record a failed
+        # planner run so the attempt consumes auto-retry budget instead of
+        # being re-picked forever (see pick_next_add_indicator_pending).
+        planner_ar = await _start_agent_run(
+            session,
+            agent_name="plugin_planner",
+            strategy_id=strategy.id,
+            input_artifact_path=str(sidecar_path),
+        )
+        await fail_agent_run(session, planner_ar, exc)
         raise AuthorPluginPreconditionError(
             f"cannot parse sidecar at {sidecar_path}: {exc}"
         ) from exc

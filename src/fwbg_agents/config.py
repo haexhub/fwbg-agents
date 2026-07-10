@@ -145,6 +145,16 @@ class Settings(BaseSettings):
         le=20,
         description="Max refinement rounds for the PluginImplementer gate-loop.",
     )
+    plugin_author_auto_max_attempts: int = Field(
+        default=2,
+        ge=1,
+        description=(
+            "Auto-retry cap for the add_indicator plugin-author chain "
+            "(plugin_planner attempts per strategy, DONE plus genuine "
+            "failures). Independent of runner_auto_max_attempts, which caps "
+            "backtest retries."
+        ),
+    )
 
     # Periodic run-janitor: a backstop for runs that hang in the live process
     # (as opposed to orphans from a restart, handled at startup). Runner-borne
