@@ -71,10 +71,12 @@ _background_tasks: set[asyncio.Task] = set()
 
 
 def _config_file():
+    """Return the path to the runner auto-mode config file."""
     return settings.data_dir / "runner_auto.json"
 
 
 def _read_config() -> dict:
+    """Read the runner auto-mode config dict from disk."""
     try:
         return json.loads(_config_file().read_text())
     except (OSError, json.JSONDecodeError):
@@ -82,16 +84,19 @@ def _read_config() -> dict:
 
 
 def _write_config(cfg: dict) -> None:
+    """Write the runner auto-mode config dict to disk."""
     path = _config_file()
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(cfg))
 
 
 def is_enabled() -> bool:
+    """Return True if auto-runner mode is currently enabled."""
     return bool(_read_config().get("enabled", False))
 
 
 def set_enabled(enabled: bool) -> None:
+    """Enable or disable auto-runner mode and persist the change."""
     cfg = _read_config()
     cfg["enabled"] = bool(enabled)
     _write_config(cfg)
@@ -99,6 +104,7 @@ def set_enabled(enabled: bool) -> None:
 
 
 def get_pipeline_min_proposed() -> int:
+    """Return the effective pipeline_min_proposed threshold, reading from disk or settings default."""
     v = _read_config().get("pipeline_min_proposed")
     if v is None:
         return settings.pipeline_min_proposed
@@ -106,6 +112,7 @@ def get_pipeline_min_proposed() -> int:
 
 
 def set_pipeline_min_proposed(value: int) -> None:
+    """Set and persist the pipeline_min_proposed threshold (clamped to 0–20)."""
     value = max(0, min(int(value), 20))
     cfg = _read_config()
     cfg["pipeline_min_proposed"] = value
@@ -560,6 +567,7 @@ async def _active_strategy_count(session: AsyncSession) -> int:
 
 
 async def _research_is_busy(session: AsyncSession) -> bool:
+    """Return True if a research_flow agent run is currently in-flight."""
     return bool(
         await _count_runs(session, "research_flow", statuses=_IN_FLIGHT_STATUSES)
     )

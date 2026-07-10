@@ -19,9 +19,12 @@ log = logging.getLogger(__name__)
 
 
 class FallbackSearchClient:
+    """Search client that tries a list of providers in order, returning the first success."""
+
     name = "fallback"
 
     def __init__(self, providers: list[SearchProvider]):
+        """Initialize."""
         self.providers = providers
 
     async def search(
@@ -32,6 +35,7 @@ class FallbackSearchClient:
         session: AsyncSession | None = None,
         agent_run_id: int | None = None,
     ) -> list[SearchResult]:
+        """Try each provider in order and return the first successful result list."""
         for provider in self.providers:
             try:
                 results = await provider.search(

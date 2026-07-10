@@ -82,6 +82,7 @@ async def _generate_valid_hypothesis(
     """
 
     async def _one_candidate() -> ResearcherHypothesis:
+        """Run a single Researcher attempt and return the resulting hypothesis."""
         async with SessionLocal() as candidate_session:
             researcher = Researcher(
                 candidate_session,
@@ -108,7 +109,9 @@ async def _generate_valid_hypothesis(
 
 
 def _render_research_notes(hypothesis: ResearcherHypothesis) -> str:
+    """Render a ResearcherHypothesis to a human-readable Markdown notes string."""
     def _source_md(s) -> str:
+        """Format a single Source as a Markdown bullet with nested key points."""
         lines = [f"- [{s.title}]({s.url}) — {s.why_relevant}"]
         for kp in s.key_points:
             lines.append(f"  - {kp}")
@@ -256,6 +259,7 @@ async def _research_and_translate(
     fanout_n: int,
     fwbg_client: FwbgClient,
 ) -> int:
+    """Run research fanout then translate the hypothesis into a persisted strategy; returns strategy id."""
     # One live-catalog fetch per research run: the Researcher must see the
     # CURRENT plugin set (it grows as plugins are adopted), not a frozen list.
     live = await fetch_live_catalog(session, fwbg_client)

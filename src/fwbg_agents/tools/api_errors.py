@@ -39,6 +39,7 @@ def _anthropic_status_body(exc: BaseException) -> tuple[int | None, str]:
 
 
 def _describe_status(status: int, body: str) -> str:
+    """Map an Anthropic API HTTP status code to a human-readable error description."""
     if status == 429:
         return "Anthropic API rate limit reached — too many requests. Retry later."
     if status == 529:

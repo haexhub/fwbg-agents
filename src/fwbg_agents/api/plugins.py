@@ -46,6 +46,7 @@ router = APIRouter(tags=["plugins"])
 
 
 def _serialize_plugin(p: Plugin) -> dict[str, Any]:
+    """Serialize a Plugin ORM row to a response dict."""
     return {
         "id": p.id,
         "slug": p.slug,
@@ -60,6 +61,7 @@ def _serialize_plugin(p: Plugin) -> dict[str, Any]:
 
 
 def _serialize_verification_run(vr: VerificationRun) -> dict[str, Any]:
+    """Serialize a VerificationRun ORM row to a response dict."""
     return {
         "id": vr.id,
         "plugin_id": vr.plugin_id,
@@ -74,6 +76,7 @@ def _serialize_verification_run(vr: VerificationRun) -> dict[str, Any]:
 
 
 def _serialize_transition(t: Transition) -> dict[str, Any]:
+    """Serialize a Transition ORM row to a response dict."""
     return {
         "id": t.id,
         "entity_type": t.entity_type,
@@ -94,6 +97,7 @@ async def list_plugins(
     limit: int = 100,
     session: AsyncSession = Depends(get_session),
 ) -> dict[str, Any]:
+    """List all plugins, optionally filtered by state and/or kind."""
     limit = max(1, min(limit, 500))
     stmt = select(Plugin).order_by(desc(Plugin.created_at)).limit(limit)
     if state:
@@ -112,6 +116,7 @@ async def list_plugins(
 async def get_plugin(
     plugin_id: int, session: AsyncSession = Depends(get_session)
 ) -> dict[str, Any]:
+    """Retrieve a plugin by ID along with its transition history."""
     p = (await session.execute(select(Plugin).where(Plugin.id == plugin_id))).scalar_one_or_none()
     if p is None:
         raise HTTPException(status_code=404, detail=f"plugin {plugin_id} not found")
@@ -135,6 +140,7 @@ async def get_plugin(
 async def list_plugin_transitions(
     plugin_id: int, session: AsyncSession = Depends(get_session)
 ) -> dict[str, Any]:
+    """List all lifecycle transitions for a plugin."""
     rows = (
         await session.execute(
             select(Transition)
@@ -154,6 +160,7 @@ async def list_plugin_transitions(
 
 
 async def _run_author_background(strategy_id: int, agent_run_id: int) -> None:
+    """Run the plugin author task in the background."""
     async with SessionLocal() as session:
         ar = (
             await session.execute(select(AgentRun).where(AgentRun.id == agent_run_id))
@@ -176,6 +183,7 @@ async def _run_author_background(strategy_id: int, agent_run_id: int) -> None:
 
 
 async def _run_evaluator_background(plugin_id: int, agent_run_id: int) -> None:
+    """Run the plugin evaluator task in the background."""
     async with SessionLocal() as session:
         ar = (
             await session.execute(select(AgentRun).where(AgentRun.id == agent_run_id))
@@ -294,12 +302,15 @@ async def post_plugin_evaluate(
 
 
 class ReiterateWithPluginRequest(BaseModel):
+    """Request body for POST /strategies/{id}/reiterate-with-plugin."""
+
     plugin_slug: str
 
 
 async def _run_reiterate_with_plugin_background(
     strategy_id: int, plugin_slug: str, agent_run_id: int
 ) -> None:
+    """Run the reiterate-with-plugin translator task in the background."""
     from fwbg_agents.orchestrator.lifecycle import strategy_dir
 
     async with SessionLocal() as session:
@@ -425,6 +436,7 @@ async def post_strategy_reiterate_with_plugin(
 async def list_plugin_verification_runs(
     plugin_id: int, session: AsyncSession = Depends(get_session)
 ) -> dict[str, Any]:
+    """List all verification runs for a plugin, newest first."""
     plugin = (
         await session.execute(select(Plugin).where(Plugin.id == plugin_id))
     ).scalar_one_or_none()

@@ -7,6 +7,8 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
+    """Application settings, loaded from environment variables and .env."""
+
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",
@@ -182,14 +184,17 @@ class Settings(BaseSettings):
 
     @property
     def criteria_dir(self) -> Path:
+        """Return the directory path for backtest-to-paper criteria YAML files."""
         return self.data_dir / "criteria"
 
     @property
     def db_url(self) -> str:
+        """Return the async SQLite connection URL for aiosqlite."""
         return f"sqlite+aiosqlite:///{self.data_dir / 'state.db'}"
 
     @property
     def db_url_sync(self) -> str:
+        """Return the synchronous SQLite connection URL."""
         return f"sqlite:///{self.data_dir / 'state.db'}"
 
 

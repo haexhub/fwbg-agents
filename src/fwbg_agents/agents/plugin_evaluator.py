@@ -42,7 +42,10 @@ log = logging.getLogger(__name__)
 
 
 class PluginEvaluator:
+    """Deterministic verifier that runs a plugin's contract scenarios and transitions state."""
+
     def __init__(self, session: AsyncSession):
+        """Initialize."""
         self.session = session
 
     async def run(self, plugin: Plugin) -> int:
@@ -169,6 +172,7 @@ class PluginEvaluator:
         errors: list[dict[str, Any]],
         error_log_path: Path,
     ) -> int:
+        """Mark the verification run as failed, write the error log, and return its id."""
         vr.status = "failed"
         vr.ended_at = datetime.now(UTC)
         error_log_path.parent.mkdir(parents=True, exist_ok=True)
@@ -191,13 +195,17 @@ class PluginEvaluator:
 
 
 class _PluginLoadError(Exception):
+    """Raised when a plugin module cannot be loaded or lacks a callable compute."""
+
     def __init__(self, reason: str, tb: str | None = None):
+        """Initialize."""
         super().__init__(reason)
         self.reason = reason
         self.tb = tb
 
 
 def _load_compute(plugin_py: Path):
+    """Load and return the compute() callable from the given plugin.py path."""
     if not plugin_py.is_file():
         raise _PluginLoadError("plugin_py_missing")
     try:
@@ -288,6 +296,7 @@ def _output_lengths(result: Any, contract: PluginContract) -> dict[str, int]:
 
 
 def _length_of(value: Any) -> int:
+    """Return the length of value, or 1 for scalars, or -1 for None."""
     if value is None:
         return -1
     try:

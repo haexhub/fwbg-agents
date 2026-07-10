@@ -25,6 +25,8 @@ POST_MORTEM_SUMMARY_CHARS = 240
 
 
 class PriorArtMatch(BaseModel):
+    """A prior strategy that overlaps with a new hypothesis, returned by lookup_prior_art."""
+
     slug: str
     current_state: str
     strategy_family: str
@@ -36,6 +38,7 @@ class PriorArtMatch(BaseModel):
 
 
 def _jaccard(a: set[str], b: set[str]) -> float:
+    """Compute Jaccard similarity between two tag sets."""
     if not a and not b:
         return 0.0
     union = a | b
@@ -45,6 +48,7 @@ def _jaccard(a: set[str], b: set[str]) -> float:
 
 
 def _load_summary(path_str: str | None) -> str | None:
+    """Load and truncate the post-mortem summary text from a file path."""
     if not path_str:
         return None
     path = Path(path_str)

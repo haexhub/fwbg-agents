@@ -91,6 +91,7 @@ def _find_latest_sidecar(slug: str) -> Path | None:
 
 
 def _plugin_dir(slug: str) -> Path:
+    """Return the filesystem directory for a plugin's generated artifacts."""
     return settings.data_dir / "plugins" / slug
 
 
@@ -101,6 +102,7 @@ async def _start_agent_run(
     strategy_id: int,
     input_artifact_path: str | None,
 ) -> AgentRun:
+    """Create and persist a new AgentRun row in RUNNING state."""
     now = datetime.now(UTC)
     ar = AgentRun(
         agent_name=agent_name,
@@ -125,6 +127,7 @@ async def _finish_agent_run(
     error: str | None = None,
     plugin_id: int | None = None,
 ) -> None:
+    """Update an AgentRun row with final status, end time, and optional output fields."""
     ar.status = status.value
     ar.ended_at = datetime.now(UTC)
     if output_artifact_path is not None:
@@ -141,6 +144,7 @@ async def _persist_llm_call(
     ar: AgentRun,
     meta: LlmCallMeta,
 ) -> None:
+    """Persist an LlmCall row for token/latency accounting on the given agent run."""
     session.add(
         LlmCall(
             agent_run_id=ar.id,

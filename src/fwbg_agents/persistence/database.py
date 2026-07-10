@@ -10,6 +10,8 @@ from fwbg_agents.config import settings
 
 
 class Base(DeclarativeBase):
+    """SQLAlchemy declarative base for all ORM models."""
+
     pass
 
 
@@ -39,5 +41,6 @@ SessionLocal = async_sessionmaker(engine, expire_on_commit=False, class_=AsyncSe
 
 
 async def get_session() -> AsyncIterator[AsyncSession]:
+    """Yield an async database session for use as a FastAPI dependency."""
     async with SessionLocal() as session:
         yield session

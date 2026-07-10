@@ -164,6 +164,7 @@ def _check_plugin_list_field(
 
 
 def _check_exit_strategies(items: Any, *, catalog: PluginCatalog | None) -> None:
+    """Validate the exit_strategies list structure and catalog membership."""
     if not isinstance(items, list) or not items:
         raise StrategyValidationError("exit_strategies must be a non-empty list")
     for i, item in enumerate(items):
@@ -275,6 +276,7 @@ def _check_inline_model(value: dict, *, catalog: PluginCatalog | None) -> None:
 
 
 def _check_tags(tags: Any) -> None:
+    """Validate that tags is a non-empty list of strings."""
     if not isinstance(tags, list) or not tags:
         raise StrategyValidationError("tags must be a non-empty list")
     for t in tags:

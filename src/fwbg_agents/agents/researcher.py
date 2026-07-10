@@ -65,6 +65,8 @@ class ResearcherError(RuntimeError):
 
 
 class ResearcherInput(BaseModel):
+    """Input payload for a Researcher agent run."""
+
     asset_class: str | None = None
     strategy_family_hint: str | None = None
     free_text_brief: str | None = None
@@ -76,6 +78,7 @@ def _render_prompt(
     input: ResearcherInput,
     available_plugins: dict | None = None,
 ) -> str:
+    """Render the researcher prompt template with input values and plugin catalog."""
     out = template
     out = out.replace("{{ asset_class }}", input.asset_class or "(asset-agnostic)")
     out = out.replace("{{ strategy_family_hint }}", input.strategy_family_hint or "(none)")
@@ -92,6 +95,8 @@ def _render_prompt(
 
 
 class Researcher:
+    """LLM-driven strategy-hypothesis generator agent."""
+
     def __init__(
         self,
         session: AsyncSession,
@@ -101,6 +106,7 @@ class Researcher:
         prompt_path: Path | None = None,
         available_plugins: dict | None = None,
     ):
+        """Initialize."""
         self.session = session
         self.model = model if model is not None else model_for("researcher")
         self.search_client = search_client
@@ -110,6 +116,7 @@ class Researcher:
         self.available_plugins = available_plugins
 
     async def run(self, input: ResearcherInput) -> ResearcherHypothesis:
+        """Run the researcher agent and return a validated hypothesis."""
         now = datetime.now(UTC)
         ar = AgentRun(
             agent_name="researcher",
