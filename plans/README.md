@@ -12,7 +12,7 @@ STOP conditions, and update your row when done.
 | Plan | Title | Priority | Effort | Depends on | Status |
 |------|-------|----------|--------|------------|--------|
 | 001  | Enforce stop-loss + fail-closed criteria gates in code | P1 | M | — | TODO |
-| 002  | Dependency manifest hygiene (pydantic-ai pin, anthropic, dead deps) | P1 | S | — | TODO |
+| 002  | Dependency manifest hygiene (pydantic-ai pin, anthropic, dead deps) | P1 | S | — | DONE (advisor/002-dependency-manifest-hygiene) |
 | 003  | CI quality gates (mypy clean, scripts linted, coverage measured) | P2 | M | 002 | TODO |
 | 004  | Interim hardening of the web→LLM→executable-code path | P1 | M | — | TODO |
 | 005  | Complete the plugin evaluator's invariants (NaN/inf, dtype) | P2 | M | 004 | TODO |
