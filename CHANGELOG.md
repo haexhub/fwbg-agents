@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.17.1](https://github.com/haexhub/fwbg-agents/compare/v0.17.0...v0.17.1) (2026-07-10)
+
+
+### Bug Fixes
+
+* **docker:** use python3.12 runtime to match builder ([c2dc0e8](https://github.com/haexhub/fwbg-agents/commit/c2dc0e893be83ea098b94dee3cdf0dc1430cef99))
+* **docker:** use python3.12 runtime to match builder ([086127a](https://github.com/haexhub/fwbg-agents/commit/086127a4da6dd8f63a15769ee8f920f89791b7ba))
+
 ## [0.17.0](https://github.com/haexhub/fwbg-agents/compare/v0.16.1...v0.17.0) (2026-07-10)
 
 
