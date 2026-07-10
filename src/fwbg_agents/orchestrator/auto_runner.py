@@ -104,7 +104,7 @@ def set_enabled(enabled: bool) -> None:
 
 
 def get_pipeline_min_proposed() -> int:
-    """Return the effective pipeline_min_proposed threshold, reading from disk or settings default."""
+    """Return the effective pipeline_min_proposed threshold from disk or settings default."""
     v = _read_config().get("pipeline_min_proposed")
     if v is None:
         return settings.pipeline_min_proposed
@@ -112,7 +112,7 @@ def get_pipeline_min_proposed() -> int:
 
 
 def set_pipeline_min_proposed(value: int) -> None:
-    """Set and persist the pipeline_min_proposed threshold (clamped to 0–20)."""
+    """Set and persist the pipeline_min_proposed threshold (clamped to 0-20)."""
     value = max(0, min(int(value), 20))
     cfg = _read_config()
     cfg["pipeline_min_proposed"] = value
