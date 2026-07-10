@@ -19,6 +19,8 @@ router = APIRouter(prefix="/agents/config", tags=["agents-config"])
 
 
 class AgentConfigUpdate(BaseModel):
+    """Payload for PUT /agents/config/{name} — model and prompt overrides."""
+
     # Provided value replaces the override; empty/None resets to the default.
     # The same payload carries both fields — the UI always submits both.
     model: str | None = None
@@ -26,6 +28,7 @@ class AgentConfigUpdate(BaseModel):
 
 
 def _view(name: str) -> dict[str, Any]:
+    """Build a config view dict for a single configurable agent."""
     return {
         "name": name,
         "model": llm.model_name_for(name),
@@ -39,6 +42,7 @@ def _view(name: str) -> dict[str, Any]:
 
 @router.get("")
 def list_agent_configs() -> dict[str, Any]:
+    """List configuration for all configurable agents with available models."""
     return {
         "agents": [_view(name) for name in agent_config.CONFIGURABLE_AGENTS],
         "available_models": list(llm.AVAILABLE_CLAUDE_MODELS),
@@ -47,6 +51,7 @@ def list_agent_configs() -> dict[str, Any]:
 
 @router.get("/{name}")
 def get_agent_config(name: str) -> dict[str, Any]:
+    """Retrieve configuration for a single configurable agent by name."""
     if name not in agent_config.CONFIGURABLE_AGENTS:
         raise HTTPException(404, f"unknown configurable agent: {name!r}")
     return _view(name)
@@ -54,6 +59,7 @@ def get_agent_config(name: str) -> dict[str, Any]:
 
 @router.put("/{name}")
 def put_agent_config(name: str, body: AgentConfigUpdate) -> dict[str, Any]:
+    """Update model and/or prompt override for a configurable agent."""
     if name not in agent_config.CONFIGURABLE_AGENTS:
         raise HTTPException(404, f"unknown configurable agent: {name!r}")
 

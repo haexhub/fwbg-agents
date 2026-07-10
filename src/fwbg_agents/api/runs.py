@@ -48,6 +48,7 @@ router = APIRouter(tags=["runs"])
 
 
 def _serialize_agent_run(ar: AgentRun) -> dict[str, Any]:
+    """Serialize an AgentRun ORM row to a response dict."""
     return {
         "id": ar.id,
         "agent_name": ar.agent_name,
@@ -68,6 +69,7 @@ def _serialize_agent_run(ar: AgentRun) -> dict[str, Any]:
 
 
 async def _run_runner_background(strategy_id: int) -> None:
+    """Run the backtest runner task in the background."""
     async with SessionLocal() as session:
         s = (await session.execute(select(Strategy).where(Strategy.id == strategy_id))).scalar_one()
         client = FwbgClient(base_url=settings.fwbg_api_url)
@@ -81,6 +83,7 @@ async def _run_runner_background(strategy_id: int) -> None:
 
 
 async def _run_analyst_background(strategy_id: int) -> None:
+    """Run the analyst task in the background."""
     async with SessionLocal() as session:
         s = (await session.execute(select(Strategy).where(Strategy.id == strategy_id))).scalar_one()
         client = FwbgClient(base_url=settings.fwbg_api_url)
@@ -138,6 +141,8 @@ async def get_runner_auto() -> dict[str, Any]:
 
 
 class RunnerAutoUpdate(BaseModel):
+    """Payload for PUT /runner/auto — fields not supplied are left unchanged."""
+
     enabled: bool | None = None
     pipeline_min_proposed: int | None = None
 
@@ -181,6 +186,8 @@ async def get_runner_queue(session: AsyncSession = Depends(get_session)) -> dict
 
 
 class QueueReorderBody(BaseModel):
+    """Ordered list of strategy IDs for PUT /runner/queue."""
+
     order: list[int]
 
 
@@ -229,6 +236,7 @@ async def post_strategy_run(
     background_tasks: BackgroundTasks,
     session: AsyncSession = Depends(get_session),
 ) -> dict[str, Any]:
+    """Kick off a backtest run for a strategy. Returns a scheduled AgentRun."""
     s = (
         await session.execute(select(Strategy).where(Strategy.id == strategy_id))
     ).scalar_one_or_none()
@@ -257,6 +265,7 @@ async def post_strategy_analyze(
     background_tasks: BackgroundTasks,
     session: AsyncSession = Depends(get_session),
 ) -> dict[str, Any]:
+    """Kick off the analyst against existing backtest results. Returns a scheduled AgentRun."""
     s = (
         await session.execute(select(Strategy).where(Strategy.id == strategy_id))
     ).scalar_one_or_none()
@@ -306,6 +315,7 @@ async def list_agent_runs(
 async def get_agent_run(
     agent_run_id: int, session: AsyncSession = Depends(get_session)
 ) -> dict[str, Any]:
+    """Retrieve a single agent run by ID."""
     ar = (
         await session.execute(select(AgentRun).where(AgentRun.id == agent_run_id))
     ).scalar_one_or_none()

@@ -82,6 +82,8 @@ ParamTypeLit = Literal[
 
 
 class ParamSpec(BaseModel):
+    """Schema for a single tunable parameter declared in a PluginPlan."""
+
     model_config = ConfigDict(extra="forbid", frozen=True)
     name: str = Field(min_length=1, pattern=r"^[a-z][a-z0-9_]*$")
     type: ParamTypeLit
@@ -95,6 +97,8 @@ class ParamSpec(BaseModel):
 
 
 class PluginPlan(BaseModel):
+    """Structured plan emitted by the PluginPlanner that drives the PluginImplementer."""
+
     model_config = ConfigDict(extra="forbid", frozen=True)
     slug: str = Field(min_length=2, max_length=64, pattern=SLUG_PATTERN)
     class_name: str = Field(min_length=2, pattern=r"^[A-Z][A-Za-z0-9]+$")
@@ -116,6 +120,8 @@ class PluginPlannerError(RuntimeError):
 
 @dataclass(frozen=True)
 class LlmCallMeta:
+    """Telemetry captured for a single LLM call (tokens, latency, model name)."""
+
     model_name: str
     input_tokens: int
     output_tokens: int
@@ -124,6 +130,8 @@ class LlmCallMeta:
 
 @dataclass(frozen=True)
 class PlannerRunResult:
+    """Bundle returned by PluginPlanner: the plan, its persisted path, and LLM telemetry."""
+
     plan: PluginPlan
     plan_path: Path
     llm: LlmCallMeta
@@ -142,6 +150,7 @@ def planner_model() -> Model:
 
 
 def _slug_in_catalog(slug: str, catalog: PluginCatalog) -> bool:
+    """Return True if the slug already exists in any category of the catalog."""
     return any(slug in slugs for slugs in catalog.by_category.values())
 
 
@@ -151,6 +160,7 @@ def _render_user_prompt(
     sidecar_json: str,
     examples: list[FwbgPluginExample],
 ) -> str:
+    """Render the planner user prompt from the strategy excerpt, sidecar, and reference examples."""
     examples_block = (
         "\n\n".join(
             f"## Example: {ex.slug} ({ex.path})\n```python\n{ex.source}\n```"
@@ -182,6 +192,7 @@ class PluginPlanner:
         model: Model | None = None,
         prompt_path: Path | None = None,
     ) -> None:
+        """Initialize."""
         self.model = model if model is not None else model_for("plugin_planner")
         self.prompt_path = prompt_path or prompt_path_for("plugin_planner", _PROMPT_PATH)
 
@@ -193,6 +204,7 @@ class PluginPlanner:
         live: LiveCatalog,
         client: FwbgClient | None = None,
     ) -> PlannerRunResult:
+        """Generate, validate, and persist a PluginPlan for the given strategy sidecar."""
         catalog = live.catalog
         sidecar_phase = sidecar.get("phase")
         if sidecar_phase not in _PHASE_MAPPING:

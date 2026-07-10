@@ -54,12 +54,16 @@ _PHASE_TO_BASE: dict[str, str] = {
 
 @dataclass(frozen=True)
 class ContractCheck:
+    """Result of the static AST contract gate check."""
+
     ok: bool
     msg: str = ""
 
 
 @dataclass(frozen=True)
 class ImplementerRunResult:
+    """Bundle returned by PluginImplementer: authored output, round count, and LLM telemetry."""
+
     output: PluginAuthorResult
     rounds_used: int
     llm_calls: tuple[LlmCallMeta, ...]
@@ -80,6 +84,7 @@ class PluginImplementerError(RuntimeError):
         last_err: str | None,
         llm_calls: tuple[LlmCallMeta, ...],
     ) -> None:
+        """Initialize."""
         super().__init__(message)
         self.last_code = last_code
         self.last_err = last_err
@@ -211,6 +216,7 @@ def _render_implementer_prompt(
     last_err: str | None,
     round_idx: int,
 ) -> str:
+    """Render the implementer user prompt, optionally including the previous failed attempt."""
     plan_block = json.dumps(plan.model_dump(), indent=2, default=str)
     prompt = (
         "## Implementation request\n"
@@ -246,6 +252,7 @@ class PluginImplementer:
         max_rounds: int | None = None,
         prompt_path: Path | None = None,
     ) -> None:
+        """Initialize."""
         self.model = model if model is not None else model_for("plugin_implementer")
         self.max_rounds = (
             max_rounds if max_rounds is not None else settings.plugin_impl_max_rounds
@@ -253,6 +260,7 @@ class PluginImplementer:
         self.prompt_path = prompt_path or prompt_path_for("plugin_implementer", _PROMPT_PATH)
 
     async def run_implement(self, *, plan: PluginPlan) -> ImplementerRunResult:
+        """Run the implement-gate loop and return the first result that passes all gates."""
         try:
             system_prompt = self.prompt_path.read_text(encoding="utf-8")
         except OSError as exc:

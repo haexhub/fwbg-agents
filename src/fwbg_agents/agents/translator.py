@@ -102,6 +102,7 @@ def _apply_plugin_op(payload: dict, op: dict) -> None:
         entries = pipeline.setdefault(section, [])
 
         def _idx(name: str) -> int | None:
+            """Return the index of the entry with matching name, or None."""
             for i, e in enumerate(entries):
                 if isinstance(e, dict) and e.get("name") == name:
                     return i
@@ -261,6 +262,7 @@ class _TranslatorOutput(BaseModel):
 
 
 def _render_prompt(template: str, *, hypothesis_json: str, known_plugins_json: str) -> str:
+    """Render the translator prompt template with hypothesis and plugin catalog JSON."""
     return template.replace("{{ hypothesis_json }}", hypothesis_json).replace(
         "{{ known_plugins_json }}", known_plugins_json
     )
@@ -295,6 +297,7 @@ def _catalog_prompt_dict(live: LiveCatalog) -> dict:
 def _write_spec_md(
     path: Path, *, strategy_slug: str, hypothesis: dict, strategy_json: dict
 ) -> None:
+    """Write a human-readable spec.md summarising the strategy and its hypothesis."""
     plugins = ", ".join(
         f"{k}={strategy_json.get(k)}"
         for k in ("pipeline", "model", "filters", "validation", "resources")
@@ -323,6 +326,8 @@ def _write_spec_md(
 
 
 class Translator:
+    """LLM-driven agent that turns a ResearcherHypothesis into a runnable fwbg strategy.json."""
+
     def __init__(
         self,
         session: AsyncSession,
@@ -331,6 +336,7 @@ class Translator:
         prompt_path: Path | None = None,
         fwbg_client: FwbgClient | None = None,
     ):
+        """Initialize."""
         self.session = session
         self.model = model if model is not None else model_for("translator")
         self.prompt_path = prompt_path or prompt_path_for("translator", _PROMPT_PATH)
@@ -339,6 +345,7 @@ class Translator:
         self.fwbg_client = fwbg_client
 
     async def run_fresh(self, strategy: Strategy) -> Path:
+        """Translate a hypothesis into strategy.json via LLM and validate the result."""
         now = datetime.now(UTC)
         ar = AgentRun(
             agent_name="translator",

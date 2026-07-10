@@ -32,6 +32,8 @@ DEFAULT_TIMEOUT_SECONDS = 30.0
 
 
 class TavilyClient:
+    """Async Tavily Search API client."""
+
     name = "tavily"
 
     def __init__(
@@ -41,12 +43,14 @@ class TavilyClient:
         http: httpx.AsyncClient | None = None,
         timeout: float = DEFAULT_TIMEOUT_SECONDS,
     ):
+        """Initialize."""
         self.api_key = api_key
         self.base_url = base_url.rstrip("/")
         self._http = http or httpx.AsyncClient(timeout=timeout)
         self._owns_http = http is None
 
     async def aclose(self) -> None:
+        """Close the underlying HTTP client if it was created internally."""
         if self._owns_http:
             await self._http.aclose()
 
@@ -58,6 +62,7 @@ class TavilyClient:
         session: AsyncSession | None = None,
         agent_run_id: int | None = None,
     ) -> list[SearchResult]:
+        """Execute a Tavily web search and return up to max_results results."""
         if not self.api_key:
             raise SearchUnavailableError("TAVILY_API_KEY is not set")
 
@@ -97,6 +102,7 @@ class TavilyClient:
 async def _log_quota(
     session: AsyncSession, agent_run_id: int, provider: str, latency_ms: int
 ) -> None:
+    """Persist a search-provider quota entry as an LlmCall row for accounting."""
     try:
         session.add(
             LlmCall(

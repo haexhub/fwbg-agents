@@ -71,16 +71,40 @@ class RunnerError(RuntimeError):
 
 
 class _FwbgClientProto(Protocol):
-    async def create_strategy(self, name: str, data: dict[str, Any]) -> dict[str, Any]: ...
-    async def start_run(self, strategy_name: str, **kwargs: Any) -> dict[str, Any]: ...
-    async def list_runs(self) -> list[dict[str, Any]]: ...
-    async def get_progress(self, run_id: str) -> dict[str, Any]: ...
-    async def get_run(self, run_id: str) -> dict[str, Any]: ...
-    async def ensure_data(self, symbol: str, **kwargs: Any) -> dict[str, Any]: ...
-    async def get_ensure_status(self, task_id: str) -> dict[str, Any]: ...
+    """Protocol for the fwbg HTTP client interface used by Runner."""
+
+    async def create_strategy(self, name: str, data: dict[str, Any]) -> dict[str, Any]:
+        """Create a new strategy in fwbg."""
+        ...
+
+    async def start_run(self, strategy_name: str, **kwargs: Any) -> dict[str, Any]:
+        """Start a backtest run for a strategy."""
+        ...
+
+    async def list_runs(self) -> list[dict[str, Any]]:
+        """List all fwbg runs."""
+        ...
+
+    async def get_progress(self, run_id: str) -> dict[str, Any]:
+        """Return live progress for a run."""
+        ...
+
+    async def get_run(self, run_id: str) -> dict[str, Any]:
+        """Return full details for a run."""
+        ...
+
+    async def ensure_data(self, symbol: str, **kwargs: Any) -> dict[str, Any]:
+        """Ensure OHLCV data is available for a symbol."""
+        ...
+
+    async def get_ensure_status(self, task_id: str) -> dict[str, Any]:
+        """Return the status of a data-ensure background task."""
+        ...
 
 
 class RunnerResult(BaseModel):
+    """Result of a successful Runner backtest attempt."""
+
     fwbg_run_id: str
     results_path: str
     iteration_dir: str
@@ -112,15 +136,19 @@ def _best_symbol_metrics(run: dict[str, Any]) -> dict[str, float]:
 
 
 class Runner:
+    """Deterministic agent that drives fwbg's backtest API."""
+
     def __init__(
         self,
         fwbg_client: _FwbgClientProto,
         session: AsyncSession,
     ):
+        """Initialize."""
         self.fwbg = fwbg_client
         self.session = session
 
     async def run(self, strategy: Strategy) -> RunnerResult:
+        """Execute backtests across universe attempts and return the first successful result."""
         now = datetime.now(UTC)
         ar = AgentRun(
             agent_name="runner",

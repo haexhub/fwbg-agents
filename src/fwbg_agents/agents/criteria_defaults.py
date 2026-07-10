@@ -41,6 +41,7 @@ _PAPER_TO_LIVE: dict[str, Any] = {
 
 
 def _criteria(max_drawdown: float) -> dict[str, Any]:
+    """Build a criteria dict with the given asset-class-specific max_drawdown threshold."""
     return {
         "backtest_to_paper": {
             "required_all": [
@@ -74,4 +75,5 @@ def default_criteria(asset_class: str) -> dict[str, Any] | None:
 
 
 def known_asset_classes() -> list[str]:
+    """Return a sorted list of all known asset class names."""
     return sorted(DEFAULT_CRITERIA_BY_CLASS.keys())
