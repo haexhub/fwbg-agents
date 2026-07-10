@@ -144,7 +144,7 @@ addopts = "--cov=fwbg_agents --cov-report=term-missing:skip-covered"
 Run the suite once and record the baseline percentage in the commit message.
 Do NOT add `--cov-fail-under` yet (baseline first, threshold later).
 
-**Verify**: `uv run pytest -q 2>&1 | tail -5` shows a TOTAL coverage line.
+**Verify**: `bash -c 'set -o pipefail; uv run pytest -q 2>&1 | tail -5'` shows a TOTAL coverage line (pipefail ensures test failures propagate through the pipe).
 
 ### Step 6: Enforce in CI
 
