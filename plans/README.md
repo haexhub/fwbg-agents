@@ -13,7 +13,7 @@ STOP conditions, and update your row when done.
 |------|-------|----------|--------|------------|--------|
 | 001  | Enforce stop-loss + fail-closed criteria gates in code | P1 | M | — | PARTIAL — Steps 3+4 DONE (fail-closed criteria + float-cast guard); Steps 1+2 REJECTED (stop-loss is order-level → fwbg pre-trade validator, not strategy_validator) (advisor/001-enforce-deterministic-safety-gates) |
 | 002  | Dependency manifest hygiene (pydantic-ai pin, anthropic, dead deps) | P1 | S | — | DONE (advisor/002-dependency-manifest-hygiene) |
-| 003  | CI quality gates (mypy clean, scripts linted, coverage measured) | P2 | M | 002 | TODO |
+| 003  | CI quality gates (mypy clean, scripts linted, coverage measured) | P2 | M | 002 | DONE (advisor/003-ci-quality-gates; coverage baseline 84%) |
 | 004  | Interim hardening of the web→LLM→executable-code path | P1 | M | — | DONE (advisor/004-harden-llm-code-path) |
 | 005  | Complete the plugin evaluator's invariants (NaN/inf, dtype) | P2 | M | 004 | TODO |
 

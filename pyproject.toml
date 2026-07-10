@@ -62,3 +62,4 @@ ignore = ["B008"]
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
+addopts = "--cov=fwbg_agents --cov-report=term-missing:skip-covered"
