@@ -76,6 +76,36 @@ def some_other_callable(df):
     return df
 """
 
+_ALL_NAN_CODE = """
+import pandas as pd
+
+def compute(df: pd.DataFrame, *, window: int = 14) -> pd.Series:
+    return df['close'] * float('nan')  # correct length, entirely NaN
+"""
+
+_INF_CODE = """
+import pandas as pd
+
+def compute(df: pd.DataFrame, *, window: int = 14) -> pd.Series:
+    s = df['close'].rolling(window, min_periods=1).mean()
+    s.iloc[0] = float('inf')
+    return s
+"""
+
+_OBJECT_DTYPE_CODE = """
+import pandas as pd
+
+def compute(df: pd.DataFrame, *, window: int = 14) -> pd.Series:
+    return pd.Series(['x'] * len(df), index=df.index)  # object dtype
+"""
+
+_WARMUP_NAN_CODE = """
+import pandas as pd
+
+def compute(df: pd.DataFrame, *, window: int = 14) -> pd.Series:
+    return df['close'].rolling(window).mean()  # leading warm-up NaNs, rest valid
+"""
+
 
 @pytest_asyncio.fixture
 async def db(tmp_path, monkeypatch):
@@ -189,6 +219,70 @@ async def test_evaluator_length_mismatch_stays_authored(db):
     assert payload["verification_run_id"] == vr_id
     assert len(payload["errors"]) >= 1
     assert any("length" in e["invariant_violated"].lower() for e in payload["errors"])
+
+
+async def _run_and_get(session, p):
+    vr_id = await PluginEvaluator(session).run(p)
+    vr = (
+        await session.execute(select(VerificationRun).where(VerificationRun.id == vr_id))
+    ).scalar_one()
+    return vr
+
+
+async def test_evaluator_all_nan_output_stays_authored(db):
+    session, settings = db
+    p = await _seed_plugin(
+        session, settings, slug="all-nan", code=_ALL_NAN_CODE,
+        scenarios=["trending_up"],
+    )
+    vr = await _run_and_get(session, p)
+    assert vr.status == "failed"
+    await session.refresh(p)
+    assert p.current_state == PluginState.AUTHORED.value
+    payload = json.loads(Path(vr.error_log_path).read_text())
+    assert any(e["invariant_violated"] == "non_finite_output" for e in payload["errors"])
+
+
+async def test_evaluator_inf_output_stays_authored(db):
+    session, settings = db
+    p = await _seed_plugin(
+        session, settings, slug="inf-out", code=_INF_CODE,
+        scenarios=["trending_up"],
+    )
+    vr = await _run_and_get(session, p)
+    assert vr.status == "failed"
+    await session.refresh(p)
+    assert p.current_state == PluginState.AUTHORED.value
+    payload = json.loads(Path(vr.error_log_path).read_text())
+    assert any(e["invariant_violated"] == "non_finite_output" for e in payload["errors"])
+
+
+async def test_evaluator_object_dtype_stays_authored(db):
+    session, settings = db
+    p = await _seed_plugin(
+        session, settings, slug="obj-dtype", code=_OBJECT_DTYPE_CODE,
+        scenarios=["trending_up"],
+    )
+    vr = await _run_and_get(session, p)
+    assert vr.status == "failed"
+    await session.refresh(p)
+    assert p.current_state == PluginState.AUTHORED.value
+    payload = json.loads(Path(vr.error_log_path).read_text())
+    assert any(e["invariant_violated"] == "wrong_dtype" for e in payload["errors"])
+
+
+async def test_evaluator_warmup_nans_pass(db):
+    """Leading warm-up NaNs (e.g. a rolling mean) are legitimate — the plugin
+    must still verify. Guards Invariant 2 against over-strictness."""
+    session, settings = db
+    p = await _seed_plugin(
+        session, settings, slug="warmup", code=_WARMUP_NAN_CODE,
+        scenarios=["trending_up"],
+    )
+    vr = await _run_and_get(session, p)
+    assert vr.status == "passed", vr.error_log_path
+    await session.refresh(p)
+    assert p.current_state == PluginState.VERIFIED.value
 
 
 async def test_evaluator_unknown_scenario_in_contract_fails(db):
