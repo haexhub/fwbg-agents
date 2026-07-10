@@ -100,6 +100,7 @@ unhandled `ValueError` instead of a clean rejection.
 - `src/fwbg_agents/orchestrator/lifecycle.py`
 - `tests/orchestrator/test_strategy_validator.py`
 - `tests/orchestrator/test_lifecycle.py`
+- `tests/orchestrator/test_paper_flow.py` — Step 3 updates tests that relied on the fail-open path
 
 **Out of scope** (do NOT touch, even though they look related):
 - `src/fwbg_agents/agents/prompts/translator.md` — the prompt guidance stays;
