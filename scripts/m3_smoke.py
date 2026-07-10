@@ -32,8 +32,7 @@ from sqlalchemy import select
 
 from fwbg_agents.main import app
 from fwbg_agents.persistence.database import SessionLocal
-from fwbg_agents.persistence.models import AgentRun, Strategy
-
+from fwbg_agents.persistence.models import AgentRun
 
 MODE = os.environ.get("MODE", "full")  # full | kickoff
 RUNNER_DEADLINE_S = float(os.environ.get("M3_SMOKE_RUNNER_TIMEOUT", "1800"))  # 30 min
@@ -55,7 +54,9 @@ async def _wait_for_agent_run(strategy_id: int, agent_name: str, deadline_s: flo
             if ar and ar.status in {"done", "failed"}:
                 return ar
         await asyncio.sleep(POLL_INTERVAL_S)
-    raise TimeoutError(f"agent {agent_name} for strategy {strategy_id} did not finish in {deadline_s}s")
+    raise TimeoutError(
+        f"agent {agent_name} for strategy {strategy_id} did not finish in {deadline_s}s"
+    )
 
 
 async def main() -> None:
@@ -98,7 +99,10 @@ async def main() -> None:
 
         print(f"      polling for Runner completion (deadline {RUNNER_DEADLINE_S:.0f}s)...")
         ar = await _wait_for_agent_run(strategy_id, "runner", RUNNER_DEADLINE_S)
-        print(f"      → runner agent_run={ar.id} status={ar.status} output={ar.output_artifact_path!r}")
+        print(
+            f"      → runner agent_run={ar.id} status={ar.status} "
+            f"output={ar.output_artifact_path!r}"
+        )
         if ar.status != "done":
             print(f"      runner failed; error={ar.error!r}", file=sys.stderr)
             return
@@ -106,15 +110,16 @@ async def main() -> None:
         print(f"[3/4] POST /strategies/{strategy_id}/analyze (LLM)")
         r = await client.post(f"/strategies/{strategy_id}/analyze")
         r.raise_for_status()
-        print(f"      → 202 scheduled")
+        print("      → 202 scheduled")
 
         ar = await _wait_for_agent_run(strategy_id, "analyst", ANALYST_DEADLINE_S)
         print(f"      → analyst agent_run={ar.id} status={ar.status}")
         if ar.status == "done":
             report_path = Path(ar.output_artifact_path)
             if report_path.is_file():
-                print(f"      analyst_report.md:")
-                print("\n".join("        " + l for l in report_path.read_text().splitlines()))
+                print("      analyst_report.md:")
+                report_lines = report_path.read_text().splitlines()
+                print("\n".join("        " + line for line in report_lines))
 
         print(f"[4/4] GET /strategies/{strategy_id} (final state)")
         r = await client.get(f"/strategies/{strategy_id}")
