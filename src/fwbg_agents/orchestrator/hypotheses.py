@@ -24,6 +24,8 @@ class HypothesisRejectedError(ValueError):
 
 
 class Source(BaseModel):
+    """A research source cited by the Researcher agent."""
+
     url: str
     title: str
     why_relevant: str
@@ -105,10 +107,12 @@ def validate_hypothesis(
 
 
 def _sanitize_family(strategy_family: str) -> str:
+    """Normalize a strategy family string to lowercase alphanumerics only."""
     return re.sub(r"[^a-z0-9]", "", strategy_family.lower())
 
 
 def _sanitize_asset_class(asset_class: str) -> str:
+    """Normalize an asset class string to lowercase alphanumerics only."""
     return re.sub(r"[^a-z0-9]", "", asset_class.lower())
 
 

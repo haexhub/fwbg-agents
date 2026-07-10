@@ -50,6 +50,8 @@ _SLUG_RE = re.compile(r"^[a-z0-9][a-z0-9_]{1,126}[a-z0-9]$")
 
 
 class StrategyCreate(BaseModel):
+    """Request body for POST /strategies — initial strategy definition."""
+
     slug: str = Field(min_length=3, max_length=128)
     asset_class: str = Field(min_length=1, max_length=32)
     strategy_family: str = Field(min_length=1, max_length=64)
@@ -59,6 +61,7 @@ class StrategyCreate(BaseModel):
     @field_validator("slug")
     @classmethod
     def _validate_slug(cls, v: str) -> str:
+        """Validate that the slug matches the required lowercase pattern."""
         if not _SLUG_RE.match(v):
             raise ValueError(
                 "slug must match [a-z0-9][a-z0-9_]*[a-z0-9] (3..128 chars)"
@@ -67,6 +70,7 @@ class StrategyCreate(BaseModel):
 
 
 def _serialize_strategy(s: Strategy, tags: list[str] | None = None) -> dict[str, Any]:
+    """Serialize a Strategy ORM row to a response dict."""
     return {
         "id": s.id,
         "slug": s.slug,
@@ -90,6 +94,7 @@ def _serialize_strategy(s: Strategy, tags: list[str] | None = None) -> dict[str,
 
 
 def _serialize_transition(t: Transition) -> dict[str, Any]:
+    """Serialize a Transition ORM row to a response dict."""
     return {
         "id": t.id,
         "entity_type": t.entity_type,
@@ -182,6 +187,7 @@ async def list_strategies(
 async def get_strategy(
     strategy_id: int, session: AsyncSession = Depends(get_session)
 ) -> dict[str, Any]:
+    """Retrieve a strategy by ID along with its tags and transition history."""
     s = (
         await session.execute(select(Strategy).where(Strategy.id == strategy_id))
     ).scalar_one_or_none()
@@ -261,6 +267,7 @@ async def get_strategy_hypothesis(
 async def list_strategy_transitions(
     strategy_id: int, session: AsyncSession = Depends(get_session)
 ) -> dict[str, Any]:
+    """List all lifecycle transitions for a strategy."""
     rows = (
         await session.execute(
             select(Transition)
@@ -337,6 +344,8 @@ async def get_paper_positions(
 
 
 class PaperAnalyzeResponse(BaseModel):
+    """Response body for POST /strategies/{id}/paper-analyze."""
+
     agent_run_id: int
     status: str
 
@@ -422,11 +431,15 @@ async def post_strategy_paper_analyze(
 
 
 class PromoteLiveBody(BaseModel):
+    """Request body for POST /strategies/{id}/promote-live — requires explicit human approval."""
+
     human_approval: bool
     operator_note: str | None = None
 
 
 class PromoteLiveResponse(BaseModel):
+    """Response body confirming a successful promotion to LIVE_TRADING."""
+
     strategy_id: int
     new_state: str
     agent_run_id: int
@@ -534,10 +547,14 @@ async def post_strategy_promote_live(
 
 
 class AbandonBody(BaseModel):
+    """Request body for POST /strategies/{id}/abandon — mandatory operator reason."""
+
     reason: str = Field(min_length=1, max_length=2000)
 
 
 class AbandonResponse(BaseModel):
+    """Response body confirming a successful transition to ABANDONED."""
+
     strategy_id: int
     slug: str
     new_state: str

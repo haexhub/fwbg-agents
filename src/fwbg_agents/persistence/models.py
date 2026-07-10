@@ -49,6 +49,8 @@ class StrategyState(enum.StrEnum):
 
 
 class PluginState(enum.StrEnum):
+    """Lifecycle states for a plugin authoring workflow."""
+
     SPECIFIED = "specified"
     AUTHORED = "authored"
     VERIFIED = "verified"
@@ -75,11 +77,15 @@ class PluginKind(enum.StrEnum):
 
 
 class EntityType(enum.StrEnum):
+    """Discriminator enum for Transition rows (strategy or plugin)."""
+
     STRATEGY = "strategy"
     PLUGIN = "plugin"
 
 
 class AgentRunStatus(enum.StrEnum):
+    """Execution status of an autonomous agent run."""
+
     PENDING = "pending"
     RUNNING = "running"
     DONE = "done"
@@ -118,6 +124,8 @@ class CalibrationRun(Base):
 
 
 class Strategy(Base):
+    """ORM model for a trading strategy and its lifecycle state."""
+
     __tablename__ = "strategy"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
@@ -171,6 +179,8 @@ class StrategyTag(Base):
 
 
 class Plugin(Base):
+    """ORM model for an agent-authored plugin and its lifecycle state."""
+
     __tablename__ = "plugin"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)

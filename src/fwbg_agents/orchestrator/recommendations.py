@@ -49,6 +49,7 @@ log = logging.getLogger(__name__)
 
 
 def _rec_to_dict(rec: AnalystRecommendation) -> dict[str, Any]:
+    """Serialize an AnalystRecommendation to a JSON-compatible dict."""
     return rec.model_dump(mode="json")  # type: ignore[union-attr]
 
 

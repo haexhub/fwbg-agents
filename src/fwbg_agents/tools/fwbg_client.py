@@ -51,22 +51,28 @@ class FwbgClientError(RuntimeError):
     """Raised when fwbg returns a non-2xx response."""
 
     def __init__(self, status: int, body: str):
+        """Initialize."""
         self.status = status
         self.body = body
         super().__init__(f"fwbg returned {status}: {body}")
 
 
 class FwbgClient:
+    """Async HTTP client for the fwbg REST API."""
+
     def __init__(self, base_url: str, http: httpx.AsyncClient | None = None):
+        """Initialize."""
         self.base_url = base_url
         self._http = http if http is not None else httpx.AsyncClient(base_url=base_url)
         self._owns_http = http is None
 
     async def aclose(self) -> None:
+        """Close the underlying HTTP client if it was created internally."""
         if self._owns_http:
             await self._http.aclose()
 
     async def _get(self, path: str) -> dict[str, Any]:
+        """Perform a GET request with retry on transient transport errors."""
         # GETs are idempotent — retry transient transport errors instead of
         # letting one dropped keep-alive connection abort a running backtest.
         for attempt in range(1, _GET_RETRIES + 1):
@@ -87,6 +93,7 @@ class FwbgClient:
         raise AssertionError("unreachable")
 
     async def _post(self, path: str, body: dict[str, Any]) -> dict[str, Any]:
+        """Perform a POST request and return the JSON response."""
         r = await self._http.post(path, json=body)
         if r.status_code // 100 != 2:
             raise FwbgClientError(r.status_code, r.text)
@@ -100,6 +107,7 @@ class FwbgClient:
         assets: list[str] | None = None,
         description: str | None = None,
     ) -> dict[str, Any]:
+        """Start a fwbg backtest run for a strategy (POST /api/runs/start)."""
         body: dict[str, Any] = {"strategy_name": strategy_name}
         if asset_classes is not None:
             body["asset_classes"] = asset_classes
@@ -189,9 +197,11 @@ class FwbgClient:
         return resp.get("items", resp) if isinstance(resp, dict) else resp
 
     async def get_progress(self, run_id: str) -> dict[str, Any]:
+        """Return live progress data for a run (GET /api/runs/{run_id}/progress)."""
         return await self._get(f"/api/runs/{run_id}/progress")
 
     async def get_run(self, run_id: str) -> dict[str, Any]:
+        """Return full run details (GET /api/runs/{run_id})."""
         return await self._get(f"/api/runs/{run_id}")
 
     async def ensure_data(
@@ -219,6 +229,7 @@ class FwbgClient:
         return await self._post("/api/data/ensure", body)
 
     async def get_ensure_status(self, task_id: str) -> dict[str, Any]:
+        """Poll the status of a data-ensure background task (GET /api/data/ensure/{task_id})."""
         return await self._get(f"/api/data/ensure/{task_id}")
 
     async def get_asset_classes(self) -> list[str]:

@@ -391,7 +391,7 @@ async def main() -> int:
                 file=sys.stderr,
             )
             return 1
-        print(f"       ✓ sidecar.decision=promote_paper_to_live")
+        print("       ✓ sidecar.decision=promote_paper_to_live")
 
         print("[m6b_smoke] [7/10] refresh Strategy + assert paper_analyst_promote_recommended=True")
         async with SessionLocal() as session:

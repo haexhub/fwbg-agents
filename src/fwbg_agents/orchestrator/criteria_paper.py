@@ -43,6 +43,8 @@ _DEFAULT_DIR = Path(__file__).resolve().parents[3] / "data" / "criteria" / "pape
 
 @dataclass
 class CriteriaEvalResult:
+    """Result of evaluating a strategy against paper-trading criteria."""
+
     passed: bool
     failures: list[str]
 
@@ -82,6 +84,7 @@ _OPERATORS: list[tuple[str, Callable[[float, float], bool]]] = [
 
 
 def _eval_comparator(metric: str, value: float, expr: str) -> bool:
+    """Evaluate a metric value against a threshold comparator expression."""
     expr = expr.strip()
     for op, fn in _OPERATORS:
         if expr.startswith(op):

@@ -57,11 +57,32 @@ The **fwbg backend is the single source of truth** for plugins.
   repo) served through it. Resume the spec backfill to populate them.
 - Dedup gate matches a new capability against API-served specs.
 
-### Step 3 — plugin creation moves into the backend
-- New plugins are authored/registered via the fwbg backend (written into fwbg's
-  plugin tree + registry refresh, or a register endpoint), so runtime-created
-  plugins appear in the one registry.
-- Retire the fwbg-agents DB-authored `merge_with_db` second source.
+### Step 3 — plugin creation lands in the backend (agreed design)
+The agent stays the builder; only the *landing* moves. Clear split:
+- **fwbg-agents = LLM/authoring** — keep the existing PluginPlanner (opus-4-8) →
+  PluginImplementer (opus-4-7) → deterministic PluginEvaluator (the real quality
+  gate). No LLM moves into fwbg.
+- **fwbg backend = registry / source of truth** — accepts the *verified* plugin.
+
+Mechanism (fast path): a fwbg register endpoint (e.g. `POST /api/plugins`) writes
+the verified plugin into a writable "agent-authored" bundle on the
+**fwbg-workspace volume** (survives redeploys), re-validates (runs the plugin's
+own tests), and refreshes the registry so it appears in `/api/plugins`
+immediately. This retires the fwbg-agents DB `merge_with_db` second source and
+keeps the autonomous loop fast (no git/PR/redeploy stall).
+
+Promotion (slow path, later, human-gated): a runtime plugin that proves itself in
+real backtests can be promoted into the fwbg **git repo** as a permanent,
+versioned, CI-checked plugin (a PR) — this is where git-level creation belongs,
+as a promotion of the proven, not the primary authoring path.
+
+Tradeoff: runtime plugins live only on the volume (not in git/image) until
+promoted — acceptable given a stable volume + the promotion step.
+
+Note: this changes the CLAUDE.md critical safety rule "Generated plugins live in
+`data/plugins/` only" — the implementing PR must update it (see
+`2026-07-09-plugin-creation-in-backend.md`, Deliverables); the "never
+auto-committed to the fwbg git repo" clause stays true.
 
 ## Consequences
 - **Hard dependency on a reachable fwbg API.** No local fallback → fwbg#20

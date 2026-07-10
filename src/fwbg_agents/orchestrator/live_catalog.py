@@ -16,6 +16,7 @@ composing a strategy against a stale catalog.
 from __future__ import annotations
 
 import logging
+from pathlib import Path
 from typing import Any
 
 from pydantic import BaseModel, Field
@@ -84,6 +85,7 @@ class LiveCatalog(BaseModel):
     from_api: bool = True
 
     def datasource_names(self) -> list[str]:
+        """Return the names of all configured fwbg datasources."""
         return [d["name"] for d in self.datasources if d.get("name")]
 
 
@@ -93,6 +95,7 @@ def researcher_summary(live: LiveCatalog) -> dict[str, Any]:
     write configs)."""
 
     def _slim(entries: list[dict[str, Any]]) -> list[dict[str, str]]:
+        """Reduce catalog entries to name/description pairs for the Researcher prompt."""
         return [
             {"name": e.get("name", ""), "description": e.get("description", "")}
             for e in entries
@@ -113,6 +116,7 @@ def researcher_summary(live: LiveCatalog) -> dict[str, Any]:
 
 
 def _detail(entry: dict[str, Any]) -> dict[str, Any]:
+    """Extract name, fqn, description, and default params from a catalog entry dict."""
     return {
         "name": entry.get("name", ""),
         # fqn is the API's stable plugin id; carried so the PluginPlanner can
@@ -141,6 +145,7 @@ async def fetch_live_catalog(
 
 
 async def _fetch_from_api(session: AsyncSession, fwbg: FwbgClient) -> LiveCatalog:
+    """Fetch and assemble the full LiveCatalog from the fwbg HTTP API."""
     plugins = await fwbg.get_plugins()
 
     by_category: dict[str, dict[str, PluginManifest]] = {}
@@ -157,7 +162,7 @@ async def _fetch_from_api(session: AsyncSession, fwbg: FwbgClient) -> LiveCatalo
             category=category,
             provenance="fwbg-core",
             version=str(p.get("version", "")),
-            source_path=".",
+            source_path=Path("."),
         )
         details.setdefault(category, []).append(_detail(p))
 

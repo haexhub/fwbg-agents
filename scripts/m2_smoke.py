@@ -8,7 +8,6 @@ import asyncio
 from datetime import UTC, datetime
 
 from httpx import ASGITransport, AsyncClient
-from sqlalchemy import select
 
 from fwbg_agents.main import app
 from fwbg_agents.orchestrator.lifecycle import (
@@ -42,13 +41,20 @@ async def main() -> None:
 
         # Happy path: proposed → backtested
         await transition_strategy(session, s, StrategyState.BACKTESTED, reason="smoke")
-        print(f"after backtested: state={s.current_state}, dir exists={strategy_dir(slug).is_dir()}")
+        print(
+            f"after backtested: state={s.current_state}, "
+            f"dir exists={strategy_dir(slug).is_dir()}"
+        )
 
         # Invalid skip (proposed → live blocked by edge table; we're already at
         # backtested, so test the equivalent: backtested → live should fail).
         try:
             await transition_strategy(
-                session, s, StrategyState.LIVE_TRADING, reason="bad", payload={"human_approval": True}
+                session,
+                s,
+                StrategyState.LIVE_TRADING,
+                reason="bad",
+                payload={"human_approval": True},
             )
         except InvalidTransition as e:
             print(f"invalid skip rejected as expected: {e}")

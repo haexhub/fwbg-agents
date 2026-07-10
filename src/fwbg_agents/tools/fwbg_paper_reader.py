@@ -31,6 +31,8 @@ log = logging.getLogger(__name__)
 
 
 class PaperTradeSummary(BaseModel):
+    """Aggregated paper-trading performance summary for a strategy."""
+
     strategy_slug: str
     sharpe_paper: float
     max_dd_paper: float  # 0.0..1.0
@@ -45,6 +47,8 @@ class PaperTradeSummary(BaseModel):
 
 
 class PaperPosition(BaseModel):
+    """A single open paper-trading position."""
+
     symbol: str
     side: Literal["buy", "sell"]
     quantity: float
@@ -57,6 +61,8 @@ class PaperPosition(BaseModel):
 
 
 class PaperPositions(BaseModel):
+    """All open paper-trading positions for a strategy at a point in time."""
+
     strategy_slug: str
     updated_at: datetime
     positions: list[PaperPosition]
@@ -66,6 +72,7 @@ class PaperPositions(BaseModel):
 
 
 def _account_dir(fwbg_data_dir: Path, strategy_slug: str) -> Path:
+    """Return the fwbg account-trades directory for a strategy slug."""
     return fwbg_data_dir / "account-trades" / strategy_slug
 
 
@@ -89,6 +96,7 @@ def _parse_trades_jsonl(path: Path) -> list[dict[str, Any]]:
 
 
 def _parse_dt(value: Any) -> datetime | None:
+    """Parse an ISO-8601 string to a timezone-aware datetime, or return None."""
     if not isinstance(value, str):
         return None
     try:

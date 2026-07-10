@@ -47,14 +47,17 @@ DEFAULT_PROMPT_PATHS: dict[str, Path] = {
 
 
 def _config_file() -> Path:
+    """Return the path to the agent configuration JSON file."""
     return settings.data_dir / "agent_configs.json"
 
 
 def _prompts_dir() -> Path:
+    """Return the directory where per-agent prompt override files are stored."""
     return settings.data_dir / "agent_prompts"
 
 
 def _load() -> dict[str, dict]:
+    """Load the agent config dict from disk, returning an empty dict on any error."""
     path = _config_file()
     if not path.is_file():
         return {}
@@ -66,6 +69,7 @@ def _load() -> dict[str, dict]:
 
 
 def _save(data: dict[str, dict]) -> None:
+    """Persist the agent config dict to disk as formatted JSON."""
     path = _config_file()
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(data, indent=2, sort_keys=True), encoding="utf-8")
@@ -75,11 +79,13 @@ def _save(data: dict[str, dict]) -> None:
 
 
 def get_model_override(agent_name: str) -> str | None:
+    """Return the persisted model override for an agent, or None if not set."""
     entry = _load().get(agent_name) or {}
     return entry.get("model") or None
 
 
 def set_model_override(agent_name: str, model: str | None) -> None:
+    """Persist a model override for an agent, or clear it if model is None."""
     data = _load()
     entry = dict(data.get(agent_name) or {})
     if model:
@@ -97,10 +103,12 @@ def set_model_override(agent_name: str, model: str | None) -> None:
 
 
 def prompt_override_path(agent_name: str) -> Path:
+    """Return the path to the on-disk prompt override file for an agent."""
     return _prompts_dir() / f"{agent_name}.md"
 
 
 def get_prompt_override(agent_name: str) -> str | None:
+    """Return the prompt override text for an agent, or None if none is set."""
     path = prompt_override_path(agent_name)
     if not path.is_file():
         return None
@@ -111,6 +119,7 @@ def get_prompt_override(agent_name: str) -> str | None:
 
 
 def set_prompt_override(agent_name: str, text: str | None) -> None:
+    """Write or delete the prompt override file for an agent."""
     path = prompt_override_path(agent_name)
     if text and text.strip():
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -120,6 +129,7 @@ def set_prompt_override(agent_name: str, text: str | None) -> None:
 
 
 def default_prompt(agent_name: str) -> str:
+    """Return the bundled default prompt for an agent, or empty string if missing."""
     path = DEFAULT_PROMPT_PATHS[agent_name]
     try:
         return path.read_text(encoding="utf-8")

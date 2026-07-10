@@ -14,12 +14,11 @@ dependencies = [
     "sqlalchemy>=2.0.36",
     "aiosqlite>=0.20.0",
     "alembic>=1.14.0",
-    "pydantic-ai>=0.0.14",
+    "pydantic-ai>=2.0,<3",
+    "anthropic>=0.40",
     "httpx>=0.28.0",
     "sse-starlette>=2.1.0",
-    "tavily-python>=0.5.0",
     "pyyaml>=6.0.2",
-    "structlog>=24.4.0",
     "numpy>=2.1.0",
     "pandas>=2.2.0",
     "pyarrow>=18.0.0",
@@ -33,6 +32,7 @@ dev = [
     "ruff>=0.8.0",
     "mypy>=1.13.0",
     "hypothesis>=6.118.0",
+    "types-pyyaml>=6.0.12.20260518",
 ]
 
 [build-system]
@@ -62,3 +62,4 @@ ignore = ["B008"]
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
+addopts = "--cov=fwbg_agents --cov-report=term-missing:skip-covered"

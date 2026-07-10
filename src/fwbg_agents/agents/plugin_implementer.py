@@ -52,14 +52,47 @@ _PHASE_TO_BASE: dict[str, str] = {
 }
 
 
+# Interim import/call gate for LLM-authored plugin code. This is NOT a sandbox:
+# plugin.py still runs in-process in the evaluator (see SEC-01 / Plan 004 — the
+# real fix is subprocess isolation). Until then we only permit the modules
+# legitimate plugins actually use (fwbg_sdk base classes + numpy/pandas + a few
+# safe stdlib helpers), which blocks the obvious escapes (os, sys, subprocess,
+# socket, shutil, pathlib, importlib, ctypes, pickle, …) by omission. The
+# rejection message names the allowlist so extending it is self-explaining.
+_ALLOWED_IMPORTS: frozenset[str] = frozenset(
+    {
+        "fwbg_sdk",  # plugin SDK: BaseIndicator / PluginPhase / helpers
+        "pandas",
+        "numpy",
+        "math",
+        "typing",
+        "__future__",
+        "dataclasses",
+    }
+)
+
+# Builtins that turn otherwise-static code into an arbitrary-code or
+# file-access vector. `__builtins__` is rejected as a bare name too, since
+# `getattr(__builtins__, "eval")` would sidestep the call check.
+# `globals`/`vars`/`locals` are blocked because `globals()["__builtins__"]`
+# reaches the same object via a string key and evades the name check.
+_DISALLOWED_CALLS: frozenset[str] = frozenset(
+    {"eval", "exec", "compile", "__import__", "open", "globals", "vars", "locals"}
+)
+
+
 @dataclass(frozen=True)
 class ContractCheck:
+    """Result of the static AST contract gate check."""
+
     ok: bool
     msg: str = ""
 
 
 @dataclass(frozen=True)
 class ImplementerRunResult:
+    """Bundle returned by PluginImplementer: authored output, round count, and LLM telemetry."""
+
     output: PluginAuthorResult
     rounds_used: int
     llm_calls: tuple[LlmCallMeta, ...]
@@ -80,6 +113,7 @@ class PluginImplementerError(RuntimeError):
         last_err: str | None,
         llm_calls: tuple[LlmCallMeta, ...],
     ) -> None:
+        """Initialize."""
         super().__init__(message)
         self.last_code = last_code
         self.last_err = last_err
@@ -126,6 +160,48 @@ def _base_names(node: ast.ClassDef) -> list[str]:
         elif isinstance(b, ast.Attribute):
             names.append(b.attr)
     return names
+
+
+def _check_imports_and_calls(tree: ast.Module) -> str | None:
+    """Reject non-allowlisted imports and dynamic-exec/file-access builtins.
+
+    Returns a rejection message, or None when the code is clean. Import roots
+    are compared on `name.split(".")[0]` so an allowlisted package covers its
+    submodules (e.g. `fwbg_sdk.indicators`)."""
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                root = alias.name.split(".")[0]
+                if root not in _ALLOWED_IMPORTS:
+                    return (
+                        f"disallowed import: {alias.name!r} — allowed roots: "
+                        f"{sorted(_ALLOWED_IMPORTS)} (interim gate pending sandbox)"
+                    )
+        elif isinstance(node, ast.ImportFrom):
+            # module is None for `from . import x`; reject relative imports too.
+            if node.module is None:
+                return (
+                    "disallowed import: relative imports are not permitted in "
+                    "plugin code (interim gate pending sandbox)"
+                )
+            root = node.module.split(".")[0]
+            if root not in _ALLOWED_IMPORTS:
+                return (
+                    f"disallowed import: {node.module!r} — allowed roots: "
+                    f"{sorted(_ALLOWED_IMPORTS)} (interim gate pending sandbox)"
+                )
+        elif isinstance(node, ast.Call) and isinstance(node.func, ast.Name):
+            if node.func.id in _DISALLOWED_CALLS:
+                return (
+                    f"disallowed call: {node.func.id}() is not permitted in "
+                    "plugin code (interim gate pending sandbox)"
+                )
+        elif isinstance(node, ast.Name) and node.id == "__builtins__":
+            return (
+                "disallowed reference: __builtins__ is not permitted in "
+                "plugin code (interim gate pending sandbox)"
+            )
+    return None
 
 
 def contract_check(code: str, plan: PluginPlan) -> ContractCheck:
@@ -201,6 +277,10 @@ def contract_check(code: str, plan: PluginPlan) -> ContractCheck:
                 ),
             )
 
+    import_or_call_err = _check_imports_and_calls(tree)
+    if import_or_call_err is not None:
+        return ContractCheck(ok=False, msg=import_or_call_err)
+
     return ContractCheck(ok=True)
 
 
@@ -211,6 +291,7 @@ def _render_implementer_prompt(
     last_err: str | None,
     round_idx: int,
 ) -> str:
+    """Render the implementer user prompt, optionally including the previous failed attempt."""
     plan_block = json.dumps(plan.model_dump(), indent=2, default=str)
     prompt = (
         "## Implementation request\n"
@@ -246,6 +327,7 @@ class PluginImplementer:
         max_rounds: int | None = None,
         prompt_path: Path | None = None,
     ) -> None:
+        """Initialize."""
         self.model = model if model is not None else model_for("plugin_implementer")
         self.max_rounds = (
             max_rounds if max_rounds is not None else settings.plugin_impl_max_rounds
@@ -253,6 +335,7 @@ class PluginImplementer:
         self.prompt_path = prompt_path or prompt_path_for("plugin_implementer", _PROMPT_PATH)
 
     async def run_implement(self, *, plan: PluginPlan) -> ImplementerRunResult:
+        """Run the implement-gate loop and return the first result that passes all gates."""
         try:
             system_prompt = self.prompt_path.read_text(encoding="utf-8")
         except OSError as exc:

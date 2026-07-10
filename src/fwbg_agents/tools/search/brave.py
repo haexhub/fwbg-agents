@@ -18,6 +18,8 @@ DEFAULT_TIMEOUT_SECONDS = 30.0
 
 
 class BraveClient:
+    """Async Brave Search API client."""
+
     name = "brave"
 
     def __init__(
@@ -27,12 +29,14 @@ class BraveClient:
         http: httpx.AsyncClient | None = None,
         timeout: float = DEFAULT_TIMEOUT_SECONDS,
     ):
+        """Initialize."""
         self.api_key = api_key
         self.base_url = base_url
         self._http = http or httpx.AsyncClient(timeout=timeout)
         self._owns_http = http is None
 
     async def aclose(self) -> None:
+        """Close the underlying HTTP client if it was created internally."""
         if self._owns_http:
             await self._http.aclose()
 
@@ -44,6 +48,7 @@ class BraveClient:
         session: AsyncSession | None = None,
         agent_run_id: int | None = None,
     ) -> list[SearchResult]:
+        """Execute a Brave web search and return up to max_results results."""
         if not self.api_key:
             raise SearchUnavailableError("BRAVE_API_KEY is not set")
 

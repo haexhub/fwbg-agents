@@ -40,17 +40,23 @@ from fwbg_agents.tools.llm import model_for, prompt_path_for
 
 
 class PromotePaperToLive(BaseModel):
+    """Decision to promote the paper-trading strategy to live trading."""
+
     decision: Literal["promote_paper_to_live"] = "promote_paper_to_live"
     rationale: str
 
 
 class AbandonPaper(BaseModel):
+    """Decision to abandon the paper-trading strategy."""
+
     decision: Literal["abandon_paper"] = "abandon_paper"
     rationale: str
     post_mortem_path: str | None = None
 
 
 class ContinueObservation(BaseModel):
+    """Decision to continue observing the paper-trading strategy."""
+
     decision: Literal["continue_observation"] = "continue_observation"
     rationale: str
     stale: bool = False
@@ -73,12 +79,15 @@ _PROMPT_PATH = Path(__file__).parent / "prompts" / "paper_analyst.md"
 
 
 class PaperAnalyst:
+    """LLM-driven agent that analyses paper-trading telemetry and emits a typed decision."""
+
     def __init__(
         self,
         *,
         model: Model | None = None,
         prompt_path: Path | None = None,
     ):
+        """Initialize."""
         self.model = model if model is not None else model_for("paper_analyst")
         self.prompt_path = (
             prompt_path
@@ -97,8 +106,9 @@ class PaperAnalyst:
         strategy_slug: str,
         data_dir: Path | None = None,
     ) -> PromotePaperToLive | AbandonPaper | ContinueObservation:
+        """Run the paper analyst synchronously and return a validated decision."""
         system_prompt = self.prompt_path.read_text()
-        agent = Agent(
+        agent = Agent(  # type: ignore[call-overload]  # pydantic-ai union output_type not matched by overloads
             self.model,
             output_type=PaperAnalystOutput,
             system_prompt=system_prompt,
@@ -130,6 +140,7 @@ class PaperAnalyst:
         strategy_slug: str,
         data_dir: Path | None,
     ) -> PromotePaperToLive | AbandonPaper | ContinueObservation:
+        """Apply deterministic hard rules to the LLM output and return the corrected decision."""
         if isinstance(out, PromotePaperToLive):
             if not paper_criteria_eval.passed:
                 raise PaperAnalystValidationError(

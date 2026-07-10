@@ -7,6 +7,8 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
+    """Application settings, loaded from environment variables and .env."""
+
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",
@@ -145,6 +147,16 @@ class Settings(BaseSettings):
         le=20,
         description="Max refinement rounds for the PluginImplementer gate-loop.",
     )
+    plugin_author_auto_max_attempts: int = Field(
+        default=2,
+        ge=1,
+        description=(
+            "Auto-retry cap for the add_indicator plugin-author chain "
+            "(plugin_planner attempts per strategy, DONE plus genuine "
+            "failures). Independent of runner_auto_max_attempts, which caps "
+            "backtest retries."
+        ),
+    )
 
     # Periodic run-janitor: a backstop for runs that hang in the live process
     # (as opposed to orphans from a restart, handled at startup). Runner-borne
@@ -172,14 +184,17 @@ class Settings(BaseSettings):
 
     @property
     def criteria_dir(self) -> Path:
+        """Return the directory path for backtest-to-paper criteria YAML files."""
         return self.data_dir / "criteria"
 
     @property
     def db_url(self) -> str:
+        """Return the async SQLite connection URL for aiosqlite."""
         return f"sqlite+aiosqlite:///{self.data_dir / 'state.db'}"
 
     @property
     def db_url_sync(self) -> str:
+        """Return the synchronous SQLite connection URL."""
         return f"sqlite:///{self.data_dir / 'state.db'}"
 
 

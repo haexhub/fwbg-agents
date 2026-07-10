@@ -15,6 +15,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 
 class SearchResult(BaseModel):
+    """A single result returned by a web search provider."""
+
     url: str
     title: str
     content_snippet: str
@@ -27,6 +29,8 @@ class SearchUnavailableError(RuntimeError):
 
 @runtime_checkable
 class SearchProvider(Protocol):
+    """Structural protocol implemented by all web search clients."""
+
     name: str
 
     async def search(
@@ -36,4 +40,6 @@ class SearchProvider(Protocol):
         max_results: int = 5,
         session: AsyncSession | None = None,
         agent_run_id: int | None = None,
-    ) -> list[SearchResult]: ...
+    ) -> list[SearchResult]:
+        """Execute a web search and return up to max_results results."""
+        ...

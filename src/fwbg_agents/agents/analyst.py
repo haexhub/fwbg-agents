@@ -90,16 +90,22 @@ class _IterBase(_RecBase):
 
 
 class Promote(_RecBase):
+    """Decision to promote the strategy to the next phase."""
+
     kind: Literal["promote"] = "promote"
 
 
 class Abandon(_RecBase):
+    """Decision to abandon the strategy with post-mortem details."""
+
     kind: Literal["abandon"] = "abandon"
     post_mortem_summary: str
     lessons: list[str]
 
 
 class ParamTune(BaseModel):
+    """One parameter to retune with a list of candidate values."""
+
     param: str
     new_range: list[float | int] = Field(
         description="3-7 candidate values for a grid search over this parameter."
@@ -107,6 +113,8 @@ class ParamTune(BaseModel):
 
 
 class TuneParams(_IterBase):
+    """Decision to retune one to three strategy parameters."""
+
     kind: Literal["tune_params"] = "tune_params"
     params: list[ParamTune] = Field(
         min_length=1,
@@ -132,6 +140,8 @@ class TuneParams(_IterBase):
 
 
 class ChangeExit(_IterBase):
+    """Decision to swap the strategy's exit plugin for a different catalog entry."""
+
     kind: Literal["change_exit"] = "change_exit"
     from_exit: str
     to_exit: str
@@ -215,6 +225,7 @@ _PHASE_ALIASES: dict[str, str] = {
 
 
 def _normalise_category(value: str) -> str:
+    """Normalise a raw category string to a valid AddIndicator.category enum member."""
     key = value.strip().lower()
     if key in _CATEGORY_VALUES:
         return key
@@ -226,6 +237,7 @@ def _normalise_category(value: str) -> str:
 
 
 def _normalise_phase(value: str) -> str:
+    """Normalise a raw phase string to a valid AddIndicator.phase enum member."""
     key = value.strip().lower()
     if key in _PHASE_VALUES:
         return key
@@ -267,11 +279,13 @@ class AddIndicator(_RecBase):
     @field_validator("category", mode="before")
     @classmethod
     def _coerce_category(cls, v: object) -> object:
+        """Coerce the raw category value before field validation."""
         return _normalise_category(v) if isinstance(v, str) else v
 
     @field_validator("phase", mode="before")
     @classmethod
     def _coerce_phase(cls, v: object) -> object:
+        """Coerce the raw phase value before field validation."""
         return _normalise_phase(v) if isinstance(v, str) else v
 
 
@@ -288,6 +302,7 @@ _PROMPT_PATH = Path(__file__).parent / "prompts" / "analyst.md"
 
 
 def _best_symbol_metrics_from_results(run: dict) -> dict:
+    """Return unified_metrics for the symbol with the highest Sharpe in a backtest run."""
     assets = run.get("assets") or {}
     best: tuple[float, dict] = (float("-inf"), {})
     for sym in assets.values():
@@ -406,6 +421,8 @@ def _render_catalog_details(live: LiveCatalog) -> str:
 
 
 class Analyst:
+    """LLM-driven agent that reads backtest results and emits a typed recommendation."""
+
     def __init__(
         self,
         session: AsyncSession,
@@ -414,12 +431,14 @@ class Analyst:
         prompt_path: Path | None = None,
         fwbg_client: FwbgClient | None = None,
     ):
+        """Initialize."""
         self.session = session
         self.model = model if model is not None else model_for("analyst")
         self.prompt_path = prompt_path or prompt_path_for("analyst", _PROMPT_PATH)
         self.fwbg_client = fwbg_client
 
     async def analyze(self, strategy: Strategy) -> AnalystRecommendation:
+        """Run the analyst agent on a backtested strategy and return a typed recommendation."""
         now = datetime.now(UTC)
         ar = AgentRun(
             agent_name="analyst",
@@ -472,7 +491,7 @@ class Analyst:
                 catalog_snapshot=catalog_snapshot,
             )
 
-            agent = Agent(
+            agent = Agent(  # type: ignore[call-overload]  # pydantic-ai union output_type not matched by overloads
                 self.model,
                 output_type=AnalystRecommendation,
                 system_prompt=system_prompt,

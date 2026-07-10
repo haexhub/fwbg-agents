@@ -31,7 +31,6 @@ from pydantic_ai.messages import ModelResponse, ToolCallPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from sqlalchemy import select
 
-from fwbg_agents.api import plugins as plugins_api
 from fwbg_agents.config import settings
 from fwbg_agents.main import app
 from fwbg_agents.orchestrator.lifecycle import strategy_dir
@@ -92,7 +91,9 @@ _CONTRACT = {
     "version": "v1",
     "inputs": [{"name": "ohlcv", "dtype": "ohlcv", "required": True, "description": ""}],
     "outputs": [{"name": "rsi", "dtype": "series", "length_invariant": "same_as_input"}],
-    "params": [{"name": "period", "dtype": "int", "default": 14, "min": 2, "max": 200, "description": ""}],
+    "params": [
+        {"name": "period", "dtype": "int", "default": 14, "min": 2, "max": 200, "description": ""}
+    ],
     "invariants": ["outputs[0].length == inputs[0].length"],
     "test_scenarios": [
         {"name": "trending_up", "data_path": "test_scenarios/trending_up.parquet"},

@@ -15,10 +15,14 @@ router = APIRouter(tags=["secrets"])
 
 
 class SecretsStatus(BaseModel):
+    """Response model for GET /agents/secrets — set/not-set flags per key."""
+
     keys: dict[str, dict[str, bool]]
 
 
 class SecretsUpdate(BaseModel):
+    """Request body for PUT /agents/secrets — values to store or clear."""
+
     tavily: str | None = None
     brave: str | None = None
 

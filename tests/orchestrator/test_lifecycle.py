@@ -122,8 +122,23 @@ async def test_strategy_proposed_to_backtested_succeeds(db_session, proposed_str
     assert rows[0].reason == "initial backtest submitted"
 
 
+def _seed_index_criteria(settings) -> None:
+    """Seed a permissive INDEX criteria YAML. check_backtest_criteria is now
+    fail-closed on a missing YAML, so tests that drive backtested → paper must
+    provide criteria the metrics can satisfy."""
+    settings.criteria_dir.mkdir(parents=True, exist_ok=True)
+    (settings.criteria_dir / "INDEX.yaml").write_text(
+        yaml.safe_dump({
+            "backtest_to_paper": {"required_all": [{"sharpe": ">= 1.5"}]},
+            "paper_to_live": {},
+        })
+    )
+
+
 async def test_strategy_full_happy_path(db_session, proposed_strategy):
     """proposed → backtested → paper_trading → live_trading."""
+    from fwbg_agents.config import settings
+    _seed_index_criteria(settings)
     await transition_strategy(
         db_session,
         proposed_strategy,
@@ -193,6 +208,8 @@ async def test_strategy_cannot_skip_directly_to_live(db_session, proposed_strate
 
 
 async def test_strategy_paper_to_live_requires_human_approval(db_session, proposed_strategy):
+    from fwbg_agents.config import settings
+    _seed_index_criteria(settings)
     await transition_strategy(
         db_session, proposed_strategy, StrategyState.BACKTESTED, reason=""
     )
@@ -285,6 +302,8 @@ async def test_abandon_persists_post_mortem_path(db_session, proposed_strategy, 
 
 async def test_abandon_from_paper_trading_is_allowed(db_session, proposed_strategy):
     """Soft-abandon must be reachable from every non-terminal state."""
+    from fwbg_agents.config import settings
+    _seed_index_criteria(settings)
     await transition_strategy(db_session, proposed_strategy, StrategyState.BACKTESTED, reason="")
     await transition_strategy(
         db_session,
@@ -423,16 +442,34 @@ def test_check_criteria_against_metrics_required_all(tmp_path, monkeypatch):
     assert any("sharpe" in f for f in failed)
 
 
-def test_check_criteria_passthrough_when_no_yaml(tmp_path, monkeypatch):
-    """If no criteria YAML exists for the asset class, the gate is open.
-
-    This keeps M2 usable before M1's calibrator has been run, and means
-    tests that don't care about criteria don't need to set them up.
+def test_missing_criteria_yaml_blocks_promotion(tmp_path, monkeypatch):
+    """No criteria YAML for the asset class → the backtested → paper gate is
+    CLOSED. A money-adjacent promotion must not pass unconditionally on a fresh
+    checkout; POST /calibrate must seed criteria first.
     """
     from fwbg_agents.config import settings
     from fwbg_agents.orchestrator.lifecycle import check_backtest_criteria
 
     monkeypatch.setattr(settings, "data_dir", tmp_path / "data")
     ok, failed = check_backtest_criteria(asset_class="CRYPTO", metrics={})
-    assert ok
-    assert failed == []
+    assert not ok
+    assert any("calibrate" in f for f in failed)
+
+
+def test_non_numeric_metric_fails_cleanly(tmp_path, monkeypatch):
+    """A malformed (non-numeric) metric yields a clean failure, not an
+    unhandled ValueError from a bare float() cast."""
+    from fwbg_agents.config import settings
+    from fwbg_agents.orchestrator.lifecycle import check_backtest_criteria
+
+    monkeypatch.setattr(settings, "data_dir", tmp_path / "data")
+    settings.criteria_dir.mkdir(parents=True)
+    (settings.criteria_dir / "INDEX.yaml").write_text(
+        yaml.safe_dump({
+            "backtest_to_paper": {"required_all": [{"sharpe": ">= 1.5"}]},
+            "paper_to_live": {},
+        })
+    )
+    ok, failed = check_backtest_criteria(asset_class="INDEX", metrics={"sharpe": "n/a"})
+    assert not ok
+    assert any("not numeric" in f for f in failed)

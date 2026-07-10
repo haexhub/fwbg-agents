@@ -29,6 +29,7 @@ log = logging.getLogger("fwbg_agents")
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
+    """Manage application startup and shutdown: clean up orphaned runs, start background tasks."""
     settings.data_dir.mkdir(parents=True, exist_ok=True)
     log.info("fwbg-agents starting (version=%s)", __version__)
     # A restart mid-run leaves AgentRuns stuck in pending/running, which

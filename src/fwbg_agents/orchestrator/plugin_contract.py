@@ -43,6 +43,8 @@ class PluginContractError(ValueError):
 
 
 class PluginContractInput(BaseModel):
+    """Declaration of a single input column required by a plugin."""
+
     model_config = ConfigDict(extra="forbid")
     name: str
     dtype: InputDtype
@@ -51,6 +53,8 @@ class PluginContractInput(BaseModel):
 
 
 class PluginContractOutput(BaseModel):
+    """Declaration of a single output column produced by a plugin."""
+
     model_config = ConfigDict(extra="forbid")
     name: str
     dtype: OutputDtype
@@ -58,6 +62,8 @@ class PluginContractOutput(BaseModel):
 
 
 class PluginContractParam(BaseModel):
+    """Declaration of a single configurable parameter for a plugin."""
+
     model_config = ConfigDict(extra="forbid")
     name: str
     dtype: ParamDtype
@@ -68,6 +74,8 @@ class PluginContractParam(BaseModel):
 
 
 class PluginContractScenario(BaseModel):
+    """A named test scenario defined in a plugin's contract.yaml."""
+
     model_config = ConfigDict(extra="forbid")
     name: str
     data_path: str
@@ -75,6 +83,8 @@ class PluginContractScenario(BaseModel):
 
 
 class PluginContract(BaseModel):
+    """Parsed and validated representation of a plugin's contract.yaml."""
+
     model_config = ConfigDict(extra="forbid")
 
     name: str
@@ -88,6 +98,7 @@ class PluginContract(BaseModel):
 
     @model_validator(mode="after")
     def _indicator_needs_invariants(self) -> PluginContract:
+        """Validate that indicator contracts declare at least one invariant."""
         if self.kind == "indicator" and not self.invariants:
             raise ValueError(
                 "indicator contracts must declare at least one invariant — "

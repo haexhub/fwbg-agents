@@ -44,6 +44,8 @@ _CATEGORY_TO_BUNDLE_DIR: dict[str, str] = {
 
 
 class SyntaxCheck(BaseModel):
+    """Result of a Python syntax validation check."""
+
     model_config = ConfigDict(frozen=True)
     ok: bool
     line: int | None = None
@@ -51,6 +53,8 @@ class SyntaxCheck(BaseModel):
 
 
 class FwbgPluginExample(BaseModel):
+    """One fwbg plugin source example fetched from the live catalog."""
+
     model_config = ConfigDict(frozen=True)
     slug: str
     path: str

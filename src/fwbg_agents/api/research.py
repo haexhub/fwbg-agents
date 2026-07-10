@@ -42,6 +42,7 @@ from fwbg_agents.tools.secrets import get_secret
 
 
 def _research_input_path(agent_run_id: int) -> Path:
+    """Return the path for persisting a research run's input JSON."""
     p = settings.data_dir / "research_inputs"
     p.mkdir(parents=True, exist_ok=True)
     return p / f"{agent_run_id}.json"
@@ -57,6 +58,7 @@ router = APIRouter(tags=["research"])
 
 
 async def _run_research_background(input: ResearcherInput, agent_run_id: int) -> None:
+    """Run the research-and-translate flow in the background."""
     async with SessionLocal() as session:
         ar = (
             await session.execute(select(AgentRun).where(AgentRun.id == agent_run_id))
@@ -128,6 +130,7 @@ async def _run_research_background(input: ResearcherInput, agent_run_id: int) ->
 
 
 async def _run_reiterate_background(parent_id: int, agent_run_id: int) -> None:
+    """Run the reiterate flow in the background."""
     async with SessionLocal() as session:
         ar = (
             await session.execute(select(AgentRun).where(AgentRun.id == agent_run_id))

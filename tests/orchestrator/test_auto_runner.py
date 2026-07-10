@@ -25,6 +25,7 @@ async def env(tmp_path, monkeypatch):
 
     monkeypatch.setattr(settings, "data_dir", tmp_path / "data")
     monkeypatch.setattr(settings, "runner_auto_max_attempts", 2)
+    monkeypatch.setattr(settings, "plugin_author_auto_max_attempts", 2)
 
     engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path}/auto.db")
     async with engine.begin() as conn:
@@ -50,10 +51,11 @@ async def env(tmp_path, monkeypatch):
             (it_dir / "strategy.json").write_text(json.dumps({"name": slug}))
         return sid
 
-    async def add_run(agent: str, status: AgentRunStatus, strategy_id: int | None = None):
+    async def add_run(agent: str, status: AgentRunStatus, strategy_id: int | None = None,
+                      error: str | None = None):
         async with Session() as s:
             now = datetime.now(UTC)
-            s.add(AgentRun(agent_name=agent, status=status.value,
+            s.add(AgentRun(agent_name=agent, status=status.value, error=error,
                            strategy_id=strategy_id, started_at=now, created_at=now))
             await s.commit()
 
@@ -206,15 +208,19 @@ async def test_pick_next_backtested_unanalyzed(env):
         assert await auto_runner.pick_next_backtested_unanalyzed(session) == bt
 
 
-async def test_pick_next_add_indicator_pending(env):
+def _seed_sidecar(slug: str) -> None:
     from fwbg_agents.config import settings
 
+    (
+        settings.data_dir / "strategies" / slug / "iteration_001"
+        / "add_indicator_request.json"
+    ).write_text(json.dumps({"capability": "pivot zones", "phase": "indicators"}))
+
+
+async def test_pick_next_add_indicator_pending(env):
     Session, make_strategy, add_run = env
     sid = await make_strategy("orb__forex__ai1", state=StrategyState.BACKTESTED)
-    (settings.data_dir / "strategies" / "orb__forex__ai1" / "iteration_001"
-     / "add_indicator_request.json").write_text(
-        json.dumps({"capability": "pivot zones", "phase": "indicators"})
-    )
+    _seed_sidecar("orb__forex__ai1")
 
     async with Session() as session:
         assert await auto_runner.pick_next_add_indicator_pending(session) == sid
@@ -231,14 +237,48 @@ async def test_pick_next_add_indicator_pending(env):
 
     # A successful plugin_implementer also closes the budget (chain completed).
     sid2 = await make_strategy("orb__forex__ai1b", state=StrategyState.BACKTESTED)
-    (settings.data_dir / "strategies" / "orb__forex__ai1b" / "iteration_001"
-     / "add_indicator_request.json").write_text(
-        json.dumps({"capability": "pivot zones", "phase": "indicators"})
-    )
+    _seed_sidecar("orb__forex__ai1b")
     await add_run("plugin_planner", AgentRunStatus.DONE, sid2)
     await add_run("plugin_implementer", AgentRunStatus.DONE, sid2)
     async with Session() as session:
         assert await auto_runner.pick_next_add_indicator_pending(session) is None
+
+
+async def test_pick_next_add_indicator_skips_in_flight_chain(env):
+    """A chain that is RUNNING or PENDING blocks the auto pick — two chains
+    must never race on the same sidecar."""
+    Session, make_strategy, add_run = env
+    sid = await make_strategy("orb__forex__ai3", state=StrategyState.BACKTESTED)
+    _seed_sidecar("orb__forex__ai3")
+
+    for status in (AgentRunStatus.RUNNING, AgentRunStatus.PENDING):
+        for agent in ("plugin_planner", "plugin_implementer", "plugin_author_flow"):
+            await add_run(agent, status, sid)
+            async with Session() as session:
+                assert await auto_runner.pick_next_add_indicator_pending(session) is None
+            async with Session() as s:
+                await s.execute(
+                    AgentRun.__table__.delete().where(AgentRun.strategy_id == sid)
+                )
+                await s.commit()
+
+    async with Session() as session:
+        assert await auto_runner.pick_next_add_indicator_pending(session) == sid
+
+
+async def test_pick_next_add_indicator_ignores_orphaned_failures(env):
+    """Orphaned planner failures (service restarts) were not the strategy's
+    fault and must not consume the auto plugin-author budget."""
+    from fwbg_agents.orchestrator.run_janitor import ORPHAN_ERROR
+
+    Session, make_strategy, add_run = env
+    sid = await make_strategy("orb__forex__ai4", state=StrategyState.BACKTESTED)
+    _seed_sidecar("orb__forex__ai4")
+
+    await add_run("plugin_planner", AgentRunStatus.FAILED, sid, error=ORPHAN_ERROR)
+    await add_run("plugin_planner", AgentRunStatus.FAILED, sid, error=ORPHAN_ERROR)
+    async with Session() as session:
+        assert await auto_runner.pick_next_add_indicator_pending(session) == sid
 
 
 async def test_pick_next_add_indicator_requires_sidecar(env):

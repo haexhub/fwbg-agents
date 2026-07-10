@@ -40,7 +40,6 @@ from fwbg_agents.orchestrator.strategy_validator import (
 from fwbg_agents.persistence.database import SessionLocal
 from fwbg_agents.persistence.models import AgentRun, LlmCall, Strategy
 
-
 DEADLINE_S = float(os.environ.get("M4_SMOKE_DEADLINE", "300"))  # 5 min
 POLL_INTERVAL_S = 3.0
 
