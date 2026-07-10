@@ -131,6 +131,19 @@ class Settings(BaseSettings):
             "and should promote or abandon."
         ),
     )
+    min_iterations_before_abandon: int = Field(
+        default=3,
+        ge=1,
+        le=20,
+        description=(
+            "Hard minimum number of iterations a strategy must go through before "
+            "the orchestrator honours an `abandon` recommendation. If the Analyst "
+            "emits `abandon` and the strategy is below this depth, the orchestrator "
+            "overrides it with `tune_params` using the Analyst's own reasoning as "
+            "the change description, forcing at least one more iteration. Set to 1 "
+            "to disable the guard (abandon always honoured)."
+        ),
+    )
 
     # Plugin authoring (M5d: Planner/Implementer split)
     plugin_planner_model: str = Field(

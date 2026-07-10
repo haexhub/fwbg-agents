@@ -30,6 +30,7 @@ from sqlalchemy import and_, func, not_, nulls_last, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from fwbg_agents.agents.analyst import (
+    Abandon,
     Analyst,
     ChangeExit,
     ModifyPlugins,
@@ -383,6 +384,42 @@ async def abandon_capped_proposed(session: AsyncSession) -> int:
     return abandoned
 
 
+def _synthesize_abandon_override_sidecar(slug: str, analyst_reasoning: str) -> dict:
+    """Build a minimal tune_params sidecar from exit strategy params.
+
+    Called when the Analyst recommends abandon before min_iterations_before_abandon.
+    Extracts up to 3 numeric params from exit_strategies[0] and widens their
+    ranges by ±30% so the next iteration explores the neighbourhood.
+    Raises ValueError if no tunable params are found.
+    """
+    strat_path = strategy_dir(slug) / "iteration_001" / "strategy.json"
+    strat = json.loads(strat_path.read_text())
+    exits = strat.get("exit_strategies", [])
+    exit_params = {
+        k: v
+        for k, v in (exits[0].get("params", {}) if exits else {}).items()
+        if isinstance(v, (int, float))
+    }
+    if not exit_params:
+        raise ValueError(f"no numeric exit params to tune for {slug}")
+    tune_params = []
+    for param, val in list(exit_params.items())[:3]:
+        if val == 0:
+            new_range = [0.5, 1.0, 1.5]
+        else:
+            new_range = [round(val * 0.7, 4), round(val, 4), round(val * 1.3, 4)]
+        tune_params.append({"param": param, "new_range": new_range})
+    return {
+        "kind": "tune_params",
+        "params": tune_params,
+        "confidence": 0.3,
+        "reasoning": (
+            f"Early-abandon override (depth < min_iterations_before_abandon={settings.min_iterations_before_abandon}). "
+            f"Analyst reasoning: {analyst_reasoning}"
+        ),
+    }
+
+
 async def _analyze_and_apply(session: AsyncSession, sid: int) -> None:
     """Run the Analyst on a backtested strategy, apply the recommendation, and
     queue an iteration for tune/change-exit. Shared by the fresh-backtest path
@@ -408,6 +445,36 @@ async def _analyze_and_apply(session: AsyncSession, sid: int) -> None:
             for k, v in _best_symbol_metrics_from_results(results).items()
             if isinstance(v, (int, float))
         }
+
+    # Hard guard: if Analyst recommends abandon before min_iterations_before_abandon,
+    # override with a synthetic tune_params iteration so the strategy family gets
+    # at least one chance to improve before being discarded.
+    if isinstance(rec, Abandon):
+        depth = await generation_depth(session, s)
+        if depth < settings.min_iterations_before_abandon:
+            log.info(
+                "runner auto mode: overriding early abandon for strategy %s "
+                "(depth=%d < min_iterations_before_abandon=%d) — forcing tune_params",
+                s.slug, depth, settings.min_iterations_before_abandon,
+            )
+            try:
+                sidecar_data = _synthesize_abandon_override_sidecar(s.slug, rec.reasoning)
+                iteration_dir = strategy_dir(s.slug) / "iteration_001"
+                iteration_dir.mkdir(parents=True, exist_ok=True)
+                (iteration_dir / "analyst_recommendation.json").write_text(
+                    json.dumps(sidecar_data, indent=2)
+                )
+                child_id = await reiterate(session, sid)
+                log.info(
+                    "runner auto mode: early-abandon override — iteration queued as strategy %d (parent %s)",
+                    child_id, s.slug,
+                )
+                return
+            except Exception:
+                log.exception(
+                    "runner auto mode: early-abandon override failed for %s — falling through to abandon",
+                    s.slug,
+                )
 
     try:
         await validate_and_apply(session, s, rec, metrics=metrics)
