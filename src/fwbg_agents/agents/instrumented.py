@@ -132,24 +132,11 @@ async def run_instrumented[OutputT](
     if result is None:  # defensive: a completed iter always sets .result
         raise RuntimeError(f"agent run {agent_run_id} produced no result")
 
-    # Persist the full pydantic-ai message history (system prompt, tool calls,
-    # tool results, final structured output) as a native JSON transcript.
-    try:
-        d = run_dir(agent_run_id)
-        d.mkdir(parents=True, exist_ok=True)
-        (d / f"transcript_{round_idx:03d}.json").write_bytes(
-            ModelMessagesTypeAdapter.dump_json(result.all_messages())
-        )
-    except OSError as exc:
-        log.warning("run %s: failed to write transcript: %s", agent_run_id, exc)
-
-    usage = result.usage
-    emit_run_event(
+    # Persist the transcript + emit llm_round_done (shared with the sync path).
+    persist_transcript(
         agent_run_id,
-        "llm_round_done",
-        round=round_idx,
-        model=getattr(getattr(agent, "model", None), "model_name", "unknown"),
-        input_tokens=int(getattr(usage, "input_tokens", 0) or 0),
-        output_tokens=int(getattr(usage, "output_tokens", 0) or 0),
+        result,
+        round_idx=round_idx,
+        model_name=getattr(getattr(agent, "model", None), "model_name", "unknown"),
     )
     return result

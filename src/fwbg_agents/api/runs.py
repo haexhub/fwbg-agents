@@ -312,11 +312,18 @@ _ARTIFACT_MAX_BYTES = 512 * 1024
 
 
 def _artifact_info(kind: str, path: str | None) -> dict[str, Any]:
-    """Presence + size metadata for an input/output artifact path."""
+    """Presence + size metadata for an input/output artifact path.
+
+    Only paths that resolve under ``settings.data_dir`` are stat-ed; out-of-tree
+    paths stored on the row report ``exists=False`` so the detail endpoint never
+    leaks their existence/size (matches the ``/artifact`` content guard).
+    """
     info: dict[str, Any] = {"kind": kind, "path": path, "exists": False, "size": None}
     if not path:
         return info
-    p = Path(path)
+    p = Path(path).resolve()
+    if not p.is_relative_to(settings.data_dir.resolve()):
+        return info
     if p.is_file():
         info["exists"] = True
         info["size"] = p.stat().st_size
@@ -435,11 +442,16 @@ async def get_agent_run_artifact(
     if not path.is_file():
         raise HTTPException(404, f"{kind} artifact file not found")
     size = path.stat().st_size
-    truncated = size > _ARTIFACT_MAX_BYTES
+    # Read at most the cap in bytes (never the whole file), then decode — so a
+    # huge artifact can't blow up memory and `truncated` is byte-accurate even
+    # for multibyte UTF-8 (char-slicing the cap could exceed the byte budget).
     try:
-        content = path.read_text(encoding="utf-8", errors="replace")[:_ARTIFACT_MAX_BYTES]
+        with path.open("rb") as fh:
+            head = fh.read(_ARTIFACT_MAX_BYTES + 1)
     except OSError as exc:
         raise HTTPException(500, f"artifact unreadable: {exc}") from exc
+    truncated = len(head) > _ARTIFACT_MAX_BYTES
+    content = head[:_ARTIFACT_MAX_BYTES].decode("utf-8", errors="replace")
     return {
         "kind": kind,
         "path": str(path),

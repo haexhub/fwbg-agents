@@ -59,9 +59,13 @@ async def start_agent_run(
     if commit:
         await session.commit()
         await session.refresh(ar)
+        emit_run_event(ar.id, "agent_run_started", agent_name=agent_name)
     else:
+        # commit=False (promote_live): the row isn't durable yet and the caller
+        # owns the commit. Skip the timeline event — emitting before the commit
+        # would leave an orphaned event (and risk SQLite row-id reuse) if the
+        # caller's transaction rolls back.
         await session.flush()
-    emit_run_event(ar.id, "agent_run_started", agent_name=agent_name)
     return ar
 
 

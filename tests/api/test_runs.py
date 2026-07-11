@@ -341,3 +341,26 @@ async def test_get_artifact_happy_and_traversal_guard(runs_client):
 
     blocked = await client.get(f"/agents/runs/{ar.id}/artifact?kind=input")
     assert blocked.status_code == 403
+
+
+async def test_detail_artifact_metadata_hides_out_of_tree_paths(runs_client):
+    """The detail endpoint must not leak existence/size of out-of-tree paths."""
+    client, session, _, _, _ = runs_client
+    now = datetime.now(UTC)
+    ar = AgentRun(
+        agent_name="researcher",
+        status=AgentRunStatus.DONE.value,
+        input_artifact_path="/etc/passwd",  # exists on disk, but outside data_dir
+        started_at=now,
+        ended_at=now,
+        created_at=now,
+    )
+    session.add(ar)
+    await session.commit()
+    await session.refresh(ar)
+
+    r = await client.get(f"/agents/runs/{ar.id}")
+    assert r.status_code == 200, r.text
+    inp = next(a for a in r.json()["artifacts"] if a["kind"] == "input")
+    assert inp["exists"] is False
+    assert inp["size"] is None
