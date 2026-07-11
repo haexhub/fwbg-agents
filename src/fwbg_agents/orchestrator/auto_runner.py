@@ -302,13 +302,18 @@ async def _author_and_reiterate(session: AsyncSession, sid: int) -> None:
         )
         return
 
+    eval_ar = await start_agent_run(
+        session, agent_name="plugin_evaluator", plugin_id=plugin_id
+    )
     try:
-        await evaluate_plugin(session, plugin_id)
-    except Exception:
+        await evaluate_plugin(session, plugin_id, agent_run_id=eval_ar.id)
+    except Exception as exc:
         log.exception(
             "runner auto mode: plugin evaluation crashed for plugin %s", plugin_id
         )
+        await fail_agent_run(session, eval_ar, exc)
         return
+    await finish_agent_run(session, eval_ar, status=AgentRunStatus.DONE, plugin_id=plugin_id)
 
     plugin = (
         await session.execute(select(Plugin).where(Plugin.id == plugin_id))
