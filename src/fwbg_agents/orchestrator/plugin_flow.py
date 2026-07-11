@@ -43,6 +43,7 @@ from fwbg_agents.persistence.agent_runs import (
 from fwbg_agents.persistence.agent_runs import (
     start_agent_run as _start_agent_run,
 )
+from fwbg_agents.persistence.database import SessionLocal
 from fwbg_agents.persistence.models import (
     AgentRun,
     AgentRunStatus,
@@ -52,6 +53,7 @@ from fwbg_agents.persistence.models import (
     Strategy,
     StrategyState,
 )
+from fwbg_agents.run_events import emit_run_event
 from fwbg_agents.tools.fwbg_client import FwbgClient
 
 log = logging.getLogger(__name__)
@@ -328,7 +330,9 @@ async def author_plugin_from_strategy(
     return plugin.id
 
 
-async def evaluate_plugin(session: AsyncSession, plugin_id: int) -> int:
+async def evaluate_plugin(
+    session: AsyncSession, plugin_id: int, *, agent_run_id: int | None = None
+) -> int:
     """Run PluginEvaluator for a plugin in AUTHORED state.
     Returns the verification_run_id.
 
@@ -349,16 +353,18 @@ async def evaluate_plugin(session: AsyncSession, plugin_id: int) -> int:
         )
 
     evaluator = PluginEvaluator(session)
-    vr_id = await evaluator.run(plugin)
+    vr_id = await evaluator.run(plugin, agent_run_id=agent_run_id)
 
     await session.refresh(plugin)
     if plugin.current_state == PluginState.VERIFIED.value:
-        await _register_verified_plugin_in_fwbg(plugin)
+        await _register_verified_plugin_in_fwbg(plugin, agent_run_id=agent_run_id)
 
     return vr_id
 
 
-async def _register_verified_plugin_in_fwbg(plugin: Plugin) -> None:
+async def _register_verified_plugin_in_fwbg(
+    plugin: Plugin, *, agent_run_id: int | None = None
+) -> None:
     """Ship a VERIFIED plugin to fwbg's registry via POST /api/plugins.
 
     Best-effort: logs a warning on failure rather than raising, so a transient
@@ -372,6 +378,12 @@ async def _register_verified_plugin_in_fwbg(plugin: Plugin) -> None:
             "register_plugin: cannot read plugin.py for %s at %s: %s",
             plugin.slug, plugin_code_path, exc,
         )
+        if agent_run_id is not None:
+            emit_run_event(
+                agent_run_id, "plugin_registration_failed",
+                slug=plugin.slug,
+                error=str(exc),
+            )
         return
 
     spec_md = ""
@@ -392,11 +404,23 @@ async def _register_verified_plugin_in_fwbg(plugin: Plugin) -> None:
             "register_plugin: %s registered in fwbg as agent-authored:%s",
             plugin.slug, plugin.slug,
         )
+        if agent_run_id is not None:
+            emit_run_event(
+                agent_run_id, "plugin_registered_in_fwbg",
+                fqn=f"agent-authored:{plugin.slug}",
+                slug=plugin.slug,
+            )
     except Exception as exc:
         log.warning(
             "register_plugin: failed to register %s in fwbg (%s) — best-effort",
             plugin.slug, exc,
         )
+        if agent_run_id is not None:
+            emit_run_event(
+                agent_run_id, "plugin_registration_failed",
+                slug=plugin.slug,
+                error=str(exc),
+            )
     finally:
         await client.aclose()
 
@@ -509,6 +533,56 @@ async def lookup_plugin_capability(
     return cap if isinstance(cap, str) else None
 
 
+async def resync_verified_plugins() -> None:
+    """Re-register locally VERIFIED plugins that are absent from fwbg's catalog.
+
+    Startup best-effort check: if fwbg was offline when a plugin transitioned
+    to VERIFIED, it never got registered there. This function closes that gap.
+    Controlled by settings.plugin_resync_enabled; no-op when disabled.
+    """
+    if not settings.plugin_resync_enabled:
+        return
+
+    client = FwbgClient(base_url=settings.fwbg_api_url)
+    try:
+        try:
+            remote = await client.get_plugins()
+            registered_slugs = {
+                p["fqn"].split(":", 1)[1]
+                for p in remote
+                if isinstance(p.get("fqn"), str) and p["fqn"].startswith("agent-authored:")
+            }
+        except Exception as exc:
+            log.warning(
+                "resync_verified_plugins: could not fetch fwbg plugin list (%s) — skipping", exc
+            )
+            return
+    finally:
+        await client.aclose()
+
+    async with SessionLocal() as session:
+        verified = (
+            await session.execute(
+                select(Plugin).where(Plugin.current_state == PluginState.VERIFIED.value)
+            )
+        ).scalars().all()
+
+    missing = [p for p in verified if p.slug not in registered_slugs]
+    if not missing:
+        log.info(
+            "resync_verified_plugins: all %d VERIFIED plugin(s) already registered",
+            len(verified),
+        )
+        return
+
+    log.info(
+        "resync_verified_plugins: %d/%d VERIFIED plugin(s) missing from fwbg — re-registering: %s",
+        len(missing), len(verified), [p.slug for p in missing],
+    )
+    for plugin in missing:
+        await _register_verified_plugin_in_fwbg(plugin)
+
+
 __all__ = [
     "AuthorPluginPreconditionError",
     "EvaluatePluginPreconditionError",
@@ -518,4 +592,5 @@ __all__ = [
     "evaluate_plugin",
     "lookup_plugin_capability",
     "reiterate_with_plugin",
+    "resync_verified_plugins",
 ]

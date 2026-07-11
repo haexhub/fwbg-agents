@@ -170,6 +170,13 @@ class Settings(BaseSettings):
             "backtest retries."
         ),
     )
+    plugin_resync_enabled: bool = Field(
+        default=True,
+        description=(
+            "Re-register VERIFIED plugins missing from fwbg's catalog at startup. "
+            "Covers the case where fwbg was offline when a plugin reached VERIFIED."
+        ),
+    )
 
     # Periodic run-janitor: a backstop for runs that hang in the live process
     # (as opposed to orphans from a restart, handled at startup). Runner-borne
@@ -185,6 +192,15 @@ class Settings(BaseSettings):
         description=(
             "Wall-clock cap for pure-LLM agent runs (researcher, translator, "
             "analyst, ...). Backtest-bearing runs use runner_poll_timeout_seconds."
+        ),
+    )
+    run_events_retention_days: int = Field(
+        default=30,
+        ge=0,
+        description=(
+            "Days to keep agent-run event directories (data/agent-runs/<id>/). "
+            "Directories are removed once the run is terminal and older than this "
+            "threshold. 0 = disabled."
         ),
     )
 

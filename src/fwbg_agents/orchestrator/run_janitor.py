@@ -18,7 +18,8 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from datetime import UTC, datetime
+import shutil
+from datetime import UTC, datetime, timedelta
 
 from sqlalchemy import select
 
@@ -110,6 +111,68 @@ async def sweep_stale_runs() -> int:
         return len(killed)
 
 
+async def prune_run_dirs() -> int:
+    """Remove event directories for terminal agent runs older than the retention threshold.
+
+    Only deletes a directory when the matching AgentRun is terminal (DONE/FAILED)
+    and its ended_at is older than settings.run_events_retention_days. Directories
+    with an unparseable name, no DB row, or a non-terminal/recent run are skipped.
+    Returns the number of directories removed.
+    """
+    if settings.run_events_retention_days <= 0:
+        return 0
+
+    runs_root = settings.data_dir / "agent-runs"
+    if not runs_root.is_dir():
+        return 0
+
+    threshold = datetime.now(UTC) - timedelta(days=settings.run_events_retention_days)
+    removed = 0
+
+    async with SessionLocal() as session:
+        for entry in runs_root.iterdir():
+            if not entry.is_dir():
+                continue
+            try:
+                run_id = int(entry.name)
+            except ValueError:
+                log.debug("prune_run_dirs: skipping unparseable entry %s", entry.name)
+                continue
+
+            ar = (
+                await session.execute(select(AgentRun).where(AgentRun.id == run_id))
+            ).scalar_one_or_none()
+
+            if ar is None:
+                log.debug("prune_run_dirs: skipping %s — no DB row", entry.name)
+                continue
+            if ar.status not in (AgentRunStatus.DONE.value, AgentRunStatus.FAILED.value):
+                continue
+            if ar.ended_at is None:
+                continue
+
+            ended = ar.ended_at
+            if ended.tzinfo is None:
+                ended = ended.replace(tzinfo=UTC)
+            if ended >= threshold:
+                continue
+
+            # Offload the blocking removal to a thread so the shared event loop
+            # (FastAPI + agent tasks) stays responsive; isolate per-entry so one
+            # unremovable directory (permission/lock) doesn't abort the pass.
+            try:
+                await asyncio.to_thread(shutil.rmtree, entry)
+            except OSError as exc:
+                log.warning("prune_run_dirs: could not remove %s: %s", entry, exc)
+                continue
+            removed += 1
+            log.info("prune_run_dirs: removed %s (run %d, ended %s)", entry, run_id, ar.ended_at)
+
+    if removed:
+        log.info("prune_run_dirs: removed %d stale agent-run director(ies)", removed)
+    return removed
+
+
 async def sweep_loop() -> None:
     """Poll forever; meant to run as an asyncio background task."""
     while True:
@@ -118,3 +181,7 @@ async def sweep_loop() -> None:
             await sweep_stale_runs()
         except Exception:
             log.exception("periodic run-janitor sweep failed")
+        try:
+            await prune_run_dirs()
+        except Exception:
+            log.exception("periodic run-janitor prune_run_dirs failed")

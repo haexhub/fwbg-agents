@@ -29,6 +29,7 @@ from fwbg_agents.persistence.agent_runs import (
     fail_agent_run,
     finish_agent_run,
     start_agent_run,
+    use_parent_run,
 )
 from fwbg_agents.persistence.database import SessionLocal, get_session
 from fwbg_agents.persistence.models import (
@@ -171,7 +172,8 @@ async def _run_author_background(strategy_id: int, agent_run_id: int) -> None:
         ar.status = AgentRunStatus.RUNNING.value
         await session.commit()
         try:
-            plugin_id = await author_plugin_from_strategy(session, strategy_id)
+            with use_parent_run(agent_run_id):
+                plugin_id = await author_plugin_from_strategy(session, strategy_id)
             plugin = (
                 await session.execute(select(Plugin).where(Plugin.id == plugin_id))
             ).scalar_one()
@@ -202,12 +204,16 @@ async def _run_evaluator_background(plugin_id: int, agent_run_id: int) -> None:
                     select(VerificationRun).where(VerificationRun.id == vr_id)
                 )
             ).scalar_one()
+            # A non-verifying evaluation is a failed run (evaluator ran but
+            # rejected the plugin), not a success — mirror the auto-runner path.
+            verified = vr.status == "passed"
             await finish_agent_run(
                 session,
                 ar,
-                status=AgentRunStatus.DONE,
+                status=AgentRunStatus.DONE if verified else AgentRunStatus.FAILED,
                 plugin_id=plugin_id,
                 output_artifact_path=vr.error_log_path,  # None on success
+                error=None if verified else "plugin did not verify",
             )
         except Exception as exc:
             log.exception("evaluate background task failed (agent_run %s)", agent_run_id)
@@ -317,7 +323,8 @@ async def _run_reiterate_with_plugin_background(
         ar.status = AgentRunStatus.RUNNING.value
         await session.commit()
         try:
-            child_id = await reiterate_with_plugin(session, strategy_id, plugin_slug)
+            with use_parent_run(agent_run_id):
+                child_id = await reiterate_with_plugin(session, strategy_id, plugin_slug)
             child = (
                 await session.execute(select(Strategy).where(Strategy.id == child_id))
             ).scalar_one()

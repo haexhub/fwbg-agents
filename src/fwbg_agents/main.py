@@ -21,6 +21,7 @@ from fwbg_agents.api import (
 )
 from fwbg_agents.config import settings
 from fwbg_agents.orchestrator import auto_runner, run_janitor
+from fwbg_agents.orchestrator.plugin_flow import resync_verified_plugins
 from fwbg_agents.persistence.database import engine
 
 logging.basicConfig(level=settings.log_level)
@@ -36,6 +37,7 @@ async def lifespan(_app: FastAPI):
     # permanently blocks the auto-runner's single-flight check — clean up
     # before the loop starts.
     await run_janitor.fail_orphaned_runs()
+    await resync_verified_plugins()
     auto_runner_task = asyncio.create_task(auto_runner.run_loop())
     pipeline_fill_task = asyncio.create_task(auto_runner.pipeline_fill_loop())
     # Periodic backstop for runs that hang while the process stays alive.

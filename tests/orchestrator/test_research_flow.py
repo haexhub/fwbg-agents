@@ -23,6 +23,7 @@ from fwbg_agents.orchestrator.research_flow import (
     reiterate,
     research_and_translate,
 )
+from fwbg_agents.persistence.agent_runs import use_parent_run
 from fwbg_agents.persistence.database import Base
 from fwbg_agents.persistence.models import (
     AgentRun,
@@ -278,6 +279,37 @@ async def test_research_and_translate_persists_strategy_and_artifacts(db):
     runs = (await session.execute(select(AgentRun).order_by(AgentRun.id))).scalars().all()
     assert [r.agent_name for r in runs] == ["researcher", "translator"]
     assert all(r.status == AgentRunStatus.DONE.value for r in runs)
+
+
+async def test_research_and_translate_links_children_to_flow_run(db):
+    """Under use_parent_run(flow_id) the researcher + translator runs created
+    deep inside the flow inherit parent_run_id — proves the ContextVar
+    propagates through the real flow (Plan 008 Schritt 5)."""
+    session, _ = db
+    model = _dispatch_model()
+
+    now = datetime.now(UTC)
+    flow = AgentRun(
+        agent_name="research_flow",
+        status=AgentRunStatus.RUNNING.value,
+        started_at=now,
+        created_at=now,
+    )
+    session.add(flow)
+    await session.commit()
+    await session.refresh(flow)
+
+    with use_parent_run(flow.id):
+        await research_and_translate(
+            session, ResearcherInput(asset_class="FOREX"), model=model, search_client=None
+        )
+
+    children = (
+        await session.execute(
+            select(AgentRun).where(AgentRun.parent_run_id == flow.id).order_by(AgentRun.id)
+        )
+    ).scalars().all()
+    assert [r.agent_name for r in children] == ["researcher", "translator"]
 
 
 @pytest.mark.asyncio

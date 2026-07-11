@@ -311,7 +311,7 @@ async def test_author_and_reiterate_happy_path(env, monkeypatch):
         calls["author"] = strategy_id
         return plugin_id
 
-    async def fake_evaluate(session, pid):
+    async def fake_evaluate(session, pid, **_kwargs):
         calls["evaluate"] = pid
         return 1
 
@@ -331,6 +331,15 @@ async def test_author_and_reiterate_happy_path(env, monkeypatch):
         "evaluate": plugin_id,
         "reiterate": (sid, "pivot_zones"),
     }
+
+    # Verified plugin → the evaluator run is DONE.
+    async with Session() as s:
+        ar = (
+            await s.execute(
+                select(AgentRun).where(AgentRun.agent_name == "plugin_evaluator")
+            )
+        ).scalar_one()
+        assert ar.status == AgentRunStatus.DONE.value
 
 
 async def test_author_and_reiterate_stops_when_plugin_unverified(env, monkeypatch):
@@ -353,7 +362,7 @@ async def test_author_and_reiterate_stops_when_plugin_unverified(env, monkeypatc
     async def fake_author(session, strategy_id):
         return plugin_id
 
-    async def fake_evaluate(session, pid):
+    async def fake_evaluate(session, pid, **_kwargs):
         return 1  # evaluation ran but did not verify
 
     async def fail_reiterate(session, strategy_id, plugin_slug):
@@ -365,6 +374,16 @@ async def test_author_and_reiterate_stops_when_plugin_unverified(env, monkeypatc
 
     async with Session() as session:
         await auto_runner._author_and_reiterate(session, sid)  # must not raise
+
+    # Non-verifying evaluation → the evaluator run is FAILED, not DONE.
+    async with Session() as s:
+        ar = (
+            await s.execute(
+                select(AgentRun).where(AgentRun.agent_name == "plugin_evaluator")
+            )
+        ).scalar_one()
+        assert ar.status == AgentRunStatus.FAILED.value
+        assert ar.error is not None
 
 
 async def _run_analyze_with_fake_analyst(Session, monkeypatch, sid):
