@@ -120,6 +120,15 @@ class Settings(BaseSettings):
     # backtested automatically, one at a time.
     runner_auto_poll_seconds: float = 60.0
     runner_auto_max_attempts: int = 2
+    translator_auto_max_attempts: int = Field(
+        default=3,
+        ge=1,
+        description=(
+            "How many times the auto-runner retries a failed Translator before "
+            "abandoning the PROPOSED strategy. Each attempt is independent — the "
+            "LLM may produce a valid strategy.json on a subsequent try."
+        ),
+    )
     reiterate_max_depth: int = Field(
         default=5,
         ge=1,
