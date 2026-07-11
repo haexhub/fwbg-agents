@@ -157,7 +157,14 @@ async def prune_run_dirs() -> int:
             if ended >= threshold:
                 continue
 
-            shutil.rmtree(entry)
+            # Offload the blocking removal to a thread so the shared event loop
+            # (FastAPI + agent tasks) stays responsive; isolate per-entry so one
+            # unremovable directory (permission/lock) doesn't abort the pass.
+            try:
+                await asyncio.to_thread(shutil.rmtree, entry)
+            except OSError as exc:
+                log.warning("prune_run_dirs: could not remove %s: %s", entry, exc)
+                continue
             removed += 1
             log.info("prune_run_dirs: removed %s (run %d, ended %s)", entry, run_id, ar.ended_at)
 

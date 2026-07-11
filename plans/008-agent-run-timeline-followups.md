@@ -15,9 +15,10 @@
 ## Status
 
 - **Ausgeführt**: 2026-07-11, Session auf Branch `feat/006-agent-run-detail` @ `a22aea8`
-- **DONE**: Schritte 1 (agent_run_id-Verkabelung), 2 (plugin_registered_in_fwbg-Event), 3 (Szenario-Events), 4 (prune_run_dirs), 6 (resync_verified_plugins). Verifiziert: 572 pytest grün, 1 skipped.
-- **DEFERRED**: Schritt 5 (parent_run_id-Drill-down). Bewusst zurückgestellt (P3/optional,
-  „nur wenn Zeit ist"). Begründung im Abschnitt „Schritt 5 — Abschluss-Notiz" unten.
+- **DONE**: Schritte 1 (agent_run_id-Verkabelung), 2 (plugin_registered_in_fwbg-Event), 3 (Szenario-Events), 4 (prune_run_dirs), 6 (resync_verified_plugins), **5 (parent_run_id-Drill-down)**. Verifiziert: 576 pytest grün, 1 skipped.
+- **Schritt 5 umgesetzt** (parent_run_id-Drill-down): Migration 0009, ContextVar-basierte
+  Flow-Propagation (statt Signatur-Fädeln), API-`children`/`parent_run_id` und Tests +
+  fwbg-dashboard-Drill-down. Details im Abschnitt „Schritt 5 — Abschluss-Notiz" unten.
 - **OFFEN**: Manual-E2E (Plan 006 Schritt 10, braucht LLM-Proxy + Browser)
 - **Priority**: P2 (Schritte 2 + 6 = Korrektheit/Sichtbarkeit) / P3 (Rest = Politur/Ops)
 - **Effort**: M gesamt (lauter S-Schritte; Schritt 5 = M, cross-repo)
@@ -166,30 +167,33 @@ terminale; `retention_days=0` löscht nichts; unparsebares Verzeichnis bleibt.
 Flow-Run-id als `parent`; Detail-Endpoint liefert `children`; Dashboard
 `bunx nuxi typecheck` grün.
 
-#### Schritt 5 — Abschluss-Notiz (2026-07-11, DEFERRED)
+#### Schritt 5 — Abschluss-Notiz (2026-07-11, DONE)
 
-Nach dem Drift-Check bewusst zurückgestellt (Maintainer-Entscheidung). Befund
-aus der Code-Erkundung, damit ein späterer Executor nicht neu erheben muss:
+Zunächst zurückgestellt, dann doch umgesetzt (Maintainer-Entscheidung nach dem
+149-Merge). Umgesetzter Ansatz und Befunde:
 
 - **Parent-Runs existieren bereits** im API-Pfad: `research_flow`
   (`api/research.py:198`), `plugin_author_flow` (`api/plugins.py:246`),
   `reiterate` (`api/research.py:244`), `plugin_evaluator_flow`
   (`api/plugins.py:282`). Die Prämisse „Flows haben keinen Run" stimmt nur für
   die Flow-*Funktionen* selbst — der API-Layer wickelt sie bereits in einen Run.
-- **Zwei nicht im Plan erfasste Haken**:
-  1. Die Flow-Funktionen (`research_and_translate`, `author_plugin_from_strategy`)
-     kennen die Parent-id nicht — `parent_run_id` müsste durch ihre Signaturen
-     **und** in die selbst-Run-erzeugenden Agenten (`Researcher.run`,
-     `Translator.run_fresh`) gefädelt werden.
-  2. Der **autonome** Pfad `auto_runner._author_and_reiterate` (`:283`) hat
-     **keinen** `plugin_author_flow`-Wrapper — planner/implementer sind dort
-     elternlose Geschwister, der Evaluator ein separater Run. Vollständige
-     Verknüpfung erforderte dort einen zusätzlichen Wrapper-Run (Scope über den
-     Plan hinaus).
-- **Warum deferred**: Umfang ~7–9 Dateien über 2 Repos + DB-Migration 0009
-  (Risk MED), aber Kind-Runs sind heute schon über `strategy_id`/`plugin_id`
-  navigierbar → inkrementeller Wert = Politur. Kein Blocker; jederzeit als
-  eigener PR nachziehbar.
+- **Ansatz: ContextVar statt Signatur-Fädeln.** Alle Kind-Runs laufen über
+  `start_agent_run`, und kein Agent/Flow nutzt intern `create_task`/`gather` —
+  Kinder werden linear `await`ed. Ein per-asyncio-task `ContextVar` (`_parent_run`
+  + `use_parent_run(id)`-CM in `persistence/agent_runs.py`) propagiert die Flow-id
+  vom Einstiegspunkt zu allen Kindern — **null** Agenten-Signatur-Änderungen.
+  Gescopet in den API-Flows (research/reiterate/author/reiterate-with-plugin).
+- **Migration 0009**: nullable self-FK `agent_run.parent_run_id` + Index
+  (benannter Constraint `fk_agent_run_parent_run_id` — SQLite-batch braucht Namen).
+- **API**: `GET /agents/runs/{id}` liefert `parent_run_id` + `children`.
+- **Dashboard** (fwbg-dashboard): `[id].vue` Eltern-Link + „Kind-Runs"-Card.
+- **Bewusst ausgelassen**: der **autonome** Pfad `auto_runner._author_and_reiterate`
+  bleibt unverlinkt. Ein `plugin_author_flow`-Wrapper dort bräuchte
+  Terminal-State-Handling auf ~5 Exit-Pfaden und greift in den In-Flight-Guard
+  von `pick_next_add_indicator_pending` ein — mehr Risiko als Nutzen; der
+  API-Plugin-Author-Flow liefert den Drill-down bereits.
+- **Migrations-Test**: `alembic` ignoriert `DATABASE_URL` (`env.py` pinnt auf
+  `settings.db_url`); Kopie-Test via `DATA_DIR=<kopie-dir>`.
 
 ### Schritt 6 — fwbg-Registrierungs-Resync (VERIFIED-aber-unregistriert) — **P2**
 

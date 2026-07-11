@@ -378,6 +378,12 @@ async def _register_verified_plugin_in_fwbg(
             "register_plugin: cannot read plugin.py for %s at %s: %s",
             plugin.slug, plugin_code_path, exc,
         )
+        if agent_run_id is not None:
+            emit_run_event(
+                agent_run_id, "plugin_registration_failed",
+                slug=plugin.slug,
+                error=str(exc),
+            )
         return
 
     spec_md = ""

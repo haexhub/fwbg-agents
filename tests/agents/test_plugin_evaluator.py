@@ -321,6 +321,25 @@ async def test_evaluator_empty_scenarios_fails(db):
     assert p.current_state == PluginState.AUTHORED.value
 
 
+async def test_evaluator_emits_evaluation_done_on_early_failure(db):
+    """Regression (Plan 008 Schritt 5 review): evaluation_done fires even when
+    the run fails before the scenario loop (here: no scenarios declared), not
+    only on the loop-completed path — so the timeline always closes."""
+    from fwbg_agents.run_events import read_run_events
+
+    session, settings = db
+    p = await _seed_plugin(
+        session, settings, slug="early-fail-evt", code=_GOOD_PLUGIN_CODE, scenarios=[],
+    )
+
+    await PluginEvaluator(session).run(p, agent_run_id=777)
+
+    done = [e for e in read_run_events(777) if e.get("type") == "evaluation_done"]
+    assert len(done) == 1
+    assert done[0]["status"] == "failed"
+    assert done[0]["scenarios_run"] == 0
+
+
 async def test_evaluator_no_compute_callable_fails(db):
     session, settings = db
     p = await _seed_plugin(
