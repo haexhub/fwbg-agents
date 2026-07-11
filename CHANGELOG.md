@@ -1,5 +1,33 @@
 # Changelog
 
+## [0.19.0](https://github.com/haexhub/fwbg-agents/compare/v0.18.0...v0.19.0) (2026-07-11)
+
+
+### Features
+
+* **agents:** agent-run timeline + LLM-session instrumentation (Plan 006 backend, steps 1-6) ([8428abd](https://github.com/haexhub/fwbg-agents/commit/8428abd098940f107fb7d298173ceea5dbde9331))
+* **agents:** parent_run_id flow drill-down — backend (Plan 008 Schritt 5) ([a8294bb](https://github.com/haexhub/fwbg-agents/commit/a8294bb1fe1e47005a34b69c12e8afbfc1962674))
+* **agents:** parent_run_id flow drill-down — backend (Plan 008 Schritt 5) ([81c1655](https://github.com/haexhub/fwbg-agents/commit/81c1655039962fd65f6d0df4b1f3fc7e1876c731))
+* **agents:** Plan 006 — agent-run timeline + LLM-session detail (backend) ([ed50ca6](https://github.com/haexhub/fwbg-agents/commit/ed50ca60aef680dfd4867d1f6444323b73f12ef1))
+* **agents:** Plan 008 timeline follow-ups (steps 1-4, 6) ([1c0f411](https://github.com/haexhub/fwbg-agents/commit/1c0f411824e99aefd3de423c33a0143e5f8ed04e))
+* **agents:** Plan 008 timeline follow-ups (steps 1-4, 6) ([30c7979](https://github.com/haexhub/fwbg-agents/commit/30c7979de6ba66b56768fdd93ef8f5e08f3f2d58))
+* **agents:** Plan 008 timeline follow-ups + parent_run_id drill-down (backend) → develop ([8aa0b60](https://github.com/haexhub/fwbg-agents/commit/8aa0b60e7c0cab0f8c49c73f422671679442470c))
+
+
+### Bug Fixes
+
+* **agents:** address CodeRabbit review on [#148](https://github.com/haexhub/fwbg-agents/issues/148) ([a22aea8](https://github.com/haexhub/fwbg-agents/commit/a22aea8d98092609377f7630c428568a4fe61e99))
+* **agents:** address CodeRabbit review on [#151](https://github.com/haexhub/fwbg-agents/issues/151) ([417f3d8](https://github.com/haexhub/fwbg-agents/commit/417f3d8a369150f93982a9744c8ae983c6276c8c))
+* **agents:** make run_instrumented generic over the agent output type ([72be882](https://github.com/haexhub/fwbg-agents/commit/72be8823d926e8ff75f33d8055f5398d109cef40))
+* **agents:** mark evaluator run FAILED when the plugin does not verify ([15e6124](https://github.com/haexhub/fwbg-agents/commit/15e61243af692609272508d86bd851a32781f3d6))
+
+
+### Documentation
+
+* **plans:** mark Plan 006 DONE (steps 1-6, 8-10; 7 skipped) ([4ea84f8](https://github.com/haexhub/fwbg-agents/commit/4ea84f8852987c9bc3a82f767a210abb22f515a7))
+* **plans:** mark Plan 007 DONE (reconciled with upstream agent-authored; gaps only) ([7c41a45](https://github.com/haexhub/fwbg-agents/commit/7c41a459dfb188ed045588594c24c012c043eb60))
+* **plans:** remove obsolete Plan 007 spec (wrong premise) ([cebe88d](https://github.com/haexhub/fwbg-agents/commit/cebe88dcc2591f965b498ed728a54e3131b640d9))
+
 ## [0.18.0](https://github.com/haexhub/fwbg-agents/compare/v0.17.1...v0.18.0) (2026-07-10)
 
 
