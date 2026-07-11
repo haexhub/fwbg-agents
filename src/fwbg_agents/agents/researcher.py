@@ -28,19 +28,23 @@ from pydantic_ai import Agent
 from pydantic_ai.models import Model
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from fwbg_agents import events as event_bus
+from fwbg_agents.agents.instrumented import run_instrumented
 from fwbg_agents.orchestrator.hypotheses import (
     HypothesisRejectedError,
     ResearcherHypothesis,
     validate_hypothesis,
 )
 from fwbg_agents.orchestrator.prior_art import PriorArtMatch, lookup_prior_art
-from fwbg_agents.persistence.agent_runs import fail_agent_run
+from fwbg_agents.persistence.agent_runs import (
+    fail_agent_run,
+    finish_agent_run,
+    start_agent_run,
+)
 from fwbg_agents.persistence.models import (
-    AgentRun,
     AgentRunStatus,
     LlmCall,
 )
+from fwbg_agents.run_events import emit_run_event
 from fwbg_agents.tools.llm import model_for, prompt_path_for
 from fwbg_agents.tools.search import SearchProvider, SearchResult, SearchUnavailableError
 
@@ -117,22 +121,7 @@ class Researcher:
 
     async def run(self, input: ResearcherInput) -> ResearcherHypothesis:
         """Run the researcher agent and return a validated hypothesis."""
-        now = datetime.now(UTC)
-        ar = AgentRun(
-            agent_name="researcher",
-            status=AgentRunStatus.RUNNING.value,
-            started_at=now,
-            created_at=now,
-        )
-        self.session.add(ar)
-        await self.session.commit()
-        await self.session.refresh(ar)
-
-        event_bus.emit({
-            "type": "agent_run_started",
-            "agent_run_id": ar.id,
-            "agent_name": "researcher",
-        })
+        ar = await start_agent_run(self.session, agent_name="researcher")
         prior_art_seen: list[PriorArtMatch] = []
 
         try:
@@ -166,11 +155,7 @@ class Researcher:
             @agent.tool_plain
             async def search_web_tool(query: str) -> list[dict]:
                 """Search the web for recent literature on a trading-strategy idea."""
-                event_bus.emit({
-                    "type": "research_search",
-                    "agent_run_id": agent_run_id,
-                    "query": query,
-                })
+                emit_run_event(agent_run_id, "research_search", query=query)
                 if search_client is None:
                     log.info(
                         "researcher: no search_client configured; skipping search_web('%s')",
@@ -188,12 +173,12 @@ class Researcher:
                     return []
                 serialized = [r.model_dump() for r in results]
                 # Emit provenance event before wrapping so the UI sees clean titles.
-                event_bus.emit({
-                    "type": "research_results",
-                    "agent_run_id": agent_run_id,
-                    "query": query,
-                    "urls": [{"url": r["url"], "title": r["title"]} for r in serialized],
-                })
+                emit_run_event(
+                    agent_run_id,
+                    "research_results",
+                    query=query,
+                    urls=[{"url": r["url"], "title": r["title"]} for r in serialized],
+                )
                 for r in serialized:
                     # Both title and content_snippet are attacker-controlled web
                     # text; frame them as data so a poisoned result can't inject
@@ -209,7 +194,7 @@ class Researcher:
                     f"Brief: {input.free_text_brief}\n\n"
                     "Research and emit your single hypothesis now."
                 )
-            result = await agent.run(user_msg)
+            result = await run_instrumented(agent, user_msg, agent_run_id=ar.id)
             latency_ms = int((time.monotonic() - t0) * 1000)
 
             usage = result.usage
@@ -230,14 +215,17 @@ class Researcher:
             except HypothesisRejectedError as exc:
                 raise ResearcherError(str(exc)) from exc
 
-            ar.status = AgentRunStatus.DONE.value
-            ar.ended_at = datetime.now(UTC)
-            await self.session.commit()
-            event_bus.emit({
-                "type": "agent_run_done",
-                "agent_run_id": ar.id,
-                "agent_name": "researcher",
-            })
+            hyp = result.output
+            emit_run_event(
+                ar.id,
+                "hypothesis_ready",
+                title=hyp.title,
+                strategy_family=hyp.strategy_family,
+                asset_class=hyp.asset_class or "asset-agnostic",
+                summary=hyp.hypothesis[:500],
+            )
+
+            await finish_agent_run(self.session, ar, status=AgentRunStatus.DONE)
 
             return result.output
         except asyncio.CancelledError:
@@ -249,13 +237,10 @@ class Researcher:
             ar.error = "Cancelled by user"
             with contextlib.suppress(Exception):
                 await self.session.commit()
+            emit_run_event(
+                ar.id, "agent_run_failed", agent_name="researcher", error="Cancelled by user"
+            )
             raise
         except Exception as exc:
-            msg = await fail_agent_run(self.session, ar, exc)
-            event_bus.emit({
-                "type": "agent_run_failed",
-                "agent_run_id": ar.id,
-                "agent_name": "researcher",
-                "error": msg,
-            })
+            await fail_agent_run(self.session, ar, exc)
             raise

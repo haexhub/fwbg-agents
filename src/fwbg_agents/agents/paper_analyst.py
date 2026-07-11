@@ -30,6 +30,7 @@ from pydantic import BaseModel, Discriminator
 from pydantic_ai import Agent
 from pydantic_ai.models import Model
 
+from fwbg_agents.agents.instrumented import persist_transcript
 from fwbg_agents.orchestrator.criteria_paper import CriteriaEvalResult
 from fwbg_agents.tools.fwbg_paper_reader import PaperPositions, PaperTradeSummary
 from fwbg_agents.tools.llm import model_for, prompt_path_for
@@ -105,6 +106,7 @@ class PaperAnalyst:
         paper_criteria_eval: CriteriaEvalResult,
         strategy_slug: str,
         data_dir: Path | None = None,
+        agent_run_id: int | None = None,
     ) -> PromotePaperToLive | AbandonPaper | ContinueObservation:
         """Run the paper analyst synchronously and return a validated decision."""
         system_prompt = self.prompt_path.read_text()
@@ -121,6 +123,12 @@ class PaperAnalyst:
             "paper_criteria_eval": asdict(paper_criteria_eval),
         }
         result = agent.run_sync(json.dumps(user_payload, indent=2, default=str))
+        if agent_run_id is not None:
+            persist_transcript(
+                agent_run_id,
+                result,
+                model_name=getattr(self.model, "model_name", "unknown"),
+            )
         return self._validate(
             result.output,
             summary=summary,

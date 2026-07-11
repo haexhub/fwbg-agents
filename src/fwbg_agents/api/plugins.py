@@ -10,7 +10,6 @@ from __future__ import annotations
 
 import json
 import logging
-from datetime import UTC, datetime
 from typing import Any
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
@@ -26,7 +25,11 @@ from fwbg_agents.orchestrator.plugin_flow import (
     lookup_plugin_capability,
     reiterate_with_plugin,
 )
-from fwbg_agents.persistence.agent_runs import fail_agent_run
+from fwbg_agents.persistence.agent_runs import (
+    fail_agent_run,
+    finish_agent_run,
+    start_agent_run,
+)
 from fwbg_agents.persistence.database import SessionLocal, get_session
 from fwbg_agents.persistence.models import (
     AgentRun,
@@ -172,11 +175,13 @@ async def _run_author_background(strategy_id: int, agent_run_id: int) -> None:
             plugin = (
                 await session.execute(select(Plugin).where(Plugin.id == plugin_id))
             ).scalar_one()
-            ar.status = AgentRunStatus.DONE.value
-            ar.plugin_id = plugin_id
-            ar.output_artifact_path = plugin.contract_path
-            ar.ended_at = datetime.now(UTC)
-            await session.commit()
+            await finish_agent_run(
+                session,
+                ar,
+                status=AgentRunStatus.DONE,
+                plugin_id=plugin_id,
+                output_artifact_path=plugin.contract_path,
+            )
         except Exception as exc:
             log.exception("author background task failed (agent_run %s)", agent_run_id)
             await fail_agent_run(session, ar, exc)
@@ -197,11 +202,13 @@ async def _run_evaluator_background(plugin_id: int, agent_run_id: int) -> None:
                     select(VerificationRun).where(VerificationRun.id == vr_id)
                 )
             ).scalar_one()
-            ar.status = AgentRunStatus.DONE.value
-            ar.plugin_id = plugin_id
-            ar.output_artifact_path = vr.error_log_path  # None on success
-            ar.ended_at = datetime.now(UTC)
-            await session.commit()
+            await finish_agent_run(
+                session,
+                ar,
+                status=AgentRunStatus.DONE,
+                plugin_id=plugin_id,
+                output_artifact_path=vr.error_log_path,  # None on success
+            )
         except Exception as exc:
             log.exception("evaluate background task failed (agent_run %s)", agent_run_id)
             await fail_agent_run(session, ar, exc)
@@ -234,18 +241,13 @@ async def post_strategy_author_plugin(
             f"{strategy.slug}; run /strategies/{strategy_id}/analyze first",
         )
 
-    now = datetime.now(UTC)
-    ar = AgentRun(
+    ar = await start_agent_run(
+        session,
         agent_name="plugin_author_flow",
-        status=AgentRunStatus.PENDING.value,
         strategy_id=strategy.id,
         input_artifact_path=str(sidecar),
-        started_at=now,
-        created_at=now,
+        status=AgentRunStatus.PENDING,
     )
-    session.add(ar)
-    await session.commit()
-    await session.refresh(ar)
 
     background_tasks.add_task(_run_author_background, strategy.id, ar.id)
     return {
@@ -275,17 +277,12 @@ async def post_plugin_evaluate(
             "evaluate requires AUTHORED",
         )
 
-    now = datetime.now(UTC)
-    ar = AgentRun(
+    ar = await start_agent_run(
+        session,
         agent_name="plugin_evaluator_flow",
-        status=AgentRunStatus.PENDING.value,
         plugin_id=plugin.id,
-        started_at=now,
-        created_at=now,
+        status=AgentRunStatus.PENDING,
     )
-    session.add(ar)
-    await session.commit()
-    await session.refresh(ar)
 
     background_tasks.add_task(_run_evaluator_background, plugin.id, ar.id)
     return {
@@ -324,12 +321,14 @@ async def _run_reiterate_with_plugin_background(
             child = (
                 await session.execute(select(Strategy).where(Strategy.id == child_id))
             ).scalar_one()
-            ar.status = AgentRunStatus.DONE.value
-            ar.output_artifact_path = str(
-                strategy_dir(child.slug) / "iteration_001" / "strategy.json"
+            await finish_agent_run(
+                session,
+                ar,
+                status=AgentRunStatus.DONE,
+                output_artifact_path=str(
+                    strategy_dir(child.slug) / "iteration_001" / "strategy.json"
+                ),
             )
-            ar.ended_at = datetime.now(UTC)
-            await session.commit()
         except Exception as exc:
             log.exception(
                 "reiterate-with-plugin background task failed (agent_run %s)",
@@ -404,19 +403,14 @@ async def post_strategy_reiterate_with_plugin(
             raise HTTPException(404, msg) from exc
         raise HTTPException(422, msg) from exc
 
-    now = datetime.now(UTC)
-    ar = AgentRun(
+    ar = await start_agent_run(
+        session,
         agent_name="translator_reiterate_flow",
-        status=AgentRunStatus.PENDING.value,
         strategy_id=parent.id,
         plugin_id=plugin.id,
         input_artifact_path=str(sidecar_path),
-        started_at=now,
-        created_at=now,
+        status=AgentRunStatus.PENDING,
     )
-    session.add(ar)
-    await session.commit()
-    await session.refresh(ar)
 
     background_tasks.add_task(
         _run_reiterate_with_plugin_background, parent.id, body.plugin_slug, ar.id

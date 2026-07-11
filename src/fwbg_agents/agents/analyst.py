@@ -37,14 +37,18 @@ from pydantic_ai import Agent
 from pydantic_ai.models import Model
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from fwbg_agents.agents.instrumented import run_instrumented
 from fwbg_agents.config import settings
 from fwbg_agents.orchestrator.lifecycle import check_backtest_criteria, strategy_dir
 from fwbg_agents.orchestrator.lineage import render_family_history
 from fwbg_agents.orchestrator.live_catalog import LiveCatalog, fetch_live_catalog
 from fwbg_agents.orchestrator.plugin_catalog import PluginCatalog
-from fwbg_agents.persistence.agent_runs import fail_agent_run
+from fwbg_agents.persistence.agent_runs import (
+    fail_agent_run,
+    finish_agent_run,
+    start_agent_run,
+)
 from fwbg_agents.persistence.models import (
-    AgentRun,
     AgentRunStatus,
     LlmCall,
     Strategy,
@@ -439,17 +443,9 @@ class Analyst:
 
     async def analyze(self, strategy: Strategy) -> AnalystRecommendation:
         """Run the analyst agent on a backtested strategy and return a typed recommendation."""
-        now = datetime.now(UTC)
-        ar = AgentRun(
-            agent_name="analyst",
-            status=AgentRunStatus.RUNNING.value,
-            strategy_id=strategy.id,
-            started_at=now,
-            created_at=now,
+        ar = await start_agent_run(
+            self.session, agent_name="analyst", strategy_id=strategy.id
         )
-        self.session.add(ar)
-        await self.session.commit()
-        await self.session.refresh(ar)
 
         try:
             iteration_dir = strategy_dir(strategy.slug) / "iteration_001"
@@ -498,7 +494,9 @@ class Analyst:
                 retries={"output": 3},
             )
             t0 = time.monotonic()
-            result = await agent.run("Emit your recommendation now.")
+            result = await run_instrumented(
+                agent, "Emit your recommendation now.", agent_run_id=ar.id
+            )
             latency_ms = int((time.monotonic() - t0) * 1000)
 
             usage = result.usage
@@ -520,10 +518,12 @@ class Analyst:
                 f"```json\n{result.output.model_dump_json(indent=2)}\n```\n"
             )
 
-            ar.status = AgentRunStatus.DONE.value
-            ar.ended_at = datetime.now(UTC)
-            ar.output_artifact_path = str(report_path)
-            await self.session.commit()
+            await finish_agent_run(
+                self.session,
+                ar,
+                status=AgentRunStatus.DONE,
+                output_artifact_path=str(report_path),
+            )
 
             return result.output
         except Exception as exc:

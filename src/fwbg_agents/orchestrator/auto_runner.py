@@ -52,7 +52,11 @@ from fwbg_agents.orchestrator.plugin_flow import (
 from fwbg_agents.orchestrator.recommendations import validate_and_apply
 from fwbg_agents.orchestrator.research_flow import reiterate, research_and_translate
 from fwbg_agents.orchestrator.run_janitor import ORPHAN_ERROR, TRANSIENT_ERROR
-from fwbg_agents.persistence.agent_runs import fail_agent_run
+from fwbg_agents.persistence.agent_runs import (
+    fail_agent_run,
+    finish_agent_run,
+    start_agent_run,
+)
 from fwbg_agents.persistence.database import SessionLocal
 from fwbg_agents.persistence.models import (
     AgentRun,
@@ -668,10 +672,9 @@ async def _fill_pipeline_background(agent_run_id: int) -> None:
                 fanout_n=settings.researcher_fanout_n,
                 fwbg_client=fwbg,
             )
-            ar.status = AgentRunStatus.DONE.value
-            ar.strategy_id = strategy_id
-            ar.ended_at = datetime.now(UTC)
-            await session.commit()
+            await finish_agent_run(
+                session, ar, status=AgentRunStatus.DONE, strategy_id=strategy_id
+            )
             log.info(
                 "pipeline fill: research done, strategy %s now proposed", strategy_id
             )
@@ -714,16 +717,11 @@ async def pipeline_fill_loop() -> None:
                     count,
                     min_proposed,
                 )
-                now = datetime.now(UTC)
-                ar = AgentRun(
+                ar = await start_agent_run(
+                    session,
                     agent_name="research_flow",
-                    status=AgentRunStatus.PENDING.value,
-                    started_at=now,
-                    created_at=now,
+                    status=AgentRunStatus.PENDING,
                 )
-                session.add(ar)
-                await session.commit()
-                await session.refresh(ar)
                 task = asyncio.create_task(_fill_pipeline_background(ar.id))
                 _background_tasks.add(task)
                 task.add_done_callback(_background_tasks.discard)

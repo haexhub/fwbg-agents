@@ -35,7 +35,11 @@ from fwbg_agents.orchestrator.criteria_paper import (
     load_paper_criteria,
 )
 from fwbg_agents.orchestrator.lifecycle import strategy_dir
-from fwbg_agents.persistence.agent_runs import fail_agent_run
+from fwbg_agents.persistence.agent_runs import (
+    fail_agent_run,
+    finish_agent_run,
+    start_agent_run,
+)
 from fwbg_agents.persistence.models import (
     AgentRun,
     AgentRunStatus,
@@ -116,16 +120,9 @@ async def paper_analyze(
         await session.commit()
         await session.refresh(ar)
     else:
-        ar = AgentRun(
-            agent_name="paper_analyst",
-            status=AgentRunStatus.RUNNING.value,
-            strategy_id=strategy.id,
-            started_at=now,
-            created_at=now,
+        ar = await start_agent_run(
+            session, agent_name="paper_analyst", strategy_id=strategy.id
         )
-        session.add(ar)
-        await session.commit()
-        await session.refresh(ar)
 
     try:
         eval_res = evaluate_paper_criteria(summary, criteria)
@@ -136,6 +133,7 @@ async def paper_analyze(
             paper_phase_target_days=strategy.paper_phase_target_days,
             paper_criteria_eval=eval_res,
             strategy_slug=strategy.slug,
+            agent_run_id=ar.id,
         )
 
         sidecar_dir = strategy_dir(strategy.slug)
@@ -156,10 +154,12 @@ async def paper_analyze(
             strategy.metadata_json = meta
         # ContinueObservation: no metadata write — sidecar only.
 
-        ar.status = AgentRunStatus.DONE.value
-        ar.output_artifact_path = str(sidecar_path)
-        ar.ended_at = datetime.now(UTC)
-        await session.commit()
+        await finish_agent_run(
+            session,
+            ar,
+            status=AgentRunStatus.DONE,
+            output_artifact_path=str(sidecar_path),
+        )
         await session.refresh(ar)
         log.info(
             "paper_analyze: slug=%s decision=%s sidecar=%s",
