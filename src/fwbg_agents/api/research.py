@@ -28,7 +28,11 @@ from fwbg_agents.orchestrator.research_flow import (
     reiterate,
     research_and_translate,
 )
-from fwbg_agents.persistence.agent_runs import fail_agent_run
+from fwbg_agents.persistence.agent_runs import (
+    fail_agent_run,
+    finish_agent_run,
+    start_agent_run,
+)
 from fwbg_agents.persistence.database import SessionLocal, get_session
 from fwbg_agents.persistence.models import (
     AgentRun,
@@ -77,10 +81,7 @@ async def _run_research_background(input: ResearcherInput, agent_run_id: int) ->
                 fanout_n=settings.researcher_fanout_n,
                 fwbg_client=fwbg,
             )
-            ar.status = AgentRunStatus.DONE.value
-            ar.strategy_id = strategy_id
-            ar.ended_at = datetime.now(UTC)
-            ar.output_artifact_path = str(
+            output_artifact_path = str(
                 strategy_dir(
                     (
                         await session.execute(
@@ -91,7 +92,13 @@ async def _run_research_background(input: ResearcherInput, agent_run_id: int) ->
                 / "iteration_001"
                 / "strategy.json"
             )
-            await session.commit()
+            await finish_agent_run(
+                session,
+                ar,
+                status=AgentRunStatus.DONE,
+                strategy_id=strategy_id,
+                output_artifact_path=output_artifact_path,
+            )
 
             # Auto-start backtest — runs independently in its own session.
             log.info(
@@ -140,10 +147,9 @@ async def _run_reiterate_background(parent_id: int, agent_run_id: int) -> None:
         fwbg = FwbgClient(base_url=settings.fwbg_api_url)
         try:
             child_id = await reiterate(session, parent_id, fwbg_client=fwbg)
-            ar.status = AgentRunStatus.DONE.value
-            ar.strategy_id = child_id
-            ar.ended_at = datetime.now(UTC)
-            await session.commit()
+            await finish_agent_run(
+                session, ar, status=AgentRunStatus.DONE, strategy_id=child_id
+            )
         except Exception as exc:
             log.exception("reiterate background task failed (agent_run %s)", agent_run_id)
             await fail_agent_run(session, ar, exc)
@@ -189,16 +195,9 @@ async def post_research_brief(
             )
 
     scope = body.asset_class if body.asset_class else "asset-agnostic"
-    now = datetime.now(UTC)
-    ar = AgentRun(
-        agent_name="research_flow",
-        status=AgentRunStatus.PENDING.value,
-        started_at=now,
-        created_at=now,
+    ar = await start_agent_run(
+        session, agent_name="research_flow", status=AgentRunStatus.PENDING
     )
-    session.add(ar)
-    await session.commit()
-    await session.refresh(ar)
 
     input_path = _research_input_path(ar.id)
     input_path.write_text(body.model_dump_json())
@@ -242,17 +241,12 @@ async def post_strategy_reiterate(
             f"run /strategies/{strategy_id}/analyze first",
         )
 
-    now = datetime.now(UTC)
-    ar = AgentRun(
+    ar = await start_agent_run(
+        session,
         agent_name="reiterate",
-        status=AgentRunStatus.PENDING.value,
         strategy_id=parent.id,
-        started_at=now,
-        created_at=now,
+        status=AgentRunStatus.PENDING,
     )
-    session.add(ar)
-    await session.commit()
-    await session.refresh(ar)
 
     _spawn(ar.id, _run_reiterate_background(parent.id, ar.id))
     return {
@@ -314,16 +308,9 @@ async def retry_agent_run(
         raise HTTPException(409, f"input file not found at {ar.input_artifact_path}")
 
     original_input = ResearcherInput.model_validate_json(input_path.read_text())
-    now = datetime.now(UTC)
-    new_ar = AgentRun(
-        agent_name="research_flow",
-        status=AgentRunStatus.PENDING.value,
-        started_at=now,
-        created_at=now,
+    new_ar = await start_agent_run(
+        session, agent_name="research_flow", status=AgentRunStatus.PENDING
     )
-    session.add(new_ar)
-    await session.commit()
-    await session.refresh(new_ar)
 
     new_input_path = _research_input_path(new_ar.id)
     new_input_path.write_text(original_input.model_dump_json())

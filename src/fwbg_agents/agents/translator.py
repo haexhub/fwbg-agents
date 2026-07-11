@@ -27,6 +27,7 @@ from pydantic_ai import Agent
 from pydantic_ai.models import Model
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from fwbg_agents.agents.instrumented import run_instrumented
 from fwbg_agents.orchestrator.hypotheses import generate_slug
 from fwbg_agents.orchestrator.lifecycle import strategy_dir
 from fwbg_agents.orchestrator.live_catalog import LiveCatalog, fetch_live_catalog
@@ -36,9 +37,12 @@ from fwbg_agents.orchestrator.strategy_validator import (
     StrategyValidationError,
     validate_strategy_json,
 )
-from fwbg_agents.persistence.agent_runs import fail_agent_run
+from fwbg_agents.persistence.agent_runs import (
+    fail_agent_run,
+    finish_agent_run,
+    start_agent_run,
+)
 from fwbg_agents.persistence.models import (
-    AgentRun,
     AgentRunStatus,
     LlmCall,
     Strategy,
@@ -346,17 +350,9 @@ class Translator:
 
     async def run_fresh(self, strategy: Strategy) -> Path:
         """Translate a hypothesis into strategy.json via LLM and validate the result."""
-        now = datetime.now(UTC)
-        ar = AgentRun(
-            agent_name="translator",
-            status=AgentRunStatus.RUNNING.value,
-            strategy_id=strategy.id,
-            started_at=now,
-            created_at=now,
+        ar = await start_agent_run(
+            self.session, agent_name="translator", strategy_id=strategy.id
         )
-        self.session.add(ar)
-        await self.session.commit()
-        await self.session.refresh(ar)
 
         try:
             iteration_dir = strategy_dir(strategy.slug) / "iteration_001"
@@ -390,7 +386,9 @@ class Translator:
                 return catalog_prompt
 
             t0 = time.monotonic()
-            result = await agent.run("Emit the strategy.json now.")
+            result = await run_instrumented(
+                agent, "Emit the strategy.json now.", agent_run_id=ar.id
+            )
             latency_ms = int((time.monotonic() - t0) * 1000)
 
             usage = result.usage
@@ -441,10 +439,12 @@ class Translator:
             strategy.spec_path = str(spec_path)
             strategy.updated_at = datetime.now(UTC)
 
-            ar.status = AgentRunStatus.DONE.value
-            ar.ended_at = datetime.now(UTC)
-            ar.output_artifact_path = str(strategy_path)
-            await self.session.commit()
+            await finish_agent_run(
+                self.session,
+                ar,
+                status=AgentRunStatus.DONE,
+                output_artifact_path=str(strategy_path),
+            )
 
             return strategy_path
         except Exception as exc:
@@ -469,17 +469,9 @@ class Translator:
         - modify_plugins: {kind, ..., ops: [{action, section, slug, params, replaces}],
           target_assets}
         """
-        now = datetime.now(UTC)
-        ar = AgentRun(
-            agent_name="translator",
-            status=AgentRunStatus.RUNNING.value,
-            strategy_id=parent.id,
-            started_at=now,
-            created_at=now,
+        ar = await start_agent_run(
+            self.session, agent_name="translator", strategy_id=parent.id
         )
-        self.session.add(ar)
-        await self.session.commit()
-        await self.session.refresh(ar)
 
         try:
             parent_dir = strategy_dir(parent.slug) / "iteration_001"
@@ -625,11 +617,13 @@ class Translator:
                 )
             )
 
-            ar.strategy_id = child.id
-            ar.status = AgentRunStatus.DONE.value
-            ar.ended_at = datetime.now(UTC)
-            ar.output_artifact_path = str(child_dir / "strategy.json")
-            await self.session.commit()
+            await finish_agent_run(
+                self.session,
+                ar,
+                status=AgentRunStatus.DONE,
+                strategy_id=child.id,
+                output_artifact_path=str(child_dir / "strategy.json"),
+            )
             await self.session.refresh(child)
             return child
         except Exception as exc:
@@ -657,17 +651,9 @@ class Translator:
             "preprocessing"      -> preprocessing
             "filter"             -> extra_filters
         """
-        now = datetime.now(UTC)
-        ar = AgentRun(
-            agent_name="translator",
-            status=AgentRunStatus.RUNNING.value,
-            strategy_id=parent.id,
-            started_at=now,
-            created_at=now,
+        ar = await start_agent_run(
+            self.session, agent_name="translator", strategy_id=parent.id
         )
-        self.session.add(ar)
-        await self.session.commit()
-        await self.session.refresh(ar)
 
         try:
             if parent.current_state != StrategyState.BACKTESTED.value:
@@ -857,11 +843,13 @@ class Translator:
                 )
             )
 
-            ar.strategy_id = child.id
-            ar.status = AgentRunStatus.DONE.value
-            ar.ended_at = datetime.now(UTC)
-            ar.output_artifact_path = str(strategy_path)
-            await self.session.commit()
+            await finish_agent_run(
+                self.session,
+                ar,
+                status=AgentRunStatus.DONE,
+                strategy_id=child.id,
+                output_artifact_path=str(strategy_path),
+            )
             await self.session.refresh(child)
             return child
         except Exception as exc:

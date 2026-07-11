@@ -28,7 +28,7 @@ from fwbg_agents.orchestrator.lifecycle import (
     transition_strategy,
 )
 from fwbg_agents.orchestrator.paper_flow import paper_analyze
-from fwbg_agents.persistence.agent_runs import fail_agent_run
+from fwbg_agents.persistence.agent_runs import fail_agent_run, start_agent_run
 from fwbg_agents.persistence.database import SessionLocal, get_session
 from fwbg_agents.persistence.models import (
     AgentRun,
@@ -409,17 +409,12 @@ async def post_strategy_paper_analyze(
             detail=f"no on-disk paper-trade data for strategy {s.slug}",
         )
 
-    now = datetime.now(UTC)
-    ar = AgentRun(
+    ar = await start_agent_run(
+        session,
         agent_name="paper_analyst",
-        status=AgentRunStatus.PENDING.value,
         strategy_id=s.id,
-        started_at=now,
-        created_at=now,
+        status=AgentRunStatus.PENDING,
     )
-    session.add(ar)
-    await session.commit()
-    await session.refresh(ar)
 
     background_tasks.add_task(_run_paper_analyze_background, s.id, ar.id)
     return PaperAnalyzeResponse(agent_run_id=ar.id, status="scheduled")
@@ -507,16 +502,15 @@ async def post_strategy_promote_live(
     # same transaction (transition_strategy's internal commit covers them).
     # If transition_strategy fails for any reason (guard, IO, …), the AgentRun
     # is rolled back as part of the same SQLAlchemy session — no orphan audit.
-    now = datetime.now(UTC)
-    ar = AgentRun(
+    # commit=False keeps the row uncommitted (flushed for its PK) so it shares
+    # the transition's transaction.
+    ar = await start_agent_run(
+        session,
         agent_name="promote_live",
-        status=AgentRunStatus.DONE.value,
         strategy_id=s.id,
-        started_at=now,
-        ended_at=now,
-        created_at=now,
+        status=AgentRunStatus.DONE,
+        commit=False,
     )
-    session.add(ar)
 
     # M2 guard re-validates payload["human_approval"]; deferred-defence by design.
     await transition_strategy(

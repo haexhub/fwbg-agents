@@ -16,6 +16,8 @@ STOP conditions, and update your row when done.
 | 003  | CI quality gates (mypy clean, scripts linted, coverage measured) | P2 | M | 002 | DONE (advisor/003-ci-quality-gates; coverage baseline 84%) |
 | 004  | Interim hardening of the web→LLM→executable-code path | P1 | M | — | DONE (advisor/004-harden-llm-code-path) |
 | 005  | Complete the plugin evaluator's invariants (NaN/inf, dtype) | P2 | M | 004 | DONE (advisor/005-complete-evaluator-invariants) |
+| 006  | Agent-Run-Detailansicht (klickbare Agents, LLM-Session-Einblick) — Feature, cross-repo mit fwbg-dashboard | P2 | L | — | TODO |
+| 007  | `fwbg-agent`-Plugin-Namespace + Suche/Filter — Feature, cross-repo mit fwbg + fwbg-dashboard; fixt tote `POST /api/plugins`-Registrierung | P2 | M | — | TODO |
 
 Status values: TODO | IN PROGRESS | DONE | BLOCKED (with one-line reason) | REJECTED (with one-line rationale)
 

@@ -22,6 +22,7 @@ from pydantic_ai.models import Model
 from pydantic_ai.models.anthropic import AnthropicModel
 from pydantic_ai.providers.anthropic import AnthropicProvider
 
+from fwbg_agents.agents.instrumented import run_instrumented
 from fwbg_agents.agents.plugin_authoring_shared import (
     FwbgPluginExample,
     get_fwbg_plugin_examples,
@@ -203,6 +204,7 @@ class PluginPlanner:
         sidecar: dict[str, Any],
         live: LiveCatalog,
         client: FwbgClient | None = None,
+        agent_run_id: int | None = None,
     ) -> PlannerRunResult:
         """Generate, validate, and persist a PluginPlan for the given strategy sidecar."""
         catalog = live.catalog
@@ -244,7 +246,12 @@ class PluginPlanner:
 
         t0 = time.monotonic()
         try:
-            result = await agent.run(user_prompt)
+            if agent_run_id is not None:
+                result = await run_instrumented(
+                    agent, user_prompt, agent_run_id=agent_run_id
+                )
+            else:
+                result = await agent.run(user_prompt)
         except (ValidationError, UnexpectedModelBehavior) as exc:
             raise PluginPlannerError(f"plan schema validation failed: {exc}") from exc
         latency_ms = int((time.monotonic() - t0) * 1000)

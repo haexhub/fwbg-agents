@@ -40,7 +40,6 @@ import asyncio
 import json
 import logging
 import time
-from datetime import UTC, datetime
 from typing import Any, Protocol
 
 import httpx
@@ -54,13 +53,17 @@ from fwbg_agents.orchestrator.universe import (
     plan_universe_attempts,
     timeframes_by_symbol,
 )
-from fwbg_agents.persistence.agent_runs import fail_agent_run
+from fwbg_agents.persistence.agent_runs import (
+    fail_agent_run,
+    finish_agent_run,
+    start_agent_run,
+)
 from fwbg_agents.persistence.models import (
-    AgentRun,
     AgentRunStatus,
     Strategy,
     StrategyState,
 )
+from fwbg_agents.run_events import emit_run_event
 from fwbg_agents.tools.fwbg_client import FwbgClientError, safe_fwbg_strategy_name
 
 log = logging.getLogger(__name__)
@@ -141,17 +144,9 @@ class Runner:
 
     async def run(self, strategy: Strategy) -> RunnerResult:
         """Execute backtests across universe attempts and return the first successful result."""
-        now = datetime.now(UTC)
-        ar = AgentRun(
-            agent_name="runner",
-            status=AgentRunStatus.RUNNING.value,
-            strategy_id=strategy.id,
-            started_at=now,
-            created_at=now,
+        ar = await start_agent_run(
+            self.session, agent_name="runner", strategy_id=strategy.id
         )
-        self.session.add(ar)
-        await self.session.commit()
-        await self.session.refresh(ar)
 
         try:
             iteration_dir = strategy_dir(strategy.slug) / "iteration_001"
@@ -201,7 +196,10 @@ class Runner:
                 )
                 try:
                     job_id, run_data = await self._execute_backtest(
-                        fwbg_name, assets=assets, asset_classes=asset_classes
+                        fwbg_name,
+                        assets=assets,
+                        asset_classes=asset_classes,
+                        agent_run_id=ar.id,
                     )
                 except RunnerError as exc:
                     last_reason = f"attempt {attempt.label!r}: {exc}"
@@ -236,10 +234,19 @@ class Runner:
                     created_by=f"runner#{ar.id}",
                 )
 
-                ar.status = AgentRunStatus.DONE.value
-                ar.ended_at = datetime.now(UTC)
-                ar.output_artifact_path = str(results_path)
-                await self.session.commit()
+                emit_run_event(
+                    agent_run_id=ar.id,
+                    type="backtest_done",
+                    fwbg_run_id=job_id,
+                    universe=attempt.label,
+                    metrics=metrics,
+                )
+                await finish_agent_run(
+                    self.session,
+                    ar,
+                    status=AgentRunStatus.DONE,
+                    output_artifact_path=str(results_path),
+                )
 
                 return RunnerResult(
                     fwbg_run_id=job_id,
@@ -376,15 +383,25 @@ class Runner:
         *,
         assets: list[str] | None,
         asset_classes: list[str] | None,
+        agent_run_id: int,
     ) -> tuple[str, dict[str, Any]]:
         """Start one fwbg run and poll it to completion. Raises RunnerError on
         a failed/errored run or a polling timeout."""
         job_id = await self._acquire_run(
             fwbg_name, assets=assets, asset_classes=asset_classes
         )
+        # Anchor event for the dashboard's link to /runs/<fwbg_run_id>.
+        emit_run_event(
+            agent_run_id,
+            "backtest_submitted",
+            fwbg_run_id=job_id,
+            assets=assets,
+            asset_classes=asset_classes,
+        )
 
         deadline = time.monotonic() + settings.runner_poll_timeout_seconds
         status = "running"
+        emitted_status: str | None = None
         last_progress: dict[str, Any] = {}
         # Transient outage tolerance: fwbg-api can be briefly unreachable
         # while the backtest keeps running on its side (watchtower recreating
@@ -409,6 +426,16 @@ class Runner:
                 continue
             outage_deadline = None
             status = last_progress.get("status", "running")
+            # Emit only on status transition — polling runs every few seconds
+            # for hours; a per-poll event would flood the timeline.
+            if status != emitted_status:
+                emit_run_event(
+                    agent_run_id,
+                    "backtest_progress",
+                    fwbg_run_id=job_id,
+                    status=status,
+                )
+                emitted_status = status
             if status in _TERMINAL_FWBG_STATUSES:
                 break
             await asyncio.sleep(settings.runner_poll_interval_seconds)

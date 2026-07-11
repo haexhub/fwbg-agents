@@ -34,7 +34,15 @@ from fwbg_agents.config import settings
 from fwbg_agents.orchestrator.lifecycle import strategy_dir, transition_plugin
 from fwbg_agents.orchestrator.live_catalog import fetch_live_catalog
 from fwbg_agents.orchestrator.plugin_contract import dump_contract
-from fwbg_agents.persistence.agent_runs import fail_agent_run
+from fwbg_agents.persistence.agent_runs import (
+    fail_agent_run,
+)
+from fwbg_agents.persistence.agent_runs import (
+    finish_agent_run as _finish_agent_run,
+)
+from fwbg_agents.persistence.agent_runs import (
+    start_agent_run as _start_agent_run,
+)
 from fwbg_agents.persistence.models import (
     AgentRun,
     AgentRunStatus,
@@ -93,50 +101,6 @@ def _find_latest_sidecar(slug: str) -> Path | None:
 def _plugin_dir(slug: str) -> Path:
     """Return the filesystem directory for a plugin's generated artifacts."""
     return settings.data_dir / "plugins" / slug
-
-
-async def _start_agent_run(
-    session: AsyncSession,
-    *,
-    agent_name: str,
-    strategy_id: int,
-    input_artifact_path: str | None,
-) -> AgentRun:
-    """Create and persist a new AgentRun row in RUNNING state."""
-    now = datetime.now(UTC)
-    ar = AgentRun(
-        agent_name=agent_name,
-        status=AgentRunStatus.RUNNING.value,
-        strategy_id=strategy_id,
-        input_artifact_path=input_artifact_path,
-        started_at=now,
-        created_at=now,
-    )
-    session.add(ar)
-    await session.commit()
-    await session.refresh(ar)
-    return ar
-
-
-async def _finish_agent_run(
-    session: AsyncSession,
-    ar: AgentRun,
-    *,
-    status: AgentRunStatus,
-    output_artifact_path: str | None = None,
-    error: str | None = None,
-    plugin_id: int | None = None,
-) -> None:
-    """Update an AgentRun row with final status, end time, and optional output fields."""
-    ar.status = status.value
-    ar.ended_at = datetime.now(UTC)
-    if output_artifact_path is not None:
-        ar.output_artifact_path = output_artifact_path
-    if error is not None:
-        ar.error = error
-    if plugin_id is not None:
-        ar.plugin_id = plugin_id
-    await session.commit()
 
 
 async def _persist_llm_call(
@@ -234,7 +198,11 @@ async def author_plugin_from_strategy(
         try:
             planner = PluginPlanner(model=planner_model)
             planner_result = await planner.run_plan(
-                parent_strategy=strategy, sidecar=sidecar, live=live, client=client
+                parent_strategy=strategy,
+                sidecar=sidecar,
+                live=live,
+                client=client,
+                agent_run_id=planner_ar.id,
             )
         except PluginPlannerError as exc:
             await fail_agent_run(session, planner_ar, exc)
@@ -263,7 +231,7 @@ async def author_plugin_from_strategy(
     )
     try:
         implementer = PluginImplementer(model=implementer_model)
-        impl_result = await implementer.run_implement(plan=plan)
+        impl_result = await implementer.run_implement(plan=plan, agent_run_id=impl_ar.id)
     except PluginImplementerError as exc:
         for meta in exc.llm_calls:
             await _persist_llm_call(session, impl_ar, meta)
