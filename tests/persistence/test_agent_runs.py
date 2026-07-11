@@ -12,7 +12,11 @@ from unittest.mock import AsyncMock
 import pytest_asyncio
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
-from fwbg_agents.persistence.agent_runs import fail_agent_run
+from fwbg_agents.persistence.agent_runs import (
+    fail_agent_run,
+    start_agent_run,
+    use_parent_run,
+)
 from fwbg_agents.persistence.database import Base
 from fwbg_agents.persistence.models import AgentRun, AgentRunStatus
 
@@ -93,3 +97,32 @@ async def test_fail_agent_run_swallows_commit_failure(caplog):
     assert row.status == AgentRunStatus.FAILED.value
     assert row.error == "boom"
     assert "failed to persist FAILED status" in caplog.text
+
+
+# --- parent_run_id / use_parent_run (flow drill-down, Plan 008 Schritt 5) ----
+
+
+async def test_start_agent_run_links_parent_from_context(db):
+    """Inside use_parent_run(id), a child run defaults parent_run_id to it;
+    outside the block it resets to None (no accidental re-parenting)."""
+    flow = await start_agent_run(db, agent_name="research_flow")
+    assert flow.parent_run_id is None  # top-level run, no context set
+
+    with use_parent_run(flow.id):
+        child = await start_agent_run(db, agent_name="researcher")
+    assert child.parent_run_id == flow.id
+
+    after = await start_agent_run(db, agent_name="runner")
+    assert after.parent_run_id is None
+
+
+async def test_start_agent_run_explicit_parent_overrides_context(db):
+    """An explicit parent_run_id wins over the scoped context value."""
+    flow = await start_agent_run(db, agent_name="research_flow")
+    other = await start_agent_run(db, agent_name="plugin_author_flow")
+
+    with use_parent_run(flow.id):
+        child = await start_agent_run(
+            db, agent_name="translator", parent_run_id=other.id
+        )
+    assert child.parent_run_id == other.id

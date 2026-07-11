@@ -10,6 +10,9 @@ start/end markers and the live SSE dashboard is notified — Plan 006.
 """
 
 import logging
+from collections.abc import Iterator
+from contextlib import contextmanager
+from contextvars import ContextVar
 from datetime import UTC, datetime
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -22,6 +25,31 @@ log = logging.getLogger(__name__)
 
 _TERMINAL = (AgentRunStatus.DONE, AgentRunStatus.FAILED)
 
+# Flow drill-down (Plan 008 Schritt 5): the id of the flow run currently in
+# scope. A flow entry point (research_flow / plugin_author_flow / ...) sets it
+# via :func:`use_parent_run`; every child ``start_agent_run`` inside that async
+# task then defaults its ``parent_run_id`` to this value. The ContextVar is
+# copied per asyncio task, so concurrent flows never cross-link, and children
+# are awaited within the same context, so the link propagates without threading
+# the id through every agent signature.
+_parent_run: ContextVar[int | None] = ContextVar("agent_run_parent_id", default=None)
+
+
+@contextmanager
+def use_parent_run(run_id: int) -> Iterator[None]:
+    """Scope ``run_id`` as the parent for AgentRuns created inside the block.
+
+    Set at a flow entry point (typically the first line of the background
+    coroutine that drives a flow run); child ``start_agent_run`` calls awaited
+    within inherit it. Auto-resets on exit so a following flow in the same task
+    is not accidentally re-parented.
+    """
+    token = _parent_run.set(run_id)
+    try:
+        yield
+    finally:
+        _parent_run.reset(token)
+
 
 async def start_agent_run(
     session: AsyncSession,
@@ -29,6 +57,7 @@ async def start_agent_run(
     agent_name: str,
     strategy_id: int | None = None,
     plugin_id: int | None = None,
+    parent_run_id: int | None = None,
     input_artifact_path: str | None = None,
     status: AgentRunStatus = AgentRunStatus.RUNNING,
     commit: bool = True,
@@ -40,16 +69,22 @@ async def start_agent_run(
     synchronous already-complete run (``promote_live``). When ``status`` is
     terminal, ``ended_at`` is stamped to match ``started_at``.
 
+    ``parent_run_id`` links this run to the flow run that spawned it; if not
+    passed explicitly it defaults to the flow currently scoped via
+    :func:`use_parent_run` (``None`` at top level). Flow-drill-down — Plan 008.
+
     ``commit=False`` flushes (to obtain the PK) without committing, so the row
     can share a transaction with a following state transition (``promote_live``
     stages its run before ``transition_strategy``); the caller owns the commit.
     """
     now = datetime.now(UTC)
+    parent = parent_run_id if parent_run_id is not None else _parent_run.get()
     ar = AgentRun(
         agent_name=agent_name,
         status=status.value,
         strategy_id=strategy_id,
         plugin_id=plugin_id,
+        parent_run_id=parent,
         input_artifact_path=input_artifact_path,
         started_at=now,
         ended_at=now if status in _TERMINAL else None,

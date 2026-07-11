@@ -32,6 +32,7 @@ from fwbg_agents.persistence.agent_runs import (
     fail_agent_run,
     finish_agent_run,
     start_agent_run,
+    use_parent_run,
 )
 from fwbg_agents.persistence.database import SessionLocal, get_session
 from fwbg_agents.persistence.models import (
@@ -74,13 +75,17 @@ async def _run_research_background(input: ResearcherInput, agent_run_id: int) ->
         search_client = FallbackSearchClient([tavily, brave])
         fwbg = FwbgClient(base_url=settings.fwbg_api_url)
         try:
-            strategy_id = await research_and_translate(
-                session,
-                input,
-                search_client=search_client,
-                fanout_n=settings.researcher_fanout_n,
-                fwbg_client=fwbg,
-            )
+            # Scope this flow run as parent so the researcher + translator runs
+            # spawned inside link back to it (Plan 008 Schritt 5). The auto-
+            # backtest below stays a top-level run, as when started standalone.
+            with use_parent_run(agent_run_id):
+                strategy_id = await research_and_translate(
+                    session,
+                    input,
+                    search_client=search_client,
+                    fanout_n=settings.researcher_fanout_n,
+                    fwbg_client=fwbg,
+                )
             output_artifact_path = str(
                 strategy_dir(
                     (
@@ -146,7 +151,8 @@ async def _run_reiterate_background(parent_id: int, agent_run_id: int) -> None:
         await session.commit()
         fwbg = FwbgClient(base_url=settings.fwbg_api_url)
         try:
-            child_id = await reiterate(session, parent_id, fwbg_client=fwbg)
+            with use_parent_run(agent_run_id):
+                child_id = await reiterate(session, parent_id, fwbg_client=fwbg)
             await finish_agent_run(
                 session, ar, status=AgentRunStatus.DONE, strategy_id=child_id
             )

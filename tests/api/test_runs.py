@@ -179,6 +179,54 @@ async def test_get_agent_run_returns_status(runs_client):
     assert body["output_artifact_path"] == "/out.json"
 
 
+async def test_get_agent_run_exposes_parent_and_children(runs_client):
+    """Flow drill-down: the detail endpoint returns parent_run_id and a list of
+    child runs (Plan 008 Schritt 5)."""
+    client, session, _, _, _ = runs_client
+    now = datetime.now(UTC)
+    flow = AgentRun(
+        agent_name="research_flow",
+        status=AgentRunStatus.DONE.value,
+        started_at=now,
+        ended_at=now,
+        created_at=now,
+    )
+    session.add(flow)
+    await session.commit()
+    await session.refresh(flow)
+
+    children = [
+        AgentRun(
+            agent_name=name,
+            status=AgentRunStatus.DONE.value,
+            parent_run_id=flow.id,
+            started_at=now,
+            ended_at=now,
+            created_at=now,
+        )
+        for name in ("researcher", "translator")
+    ]
+    session.add_all(children)
+    await session.commit()
+    for c in children:
+        await session.refresh(c)
+
+    # Parent run: no parent, both children listed.
+    r = await client.get(f"/agents/runs/{flow.id}")
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["parent_run_id"] is None
+    assert [c["agent_name"] for c in body["children"]] == ["researcher", "translator"]
+    assert all(c["status"] == "done" for c in body["children"])
+
+    # Child run: points back at the flow, has no children of its own.
+    r = await client.get(f"/agents/runs/{children[0].id}")
+    assert r.status_code == 200, r.text
+    child_body = r.json()
+    assert child_body["parent_run_id"] == flow.id
+    assert child_body["children"] == []
+
+
 async def test_get_agent_run_404(runs_client):
     client, _, _, _, _ = runs_client
     r = await client.get("/agents/runs/99999")

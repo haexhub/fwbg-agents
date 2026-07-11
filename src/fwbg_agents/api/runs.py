@@ -60,6 +60,7 @@ def _serialize_agent_run(ar: AgentRun) -> dict[str, Any]:
         "status": ar.status,
         "strategy_id": ar.strategy_id,
         "plugin_id": ar.plugin_id,
+        "parent_run_id": ar.parent_run_id,
         "input_artifact_path": ar.input_artifact_path,
         "output_artifact_path": ar.output_artifact_path,
         "error": ar.error,
@@ -373,10 +374,22 @@ async def get_agent_run(
         for c in calls
     ]
 
+    # Flow drill-down (Plan 008 Schritt 5): child runs spawned under this run.
+    children = (
+        await session.execute(
+            select(AgentRun)
+            .where(AgentRun.parent_run_id == agent_run_id)
+            .order_by(asc(AgentRun.started_at))
+        )
+    ).scalars().all()
+
     body = _serialize_agent_run(ar)
     body["llm_calls"] = llm_calls
     body["total_input_tokens"] = sum(c.input_tokens for c in calls)
     body["total_output_tokens"] = sum(c.output_tokens for c in calls)
+    body["children"] = [
+        {"id": c.id, "agent_name": c.agent_name, "status": c.status} for c in children
+    ]
     body["transcripts"] = _list_transcripts(agent_run_id)
     body["artifacts"] = [
         _artifact_info("input", ar.input_artifact_path),
