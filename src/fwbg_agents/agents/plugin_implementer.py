@@ -331,9 +331,7 @@ class PluginImplementer:
     ) -> None:
         """Initialize."""
         self.model = model if model is not None else model_for("plugin_implementer")
-        self.max_rounds = (
-            max_rounds if max_rounds is not None else settings.plugin_impl_max_rounds
-        )
+        self.max_rounds = max_rounds if max_rounds is not None else settings.plugin_impl_max_rounds
         self.prompt_path = prompt_path or prompt_path_for("plugin_implementer", _PROMPT_PATH)
 
     async def run_implement(
@@ -434,10 +432,7 @@ class PluginImplementer:
             # Also verify the LLM-emitted slug matches the plan's slug.
             if output.slug != plan.slug:
                 last_code = code
-                last_err = (
-                    f"slug mismatch: plan.slug={plan.slug!r}, "
-                    f"output.slug={output.slug!r}"
-                )
+                last_err = f"slug mismatch: plan.slug={plan.slug!r}, output.slug={output.slug!r}"
                 _round_failed(last_err)
                 continue
 

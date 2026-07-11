@@ -33,9 +33,7 @@ def upgrade() -> None:
                 nullable=True,
             )
         )
-        batch_op.create_index(
-            "ix_agent_run_parent_run_id", ["parent_run_id"]
-        )
+        batch_op.create_index("ix_agent_run_parent_run_id", ["parent_run_id"])
 
 
 def downgrade() -> None:

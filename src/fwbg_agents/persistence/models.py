@@ -172,9 +172,7 @@ class StrategyTag(Base):
 
     __tablename__ = "strategy_tag"
 
-    strategy_id: Mapped[int] = mapped_column(
-        Integer, ForeignKey("strategy.id"), primary_key=True
-    )
+    strategy_id: Mapped[int] = mapped_column(Integer, ForeignKey("strategy.id"), primary_key=True)
     tag: Mapped[str] = mapped_column(String(128), primary_key=True, index=True)
 
 

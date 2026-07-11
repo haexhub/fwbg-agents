@@ -118,10 +118,10 @@ async def test_verification_run_round_trip_with_failed_status(db):
     await db.commit()
 
     rows = (
-        await db.execute(
-            select(VerificationRun).where(VerificationRun.plugin_id == plugin.id)
-        )
-    ).scalars().all()
+        (await db.execute(select(VerificationRun).where(VerificationRun.plugin_id == plugin.id)))
+        .scalars()
+        .all()
+    )
     assert len(rows) == 1
     assert rows[0].status == "failed"
     assert rows[0].scenarios_passed == 1

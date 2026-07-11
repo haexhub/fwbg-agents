@@ -109,12 +109,8 @@ _VALID_CONTRACT = {
     "name": "fancy_indicator",
     "kind": "indicator",
     "version": "v1",
-    "inputs": [
-        {"name": "ohlcv", "dtype": "ohlcv", "required": True, "description": ""}
-    ],
-    "outputs": [
-        {"name": "fancy_value", "dtype": "series", "length_invariant": "same_as_input"}
-    ],
+    "inputs": [{"name": "ohlcv", "dtype": "ohlcv", "required": True, "description": ""}],
+    "outputs": [{"name": "fancy_value", "dtype": "series", "length_invariant": "same_as_input"}],
     "params": [
         {
             "name": "window",
@@ -126,9 +122,7 @@ _VALID_CONTRACT = {
         }
     ],
     "invariants": ["outputs[0].length == inputs[0].length"],
-    "test_scenarios": [
-        {"name": "trending_up", "data_path": "test_scenarios/trending_up.parquet"}
-    ],
+    "test_scenarios": [{"name": "trending_up", "data_path": "test_scenarios/trending_up.parquet"}],
 }
 _VALID_SPEC = (
     "# fancy_indicator\n\n"
@@ -220,9 +214,7 @@ def test_contract_check_accepts_inherited_phase_attr():
     """phase attr is optional on the subclass when inherited from the base."""
     plan = _make_plan()
     # Strip the explicit `phase = PluginPhase.INDICATORS` line.
-    code = "\n".join(
-        line for line in _VALID_CODE.splitlines() if "phase = PluginPhase" not in line
-    )
+    code = "\n".join(line for line in _VALID_CODE.splitlines() if "phase = PluginPhase" not in line)
     check = contract_check(code, plan)
     assert check.ok, check.msg
 

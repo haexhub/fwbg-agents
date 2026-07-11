@@ -90,8 +90,7 @@ def _render_prompt(
     out = out.replace(
         "{{ available_plugins_json }}",
         json.dumps(
-            available_plugins
-            or {"note": "catalog unavailable — name indicators freely"},
+            available_plugins or {"note": "catalog unavailable — name indicators freely"},
             indent=2,
         ),
     )

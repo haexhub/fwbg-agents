@@ -175,9 +175,7 @@ async def test_run_reiterate_with_plugin_happy_path_indicator_phase(db_with_pare
         parent = (
             await session.execute(select(Strategy).where(Strategy.id == parent_id))
         ).scalar_one()
-        child = await Translator(session).run_reiterate_with_plugin(
-            parent, PLUGIN_SLUG, sidecar
-        )
+        child = await Translator(session).run_reiterate_with_plugin(parent, PLUGIN_SLUG, sidecar)
 
     assert isinstance(child, Strategy)
     assert child.current_state == StrategyState.PROPOSED.value
@@ -208,8 +206,10 @@ async def test_run_reiterate_with_plugin_happy_path_indicator_phase(db_with_pare
 
     async with SessionMaker() as v:
         ts = (
-            await v.execute(select(Transition).where(Transition.entity_id == child.id))
-        ).scalars().all()
+            (await v.execute(select(Transition).where(Transition.entity_id == child.id)))
+            .scalars()
+            .all()
+        )
         assert len(ts) == 1
         assert ts[0].to_state == StrategyState.PROPOSED.value
         assert ts[0].payload["parent_strategy_id"] == parent_id
@@ -217,10 +217,10 @@ async def test_run_reiterate_with_plugin_happy_path_indicator_phase(db_with_pare
         assert ts[0].payload["sidecar"] == sidecar
 
         ars = (
-            await v.execute(
-                select(AgentRun).where(AgentRun.agent_name == "translator")
-            )
-        ).scalars().all()
+            (await v.execute(select(AgentRun).where(AgentRun.agent_name == "translator")))
+            .scalars()
+            .all()
+        )
         assert len(ars) == 1
         assert ars[0].status == AgentRunStatus.DONE.value
 
@@ -238,9 +238,7 @@ async def test_run_reiterate_with_plugin_feature_selection_phase(db_with_parent)
         parent = (
             await session.execute(select(Strategy).where(Strategy.id == parent_id))
         ).scalar_one()
-        child = await Translator(session).run_reiterate_with_plugin(
-            parent, slug, sidecar
-        )
+        child = await Translator(session).run_reiterate_with_plugin(parent, slug, sidecar)
 
     from fwbg_agents.config import settings
 
@@ -266,9 +264,7 @@ async def test_run_reiterate_with_plugin_preprocessing_phase(db_with_parent):
         parent = (
             await session.execute(select(Strategy).where(Strategy.id == parent_id))
         ).scalar_one()
-        child = await Translator(session).run_reiterate_with_plugin(
-            parent, slug, sidecar
-        )
+        child = await Translator(session).run_reiterate_with_plugin(parent, slug, sidecar)
 
     from fwbg_agents.config import settings
 
@@ -291,9 +287,7 @@ async def test_run_reiterate_with_plugin_filter_phase(db_with_parent):
         parent = (
             await session.execute(select(Strategy).where(Strategy.id == parent_id))
         ).scalar_one()
-        child = await Translator(session).run_reiterate_with_plugin(
-            parent, slug, sidecar
-        )
+        child = await Translator(session).run_reiterate_with_plugin(parent, slug, sidecar)
 
     from fwbg_agents.config import settings
 
@@ -317,24 +311,22 @@ async def test_run_reiterate_with_plugin_rejects_unknown_phase(db_with_parent):
             await session.execute(select(Strategy).where(Strategy.id == parent_id))
         ).scalar_one()
         with pytest.raises(TranslatorError) as exc:
-            await Translator(session).run_reiterate_with_plugin(
-                parent, PLUGIN_SLUG, sidecar
-            )
+            await Translator(session).run_reiterate_with_plugin(parent, PLUGIN_SLUG, sidecar)
     assert "orchestration" in str(exc.value)
 
     async with SessionMaker() as v:
         children = (
-            await v.execute(
-                select(Strategy).where(Strategy.parent_strategy_id == parent_id)
-            )
-        ).scalars().all()
+            (await v.execute(select(Strategy).where(Strategy.parent_strategy_id == parent_id)))
+            .scalars()
+            .all()
+        )
         assert children == []
 
         ars = (
-            await v.execute(
-                select(AgentRun).where(AgentRun.agent_name == "translator")
-            )
-        ).scalars().all()
+            (await v.execute(select(AgentRun).where(AgentRun.agent_name == "translator")))
+            .scalars()
+            .all()
+        )
         assert len(ars) == 1
         assert ars[0].status == AgentRunStatus.FAILED.value
         assert "orchestration" in (ars[0].error or "")
@@ -375,17 +367,15 @@ async def test_run_reiterate_with_plugin_rejects_parent_not_backtested(tmp_path,
             await session.execute(select(Strategy).where(Strategy.id == parent_id))
         ).scalar_one()
         with pytest.raises(TranslatorError) as exc:
-            await Translator(session).run_reiterate_with_plugin(
-                parent, PLUGIN_SLUG, sidecar
-            )
+            await Translator(session).run_reiterate_with_plugin(parent, PLUGIN_SLUG, sidecar)
     assert "BACKTESTED" in str(exc.value)
 
     async with Session() as v:
         children = (
-            await v.execute(
-                select(Strategy).where(Strategy.parent_strategy_id == parent_id)
-            )
-        ).scalars().all()
+            (await v.execute(select(Strategy).where(Strategy.parent_strategy_id == parent_id)))
+            .scalars()
+            .all()
+        )
         assert children == []
         ars = (await v.execute(select(AgentRun))).scalars().all()
         assert len(ars) == 1
@@ -414,9 +404,7 @@ async def test_run_reiterate_with_plugin_appends_to_existing_iterations(db_with_
             }
         ],
     }
-    (it_dir / "hypothesis.json").write_text(
-        json.dumps(parent_hypothesis_with_prior, indent=2)
-    )
+    (it_dir / "hypothesis.json").write_text(json.dumps(parent_hypothesis_with_prior, indent=2))
 
     sidecar = _sidecar("indicator")
 
@@ -424,9 +412,7 @@ async def test_run_reiterate_with_plugin_appends_to_existing_iterations(db_with_
         parent = (
             await session.execute(select(Strategy).where(Strategy.id == parent_id))
         ).scalar_one()
-        child = await Translator(session).run_reiterate_with_plugin(
-            parent, PLUGIN_SLUG, sidecar
-        )
+        child = await Translator(session).run_reiterate_with_plugin(parent, PLUGIN_SLUG, sidecar)
 
     from fwbg_agents.config import settings
 

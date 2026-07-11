@@ -104,15 +104,19 @@ async def main() -> int:
                 await session.execute(select(Strategy).where(Strategy.id == ar.strategy_id))
             ).scalar_one()
             researcher_runs = (
-                await session.execute(
-                    select(AgentRun).where(AgentRun.agent_name == "researcher")
-                )
-            ).scalars().all()
+                (await session.execute(select(AgentRun).where(AgentRun.agent_name == "researcher")))
+                .scalars()
+                .all()
+            )
             search_rows = (
-                await session.execute(
-                    select(LlmCall).where(LlmCall.model.in_(["tavily-search", "brave-search"]))
+                (
+                    await session.execute(
+                        select(LlmCall).where(LlmCall.model.in_(["tavily-search", "brave-search"]))
+                    )
                 )
-            ).scalars().all()
+                .scalars()
+                .all()
+            )
 
         done_researcher_runs = [
             run for run in researcher_runs if run.status == AgentRunStatus.DONE.value
@@ -132,8 +136,10 @@ async def main() -> int:
         hyp_path = Path(s.hypothesis_path)
         try:
             hypothesis = ResearcherHypothesis.model_validate_json(hyp_path.read_text())
-            print(f"      ✓ {hyp_path.name} round-trips into ResearcherHypothesis "
-                  f"({hypothesis.title!r})")
+            print(
+                f"      ✓ {hyp_path.name} round-trips into ResearcherHypothesis "
+                f"({hypothesis.title!r})"
+            )
         except Exception as exc:
             print(f"      ✗ hypothesis.json failed to round-trip: {exc}", file=sys.stderr)
             return 1

@@ -91,22 +91,24 @@ async def test_m5d_smoke_self_test(isolated_smoke_env):
     TestSession = isolated_smoke_env
     async with TestSession() as session:
         plugin = (
-            await session.execute(
-                select(Plugin).where(Plugin.slug == m5d_smoke.SMOKE_PLUGIN_SLUG)
-            )
+            await session.execute(select(Plugin).where(Plugin.slug == m5d_smoke.SMOKE_PLUGIN_SLUG))
         ).scalar_one()
         assert plugin.current_state == PluginState.AUTHORED.value
 
         inner_runs = (
-            await session.execute(
-                select(AgentRun)
-                .where(
-                    (AgentRun.plugin_id == plugin.id)
-                    & (AgentRun.agent_name.in_(("plugin_planner", "plugin_implementer")))
+            (
+                await session.execute(
+                    select(AgentRun)
+                    .where(
+                        (AgentRun.plugin_id == plugin.id)
+                        & (AgentRun.agent_name.in_(("plugin_planner", "plugin_implementer")))
+                    )
+                    .order_by(AgentRun.id)
                 )
-                .order_by(AgentRun.id)
             )
-        ).scalars().all()
+            .scalars()
+            .all()
+        )
         assert [ar.agent_name for ar in inner_runs] == [
             "plugin_planner",
             "plugin_implementer",
@@ -115,19 +117,17 @@ async def test_m5d_smoke_self_test(isolated_smoke_env):
 
         impl_ar = inner_runs[1]
         impl_llm_calls = (
-            await session.execute(
-                select(LlmCall).where(LlmCall.agent_run_id == impl_ar.id)
-            )
-        ).scalars().all()
+            (await session.execute(select(LlmCall).where(LlmCall.agent_run_id == impl_ar.id)))
+            .scalars()
+            .all()
+        )
         assert len(impl_llm_calls) >= 1
 
     # plan.json round-trips into PluginPlan
     from fwbg_agents.agents.plugin_planner import PluginPlan
     from fwbg_agents.config import settings
 
-    plan_path = (
-        settings.data_dir / "plugin-runs" / m5d_smoke.SMOKE_PLUGIN_SLUG / "plan.json"
-    )
+    plan_path = settings.data_dir / "plugin-runs" / m5d_smoke.SMOKE_PLUGIN_SLUG / "plan.json"
     assert plan_path.is_file()
     PluginPlan.model_validate(json.loads(plan_path.read_text()))
 

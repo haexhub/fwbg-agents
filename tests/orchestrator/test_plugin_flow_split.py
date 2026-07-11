@@ -107,9 +107,7 @@ _VALID_CONTRACT = {
     "kind": "indicator",
     "version": "v1",
     "inputs": [{"name": "ohlcv", "dtype": "ohlcv", "required": True, "description": ""}],
-    "outputs": [
-        {"name": "fancy_value", "dtype": "series", "length_invariant": "same_as_input"}
-    ],
+    "outputs": [{"name": "fancy_value", "dtype": "series", "length_invariant": "same_as_input"}],
     "params": [
         {
             "name": "window",
@@ -121,9 +119,7 @@ _VALID_CONTRACT = {
         }
     ],
     "invariants": ["outputs[0].length == inputs[0].length"],
-    "test_scenarios": [
-        {"name": "trending_up", "data_path": "test_scenarios/trending_up.parquet"}
-    ],
+    "test_scenarios": [{"name": "trending_up", "data_path": "test_scenarios/trending_up.parquet"}],
 }
 _VALID_SPEC = (
     "# fancy_indicator\n\n"
@@ -229,19 +225,13 @@ async def test_full_flow_creates_two_agent_runs_and_plugin(author_env):
         )
 
     async with Session() as session:
-        runs = (
-            await session.execute(
-                select(AgentRun).order_by(AgentRun.id)
-            )
-        ).scalars().all()
+        runs = (await session.execute(select(AgentRun).order_by(AgentRun.id))).scalars().all()
         ar_names = [ar.agent_name for ar in runs]
         ar_statuses = [ar.status for ar in runs]
-        plugin = (
-            await session.execute(select(Plugin).where(Plugin.id == plugin_id))
-        ).scalar_one()
+        plugin = (await session.execute(select(Plugin).where(Plugin.id == plugin_id))).scalar_one()
         transitions = (
-            await session.execute(select(Transition).order_by(Transition.id))
-        ).scalars().all()
+            (await session.execute(select(Transition).order_by(Transition.id))).scalars().all()
+        )
 
     assert ar_names == ["plugin_planner", "plugin_implementer"]
     assert all(s == AgentRunStatus.DONE.value for s in ar_statuses)
@@ -288,10 +278,10 @@ async def test_implementer_loop_persists_n_llm_calls(author_env):
             )
         ).scalar_one()
         llm_calls = (
-            await session.execute(
-                select(LlmCall).where(LlmCall.agent_run_id == impl_ar.id)
-            )
-        ).scalars().all()
+            (await session.execute(select(LlmCall).where(LlmCall.agent_run_id == impl_ar.id)))
+            .scalars()
+            .all()
+        )
 
     assert len(llm_calls) == 3
     assert impl_ar.status == AgentRunStatus.DONE.value
@@ -318,12 +308,8 @@ async def test_planner_failure_short_circuits_implementer(author_env):
             )
 
     async with Session() as session:
-        runs = (
-            await session.execute(select(AgentRun).order_by(AgentRun.id))
-        ).scalars().all()
-        plugins = (
-            await session.execute(select(Plugin))
-        ).scalars().all()
+        runs = (await session.execute(select(AgentRun).order_by(AgentRun.id))).scalars().all()
+        plugins = (await session.execute(select(Plugin))).scalars().all()
 
     assert len(runs) == 1
     assert runs[0].agent_name == "plugin_planner"
@@ -332,9 +318,7 @@ async def test_planner_failure_short_circuits_implementer(author_env):
     assert plugins == []
 
 
-async def test_implementer_failure_marks_both_runs_and_stores_last_code(
-    author_env, tmp_path
-):
+async def test_implementer_failure_marks_both_runs_and_stores_last_code(author_env, tmp_path):
     """Implementer exhausts max_rounds → planner DONE, implementer FAILED with
     last_failed_code.py on disk."""
     Session, parent_id, _ = author_env
@@ -352,12 +336,8 @@ async def test_implementer_failure_marks_both_runs_and_stores_last_code(
             )
 
     async with Session() as session:
-        runs = (
-            await session.execute(select(AgentRun).order_by(AgentRun.id))
-        ).scalars().all()
-        plugins = (
-            await session.execute(select(Plugin))
-        ).scalars().all()
+        runs = (await session.execute(select(AgentRun).order_by(AgentRun.id))).scalars().all()
+        plugins = (await session.execute(select(Plugin))).scalars().all()
 
     assert [ar.agent_name for ar in runs] == ["plugin_planner", "plugin_implementer"]
     assert runs[0].status == AgentRunStatus.DONE.value
@@ -380,9 +360,7 @@ async def test_precondition_blocks_before_any_agent_run(author_env):
     """Strategy in non-BACKTESTED state → 422 raised, no ARs persisted."""
     Session, parent_id, _ = author_env
     async with Session() as session:
-        s = (
-            await session.execute(select(Strategy).where(Strategy.id == parent_id))
-        ).scalar_one()
+        s = (await session.execute(select(Strategy).where(Strategy.id == parent_id))).scalar_one()
         s.current_state = StrategyState.PROPOSED.value
         await session.commit()
 

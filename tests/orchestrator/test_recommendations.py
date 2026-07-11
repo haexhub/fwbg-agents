@@ -198,9 +198,7 @@ async def test_tune_params_records_sidecar_no_transition(db_and_backtested):
 async def test_change_exit_records_sidecar_no_transition(db_and_backtested):
     SessionMaker, sid, tmp_path, _criteria = db_and_backtested
     async with SessionMaker() as session:
-        s = (
-            await session.execute(select(Strategy).where(Strategy.id == sid))
-        ).scalar_one()
+        s = (await session.execute(select(Strategy).where(Strategy.id == sid))).scalar_one()
         rec = ChangeExit(
             confidence=0.5,
             reasoning="static SL too tight",
@@ -275,7 +273,11 @@ async def test_modify_plugins_records_sidecar_no_transition(db_and_backtested):
         assert tr is None
 
     sidecar = (
-        tmp_path / "data" / "strategies" / "demo_v1" / "iteration_001"
+        tmp_path
+        / "data"
+        / "strategies"
+        / "demo_v1"
+        / "iteration_001"
         / "analyst_recommendation.json"
     )
     rec_persisted = json.loads(sidecar.read_text())

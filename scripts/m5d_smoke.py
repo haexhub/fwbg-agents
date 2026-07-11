@@ -116,9 +116,7 @@ _CONTRACT: dict = {
     "name": SMOKE_PLUGIN_SLUG,
     "kind": "indicator",
     "version": "v1",
-    "inputs": [
-        {"name": "ohlcv", "dtype": "ohlcv", "required": True, "description": ""}
-    ],
+    "inputs": [{"name": "ohlcv", "dtype": "ohlcv", "required": True, "description": ""}],
     "outputs": [
         {"name": "smoke_m5d_zscore", "dtype": "series", "length_invariant": "same_as_input"}
     ],
@@ -126,9 +124,7 @@ _CONTRACT: dict = {
         {"name": "window", "dtype": "int", "default": 30, "min": 5, "max": 200, "description": ""}
     ],
     "invariants": ["outputs[0].length == inputs[0].length"],
-    "test_scenarios": [
-        {"name": "trending_up", "data_path": "test_scenarios/trending_up.parquet"}
-    ],
+    "test_scenarios": [{"name": "trending_up", "data_path": "test_scenarios/trending_up.parquet"}],
 }
 
 _SPEC_MD = (
@@ -207,9 +203,7 @@ async def _wait_for_run(agent_run_id: int, deadline_s: float = DEADLINE_S) -> Ag
     while time.monotonic() < end:
         async with SessionLocal() as session:
             ar = (
-                await session.execute(
-                    select(AgentRun).where(AgentRun.id == agent_run_id)
-                )
+                await session.execute(select(AgentRun).where(AgentRun.id == agent_run_id))
             ).scalar_one()
             if ar.status in {"done", "failed"}:
                 return ar
@@ -221,9 +215,7 @@ async def _seed_parent_strategy() -> int:
     now = datetime.now(UTC)
     async with SessionLocal() as session:
         existing = (
-            await session.execute(
-                select(Strategy).where(Strategy.slug == SMOKE_STRATEGY_SLUG)
-            )
+            await session.execute(select(Strategy).where(Strategy.slug == SMOKE_STRATEGY_SLUG))
         ).scalar_one_or_none()
         if existing is not None:
             strategy_id = existing.id
@@ -274,54 +266,47 @@ async def _assert_split_flow_artifacts(plugin_id: int) -> None:
         # writes a `plugin_author_flow` outer AR linked to plugin_id, which is
         # the user-facing poll target and not part of the split-flow assertion.
         runs = (
-            await session.execute(
-                select(AgentRun)
-                .where(
-                    (AgentRun.plugin_id == plugin_id)
-                    & (AgentRun.agent_name.in_(("plugin_planner", "plugin_implementer")))
+            (
+                await session.execute(
+                    select(AgentRun)
+                    .where(
+                        (AgentRun.plugin_id == plugin_id)
+                        & (AgentRun.agent_name.in_(("plugin_planner", "plugin_implementer")))
+                    )
+                    .order_by(AgentRun.id)
                 )
-                .order_by(AgentRun.id)
             )
-        ).scalars().all()
+            .scalars()
+            .all()
+        )
         names = [ar.agent_name for ar in runs]
         if names != ["plugin_planner", "plugin_implementer"]:
             raise AssertionError(
                 f"expected inner ARs [plugin_planner, plugin_implementer], got {names}"
             )
         if not all(ar.status == "done" for ar in runs):
-            raise AssertionError(
-                f"both inner ARs must be DONE; got: {[ar.status for ar in runs]}"
-            )
+            raise AssertionError(f"both inner ARs must be DONE; got: {[ar.status for ar in runs]}")
         impl_ar = runs[1]
         llm_calls = (
-            await session.execute(
-                select(LlmCall).where(LlmCall.agent_run_id == impl_ar.id)
-            )
-        ).scalars().all()
+            (await session.execute(select(LlmCall).where(LlmCall.agent_run_id == impl_ar.id)))
+            .scalars()
+            .all()
+        )
         if not llm_calls:
-            raise AssertionError(
-                "expected at least 1 LlmCall under the plugin_implementer AR"
-            )
-        plugin = (
-            await session.execute(select(Plugin).where(Plugin.id == plugin_id))
-        ).scalar_one()
+            raise AssertionError("expected at least 1 LlmCall under the plugin_implementer AR")
+        plugin = (await session.execute(select(Plugin).where(Plugin.id == plugin_id))).scalar_one()
         if plugin.current_state != PluginState.AUTHORED.value:
-            raise AssertionError(
-                f"plugin should be AUTHORED; got {plugin.current_state!r}"
-            )
+            raise AssertionError(f"plugin should be AUTHORED; got {plugin.current_state!r}")
         transitions = (
-            await session.execute(
-                select(Transition).where(Transition.entity_id == plugin_id)
-            )
-        ).scalars().all()
+            (await session.execute(select(Transition).where(Transition.entity_id == plugin_id)))
+            .scalars()
+            .all()
+        )
         if not any(
-            t.from_state == PluginState.SPECIFIED.value
-            and t.to_state == PluginState.AUTHORED.value
+            t.from_state == PluginState.SPECIFIED.value and t.to_state == PluginState.AUTHORED.value
             for t in transitions
         ):
-            raise AssertionError(
-                "expected SPECIFIED -> AUTHORED transition for the plugin"
-            )
+            raise AssertionError("expected SPECIFIED -> AUTHORED transition for the plugin")
 
     # plan.json round-trips into PluginPlan
     from fwbg_agents.agents.plugin_planner import PluginPlan

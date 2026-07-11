@@ -28,9 +28,7 @@ def _valid_spec(**overrides) -> PluginSpec:
         "capability": "Flags bars where RSI is in an overbought/oversold extreme.",
         "summary": "Computes RSI(n) and emits a boolean extreme flag per bar.",
         "inputs": ["close series"],
-        "params": [
-            SpecParam(name="period", type="int", description="Lookback bars", default=14)
-        ],
+        "params": [SpecParam(name="period", type="int", description="Lookback bars", default=14)],
         "outputs": ["rsi_value", "rsi_extreme_flag"],
         "acceptance_criteria": ["Flag is True only when RSI>70 or RSI<30."],
         "edge_cases": ["All-constant prices yield no extremes."],
@@ -119,6 +117,4 @@ def test_constitution_lists_every_canonical_kind_and_phase():
     kind_block = text.split("- **kind**", 1)[1].split("- **phase**", 1)[0]
     phase_block = text.split("- **phase**", 1)[1].split("\n\n", 1)[0]
     assert set(re.findall(r"`([a-z_]+)`", kind_block)) == set(get_args(PluginKindLit))
-    assert set(re.findall(r"`([a-z_]+)`", phase_block)) == set(
-        get_args(PluginPhaseLit)
-    )
+    assert set(re.findall(r"`([a-z_]+)`", phase_block)) == set(get_args(PluginPhaseLit))

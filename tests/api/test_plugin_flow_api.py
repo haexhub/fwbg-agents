@@ -63,9 +63,7 @@ async def client_with_db(tmp_path, monkeypatch):
 # ---------------------------------------------------------------------------
 
 
-async def test_post_author_plugin_returns_202_with_agent_run(
-    client_with_db, monkeypatch
-):
+async def test_post_author_plugin_returns_202_with_agent_run(client_with_db, monkeypatch):
     client, session, settings = client_with_db
 
     now = datetime.now(UTC)
@@ -104,6 +102,7 @@ async def test_post_author_plugin_returns_202_with_agent_run(
         captured.append((strategy_id, agent_run_id))
 
     from fwbg_agents.api import plugins as plugins_api
+
     monkeypatch.setattr(plugins_api, "_run_author_background", fake_author_bg)
 
     r = await client.post(f"/strategies/{parent.id}/author-plugin")
@@ -113,9 +112,7 @@ async def test_post_author_plugin_returns_202_with_agent_run(
     assert body["strategy_id"] == parent.id
 
     ar = (
-        await session.execute(
-            select(AgentRun).where(AgentRun.id == body["agent_run_id"])
-        )
+        await session.execute(select(AgentRun).where(AgentRun.id == body["agent_run_id"]))
     ).scalar_one()
     assert ar.agent_name == "plugin_author_flow"
     assert ar.status == AgentRunStatus.PENDING.value
@@ -200,6 +197,7 @@ async def test_post_plugin_evaluate_returns_202(client_with_db, monkeypatch):
         captured.append((plugin_id, agent_run_id))
 
     from fwbg_agents.api import plugins as plugins_api
+
     monkeypatch.setattr(plugins_api, "_run_evaluator_background", fake_eval_bg)
 
     r = await client.post(f"/plugins/{plugin.id}/evaluate")
@@ -208,9 +206,7 @@ async def test_post_plugin_evaluate_returns_202(client_with_db, monkeypatch):
     assert body["plugin_id"] == plugin.id
 
     ar = (
-        await session.execute(
-            select(AgentRun).where(AgentRun.id == body["agent_run_id"])
-        )
+        await session.execute(select(AgentRun).where(AgentRun.id == body["agent_run_id"]))
     ).scalar_one()
     assert ar.agent_name == "plugin_evaluator_flow"
     assert ar.plugin_id == plugin.id

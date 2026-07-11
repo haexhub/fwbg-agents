@@ -42,8 +42,7 @@ async def main() -> None:
         # Happy path: proposed → backtested
         await transition_strategy(session, s, StrategyState.BACKTESTED, reason="smoke")
         print(
-            f"after backtested: state={s.current_state}, "
-            f"dir exists={strategy_dir(slug).is_dir()}"
+            f"after backtested: state={s.current_state}, dir exists={strategy_dir(slug).is_dir()}"
         )
 
         # Invalid skip (proposed → live blocked by edge table; we're already at
@@ -61,10 +60,19 @@ async def main() -> None:
 
         # backtested → paper (no criteria YAML for INDEX present → pass-through)
         await transition_strategy(
-            session, s, StrategyState.PAPER_TRADING, reason="metrics good",
-            payload={"backtest_metrics": {"sharpe": 1.8, "mc_pvalue": 0.02,
-                                          "profit_factor": 1.7, "min_trades": 350,
-                                          "max_drawdown": 0.18}},
+            session,
+            s,
+            StrategyState.PAPER_TRADING,
+            reason="metrics good",
+            payload={
+                "backtest_metrics": {
+                    "sharpe": 1.8,
+                    "mc_pvalue": 0.02,
+                    "profit_factor": 1.7,
+                    "min_trades": 350,
+                    "max_drawdown": 0.18,
+                }
+            },
         )
         print(f"after paper_trading: state={s.current_state}")
 
@@ -75,7 +83,10 @@ async def main() -> None:
             print(f"auto-promote rejected: {e}")
 
         await transition_strategy(
-            session, s, StrategyState.LIVE_TRADING, reason="human ok",
+            session,
+            s,
+            StrategyState.LIVE_TRADING,
+            reason="human ok",
             payload={"human_approval": True},
         )
         print(f"after live_trading: state={s.current_state}")
@@ -91,8 +102,10 @@ async def main() -> None:
 
         r = await client.get(f"/strategies/{strategy_id}")
         body = r.json()
-        print(f"GET /strategies/{strategy_id} -> state={body['strategy']['current_state']}, "
-              f"tags={body['strategy']['tags']}, transitions={len(body['transitions'])}")
+        print(
+            f"GET /strategies/{strategy_id} -> state={body['strategy']['current_state']}, "
+            f"tags={body['strategy']['tags']}, transitions={len(body['transitions'])}"
+        )
         for t in body["transitions"]:
             print(f"  {t['from_state']} → {t['to_state']} ({t['reason']!r})")
 

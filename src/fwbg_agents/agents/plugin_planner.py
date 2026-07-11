@@ -164,8 +164,7 @@ def _render_user_prompt(
     """Render the planner user prompt from the strategy excerpt, sidecar, and reference examples."""
     examples_block = (
         "\n\n".join(
-            f"## Example: {ex.slug} ({ex.path})\n```python\n{ex.source}\n```"
-            for ex in examples
+            f"## Example: {ex.slug} ({ex.path})\n```python\n{ex.source}\n```" for ex in examples
         )
         or "(no in-tree examples available for this category)"
     )
@@ -247,9 +246,7 @@ class PluginPlanner:
         t0 = time.monotonic()
         try:
             if agent_run_id is not None:
-                result = await run_instrumented(
-                    agent, user_prompt, agent_run_id=agent_run_id
-                )
+                result = await run_instrumented(agent, user_prompt, agent_run_id=agent_run_id)
             else:
                 result = await agent.run(user_prompt)
         except (ValidationError, UnexpectedModelBehavior) as exc:
@@ -265,9 +262,7 @@ class PluginPlanner:
             )
 
         if _slug_in_catalog(plan.slug, catalog):
-            raise PluginPlannerError(
-                f"slug collision: {plan.slug!r} already exists in the catalog"
-            )
+            raise PluginPlannerError(f"slug collision: {plan.slug!r} already exists in the catalog")
 
         plan_dir = settings.data_dir / "plugin-runs" / plan.slug
         plan_dir.mkdir(parents=True, exist_ok=True)

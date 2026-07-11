@@ -42,14 +42,18 @@ async def fail_orphaned_runs() -> int:
     """Fail every PENDING/RUNNING agent run. Returns how many were cleaned."""
     async with SessionLocal() as session:
         stale = (
-            await session.execute(
-                select(AgentRun).where(
-                    AgentRun.status.in_(
-                        [AgentRunStatus.PENDING.value, AgentRunStatus.RUNNING.value]
+            (
+                await session.execute(
+                    select(AgentRun).where(
+                        AgentRun.status.in_(
+                            [AgentRunStatus.PENDING.value, AgentRunStatus.RUNNING.value]
+                        )
                     )
                 )
             )
-        ).scalars().all()
+            .scalars()
+            .all()
+        )
         if not stale:
             return 0
         now = datetime.now(UTC)
@@ -85,14 +89,18 @@ async def sweep_stale_runs() -> int:
     now = datetime.now(UTC)
     async with SessionLocal() as session:
         active = (
-            await session.execute(
-                select(AgentRun).where(
-                    AgentRun.status.in_(
-                        [AgentRunStatus.PENDING.value, AgentRunStatus.RUNNING.value]
+            (
+                await session.execute(
+                    select(AgentRun).where(
+                        AgentRun.status.in_(
+                            [AgentRunStatus.PENDING.value, AgentRunStatus.RUNNING.value]
+                        )
                     )
                 )
             )
-        ).scalars().all()
+            .scalars()
+            .all()
+        )
         killed: list[int] = []
         for ar in active:
             if ar.started_at is None:

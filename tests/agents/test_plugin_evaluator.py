@@ -46,9 +46,7 @@ def _good_contract(slug: str, scenarios: list[str]) -> PluginContract:
         version="v1",
         inputs=[PluginContractInput(name="ohlcv", dtype="ohlcv")],
         outputs=[PluginContractOutput(name="ma", dtype="series", length_invariant="same_as_input")],
-        params=[
-            PluginContractParam(name="window", dtype="int", default=14, min=2, max=200)
-        ],
+        params=[PluginContractParam(name="window", dtype="int", default=14, min=2, max=200)],
         invariants=["outputs[0].length == inputs[0].length"],
         test_scenarios=[
             PluginContractScenario(name=s, data_path=f"test_scenarios/{s}.parquet")
@@ -168,7 +166,10 @@ async def _seed_plugin(
 async def test_evaluator_happy_path_passes_and_transitions_to_verified(db):
     session, settings = db
     p = await _seed_plugin(
-        session, settings, slug="ma14", code=_GOOD_PLUGIN_CODE,
+        session,
+        settings,
+        slug="ma14",
+        code=_GOOD_PLUGIN_CODE,
         scenarios=["trending_up", "sideways"],
     )
 
@@ -197,7 +198,10 @@ async def test_evaluator_happy_path_passes_and_transitions_to_verified(db):
 async def test_evaluator_length_mismatch_stays_authored(db):
     session, settings = db
     p = await _seed_plugin(
-        session, settings, slug="bad-len", code=_LENGTH_MISMATCH_CODE,
+        session,
+        settings,
+        slug="bad-len",
+        code=_LENGTH_MISMATCH_CODE,
         scenarios=["trending_up"],
     )
 
@@ -232,7 +236,10 @@ async def _run_and_get(session, p):
 async def test_evaluator_all_nan_output_stays_authored(db):
     session, settings = db
     p = await _seed_plugin(
-        session, settings, slug="all-nan", code=_ALL_NAN_CODE,
+        session,
+        settings,
+        slug="all-nan",
+        code=_ALL_NAN_CODE,
         scenarios=["trending_up"],
     )
     vr = await _run_and_get(session, p)
@@ -246,7 +253,10 @@ async def test_evaluator_all_nan_output_stays_authored(db):
 async def test_evaluator_inf_output_stays_authored(db):
     session, settings = db
     p = await _seed_plugin(
-        session, settings, slug="inf-out", code=_INF_CODE,
+        session,
+        settings,
+        slug="inf-out",
+        code=_INF_CODE,
         scenarios=["trending_up"],
     )
     vr = await _run_and_get(session, p)
@@ -260,7 +270,10 @@ async def test_evaluator_inf_output_stays_authored(db):
 async def test_evaluator_object_dtype_stays_authored(db):
     session, settings = db
     p = await _seed_plugin(
-        session, settings, slug="obj-dtype", code=_OBJECT_DTYPE_CODE,
+        session,
+        settings,
+        slug="obj-dtype",
+        code=_OBJECT_DTYPE_CODE,
         scenarios=["trending_up"],
     )
     vr = await _run_and_get(session, p)
@@ -276,7 +289,10 @@ async def test_evaluator_warmup_nans_pass(db):
     must still verify. Guards Invariant 2 against over-strictness."""
     session, settings = db
     p = await _seed_plugin(
-        session, settings, slug="warmup", code=_WARMUP_NAN_CODE,
+        session,
+        settings,
+        slug="warmup",
+        code=_WARMUP_NAN_CODE,
         scenarios=["trending_up"],
     )
     vr = await _run_and_get(session, p)
@@ -288,7 +304,10 @@ async def test_evaluator_warmup_nans_pass(db):
 async def test_evaluator_unknown_scenario_in_contract_fails(db):
     session, settings = db
     p = await _seed_plugin(
-        session, settings, slug="bad-scn", code=_GOOD_PLUGIN_CODE,
+        session,
+        settings,
+        slug="bad-scn",
+        code=_GOOD_PLUGIN_CODE,
         scenarios=["does_not_exist"],
     )
 
@@ -307,7 +326,11 @@ async def test_evaluator_unknown_scenario_in_contract_fails(db):
 async def test_evaluator_empty_scenarios_fails(db):
     session, settings = db
     p = await _seed_plugin(
-        session, settings, slug="empty-scn", code=_GOOD_PLUGIN_CODE, scenarios=[],
+        session,
+        settings,
+        slug="empty-scn",
+        code=_GOOD_PLUGIN_CODE,
+        scenarios=[],
     )
 
     vr_id = await PluginEvaluator(session).run(p)
@@ -329,7 +352,11 @@ async def test_evaluator_emits_evaluation_done_on_early_failure(db):
 
     session, settings = db
     p = await _seed_plugin(
-        session, settings, slug="early-fail-evt", code=_GOOD_PLUGIN_CODE, scenarios=[],
+        session,
+        settings,
+        slug="early-fail-evt",
+        code=_GOOD_PLUGIN_CODE,
+        scenarios=[],
     )
 
     await PluginEvaluator(session).run(p, agent_run_id=777)
@@ -343,7 +370,10 @@ async def test_evaluator_emits_evaluation_done_on_early_failure(db):
 async def test_evaluator_no_compute_callable_fails(db):
     session, settings = db
     p = await _seed_plugin(
-        session, settings, slug="no-compute", code=_NO_COMPUTE_CODE,
+        session,
+        settings,
+        slug="no-compute",
+        code=_NO_COMPUTE_CODE,
         scenarios=["trending_up"],
     )
 
@@ -359,7 +389,10 @@ async def test_evaluator_no_compute_callable_fails(db):
 async def test_evaluator_second_run_overwrites_error_log(db):
     session, settings = db
     p = await _seed_plugin(
-        session, settings, slug="rerun", code=_LENGTH_MISMATCH_CODE,
+        session,
+        settings,
+        slug="rerun",
+        code=_LENGTH_MISMATCH_CODE,
         scenarios=["trending_up"],
     )
 
@@ -373,6 +406,8 @@ async def test_evaluator_second_run_overwrites_error_log(db):
     assert payload["verification_run_id"] == vr2_id
 
     rows = (
-        await session.execute(select(VerificationRun).where(VerificationRun.plugin_id == p.id))
-    ).scalars().all()
+        (await session.execute(select(VerificationRun).where(VerificationRun.plugin_id == p.id)))
+        .scalars()
+        .all()
+    )
     assert len(rows) == 2

@@ -274,9 +274,7 @@ async def author_plugin_from_strategy(
             status=AgentRunStatus.FAILED,
             error=f"slug {output.slug!r} already taken by plugin id={existing.id}",
         )
-        raise PluginAuthorError(
-            f"slug {output.slug!r} already exists as plugin id={existing.id}"
-        )
+        raise PluginAuthorError(f"slug {output.slug!r} already exists as plugin id={existing.id}")
 
     # --- Phase 4: persist artifacts + Plugin row + Transition ----------------
     target_dir = _plugin_dir(output.slug) / "v1"
@@ -348,8 +346,7 @@ async def evaluate_plugin(
         raise EvaluatePluginPreconditionError(f"plugin {plugin_id} not found")
     if plugin.current_state != PluginState.AUTHORED.value:
         raise EvaluatePluginPreconditionError(
-            f"plugin {plugin.slug} is in state {plugin.current_state!r}; "
-            "evaluate requires AUTHORED"
+            f"plugin {plugin.slug} is in state {plugin.current_state!r}; evaluate requires AUTHORED"
         )
 
     evaluator = PluginEvaluator(session)
@@ -376,11 +373,14 @@ async def _register_verified_plugin_in_fwbg(
     except OSError as exc:
         log.warning(
             "register_plugin: cannot read plugin.py for %s at %s: %s",
-            plugin.slug, plugin_code_path, exc,
+            plugin.slug,
+            plugin_code_path,
+            exc,
         )
         if agent_run_id is not None:
             emit_run_event(
-                agent_run_id, "plugin_registration_failed",
+                agent_run_id,
+                "plugin_registration_failed",
                 slug=plugin.slug,
                 error=str(exc),
             )
@@ -402,22 +402,26 @@ async def _register_verified_plugin_in_fwbg(
         )
         log.info(
             "register_plugin: %s registered in fwbg as agent-authored:%s",
-            plugin.slug, plugin.slug,
+            plugin.slug,
+            plugin.slug,
         )
         if agent_run_id is not None:
             emit_run_event(
-                agent_run_id, "plugin_registered_in_fwbg",
+                agent_run_id,
+                "plugin_registered_in_fwbg",
                 fqn=f"agent-authored:{plugin.slug}",
                 slug=plugin.slug,
             )
     except Exception as exc:
         log.warning(
             "register_plugin: failed to register %s in fwbg (%s) — best-effort",
-            plugin.slug, exc,
+            plugin.slug,
+            exc,
         )
         if agent_run_id is not None:
             emit_run_event(
-                agent_run_id, "plugin_registration_failed",
+                agent_run_id,
+                "plugin_registration_failed",
                 slug=plugin.slug,
                 error=str(exc),
             )
@@ -446,9 +450,7 @@ async def reiterate_with_plugin(
         await session.execute(select(Strategy).where(Strategy.id == strategy_id))
     ).scalar_one_or_none()
     if parent is None:
-        raise ReiterateWithPluginPreconditionError(
-            f"strategy {strategy_id} not found"
-        )
+        raise ReiterateWithPluginPreconditionError(f"strategy {strategy_id} not found")
 
     if parent.current_state != StrategyState.BACKTESTED.value:
         raise ReiterateWithPluginPreconditionError(
@@ -460,9 +462,7 @@ async def reiterate_with_plugin(
         await session.execute(select(Plugin).where(Plugin.slug == plugin_slug))
     ).scalar_one_or_none()
     if plugin is None:
-        raise ReiterateWithPluginPreconditionError(
-            f"plugin {plugin_slug!r} not found"
-        )
+        raise ReiterateWithPluginPreconditionError(f"plugin {plugin_slug!r} not found")
     if plugin.current_state != PluginState.VERIFIED.value:
         raise ReiterateWithPluginPreconditionError(
             f"plugin {plugin.slug} is in state {plugin.current_state!r}; "
@@ -503,9 +503,7 @@ async def reiterate_with_plugin(
     return child.id
 
 
-async def lookup_plugin_capability(
-    session: AsyncSession, plugin_id: int
-) -> str | None:
+async def lookup_plugin_capability(session: AsyncSession, plugin_id: int) -> str | None:
     """Read the originating sidecar's `capability` from the plugin_planner AR.
 
     The planner-run carries `input_artifact_path = str(sidecar_path)` and
@@ -562,10 +560,14 @@ async def resync_verified_plugins() -> None:
 
     async with SessionLocal() as session:
         verified = (
-            await session.execute(
-                select(Plugin).where(Plugin.current_state == PluginState.VERIFIED.value)
+            (
+                await session.execute(
+                    select(Plugin).where(Plugin.current_state == PluginState.VERIFIED.value)
+                )
             )
-        ).scalars().all()
+            .scalars()
+            .all()
+        )
 
     missing = [p for p in verified if p.slug not in registered_slugs]
     if not missing:
@@ -577,7 +579,9 @@ async def resync_verified_plugins() -> None:
 
     log.info(
         "resync_verified_plugins: %d/%d VERIFIED plugin(s) missing from fwbg — re-registering: %s",
-        len(missing), len(verified), [p.slug for p in missing],
+        len(missing),
+        len(verified),
+        [p.slug for p in missing],
     )
     for plugin in missing:
         await _register_verified_plugin_in_fwbg(plugin)

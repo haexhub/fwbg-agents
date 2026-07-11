@@ -198,9 +198,7 @@ async def test_hypothesis_404_when_file_missing(client_with_db):
 
 async def test_hypothesis_404_when_path_outside_data_dir(client_with_db):
     client, session, _tmp = client_with_db
-    s = await _make_strategy(
-        session, slug="momentum__index__001", hypothesis_path="/etc/passwd"
-    )
+    s = await _make_strategy(session, slug="momentum__index__001", hypothesis_path="/etc/passwd")
     r = await client.get(f"/strategies/{s.id}/hypothesis")
     assert r.status_code == 404
     assert "outside" in r.json()["detail"].lower()

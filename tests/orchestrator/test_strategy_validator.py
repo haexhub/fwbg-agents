@@ -21,16 +21,20 @@ from fwbg_agents.orchestrator.strategy_validator import (
 
 def _manifest(slug: str, category: str) -> PluginManifest:
     return PluginManifest(
-        name=slug, category=category, provenance="fwbg-core",
-        version="1.0.0", source_path=Path("/tmp/x"),
+        name=slug,
+        category=category,
+        provenance="fwbg-core",
+        version="1.0.0",
+        source_path=Path("/tmp/x"),
     )
 
 
 def _catalog(by_category: dict[str, list[str]]) -> PluginCatalog:
-    return PluginCatalog(by_category={
-        cat: {s: _manifest(s, cat) for s in slugs}
-        for cat, slugs in by_category.items()
-    })
+    return PluginCatalog(
+        by_category={
+            cat: {s: _manifest(s, cat) for s in slugs} for cat, slugs in by_category.items()
+        }
+    )
 
 
 VALID_FIXTURE = {
@@ -341,12 +345,14 @@ INLINE_FIXTURE = {
     "filters": {"min_trades": 50, "min_sharpe": 0.5},
 }
 
-_INLINE_CATALOG = _catalog({
-    "indicators": ["opening_range", "atr"],
-    "preprocessing": ["fractional_diff"],
-    "models": ["xgboost", "signal"],
-    "exit_strategies": ["orb_based"],
-})
+_INLINE_CATALOG = _catalog(
+    {
+        "indicators": ["opening_range", "atr"],
+        "preprocessing": ["fractional_diff"],
+        "models": ["xgboost", "signal"],
+        "exit_strategies": ["orb_based"],
+    }
+)
 
 
 def test_inline_composition_passes_with_catalog():

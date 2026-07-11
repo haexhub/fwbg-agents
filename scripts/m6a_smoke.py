@@ -131,9 +131,7 @@ async def _seed_strategy() -> int:
     now = datetime.now(UTC)
     async with SessionLocal() as session:
         existing = (
-            await session.execute(
-                select(Strategy).where(Strategy.slug == SMOKE_STRATEGY_SLUG)
-            )
+            await session.execute(select(Strategy).where(Strategy.slug == SMOKE_STRATEGY_SLUG))
         ).scalar_one_or_none()
         if existing is not None:
             existing.current_state = StrategyState.PAPER_TRADING.value
@@ -168,9 +166,7 @@ async def _cleanup_previous_run() -> None:
     """
     async with SessionLocal() as session:
         prior = (
-            await session.execute(
-                select(Strategy).where(Strategy.slug == SMOKE_STRATEGY_SLUG)
-            )
+            await session.execute(select(Strategy).where(Strategy.slug == SMOKE_STRATEGY_SLUG))
         ).scalar_one_or_none()
         if prior is not None:
             await session.delete(prior)
@@ -183,9 +179,7 @@ async def _cleanup_previous_run() -> None:
 
 async def _set_state(strategy_id: int, state: StrategyState) -> None:
     async with SessionLocal() as session:
-        s = (
-            await session.execute(select(Strategy).where(Strategy.id == strategy_id))
-        ).scalar_one()
+        s = (await session.execute(select(Strategy).where(Strategy.id == strategy_id))).scalar_one()
         s.current_state = state.value
         s.updated_at = datetime.now(UTC)
         await session.commit()
@@ -281,9 +275,7 @@ async def main() -> int:
             f"first.stop_loss={first['stop_loss']} first.take_profit={first['take_profit']}"
         )
 
-        print(
-            "[m6a_smoke] [5/7] state-guard: transition Strategy to PROPOSED, retry endpoints"
-        )
+        print("[m6a_smoke] [5/7] state-guard: transition Strategy to PROPOSED, retry endpoints")
         await _set_state(strategy_id, StrategyState.PROPOSED)
         r = await client.get(f"/strategies/{strategy_id}/paper-summary")
         if r.status_code != 409:

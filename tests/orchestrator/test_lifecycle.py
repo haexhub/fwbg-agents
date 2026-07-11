@@ -111,10 +111,14 @@ async def test_strategy_proposed_to_backtested_succeeds(db_session, proposed_str
     assert proposed_strategy.current_state == StrategyState.BACKTESTED.value
 
     rows = (
-        await db_session.execute(
-            select(Transition).where(Transition.entity_id == proposed_strategy.id)
+        (
+            await db_session.execute(
+                select(Transition).where(Transition.entity_id == proposed_strategy.id)
+            )
         )
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
     assert len(rows) == 1
     assert rows[0].from_state == StrategyState.PROPOSED.value
     assert rows[0].to_state == StrategyState.BACKTESTED.value
@@ -128,16 +132,19 @@ def _seed_index_criteria(settings) -> None:
     provide criteria the metrics can satisfy."""
     settings.criteria_dir.mkdir(parents=True, exist_ok=True)
     (settings.criteria_dir / "INDEX.yaml").write_text(
-        yaml.safe_dump({
-            "backtest_to_paper": {"required_all": [{"sharpe": ">= 1.5"}]},
-            "paper_to_live": {},
-        })
+        yaml.safe_dump(
+            {
+                "backtest_to_paper": {"required_all": [{"sharpe": ">= 1.5"}]},
+                "paper_to_live": {},
+            }
+        )
     )
 
 
 async def test_strategy_full_happy_path(db_session, proposed_strategy):
     """proposed → backtested → paper_trading → live_trading."""
     from fwbg_agents.config import settings
+
     _seed_index_criteria(settings)
     await transition_strategy(
         db_session,
@@ -172,12 +179,16 @@ async def test_strategy_full_happy_path(db_session, proposed_strategy):
     assert proposed_strategy.current_state == StrategyState.LIVE_TRADING.value
 
     rows = (
-        await db_session.execute(
-            select(Transition)
-            .where(Transition.entity_id == proposed_strategy.id)
-            .order_by(Transition.id)
+        (
+            await db_session.execute(
+                select(Transition)
+                .where(Transition.entity_id == proposed_strategy.id)
+                .order_by(Transition.id)
+            )
         )
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
     assert [r.to_state for r in rows] == [
         StrategyState.BACKTESTED.value,
         StrategyState.PAPER_TRADING.value,
@@ -199,20 +210,23 @@ async def test_strategy_cannot_skip_directly_to_live(db_session, proposed_strate
         )
     # Nothing was written.
     rows = (
-        await db_session.execute(
-            select(Transition).where(Transition.entity_id == proposed_strategy.id)
+        (
+            await db_session.execute(
+                select(Transition).where(Transition.entity_id == proposed_strategy.id)
+            )
         )
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
     assert rows == []
     assert proposed_strategy.current_state == StrategyState.PROPOSED.value
 
 
 async def test_strategy_paper_to_live_requires_human_approval(db_session, proposed_strategy):
     from fwbg_agents.config import settings
+
     _seed_index_criteria(settings)
-    await transition_strategy(
-        db_session, proposed_strategy, StrategyState.BACKTESTED, reason=""
-    )
+    await transition_strategy(db_session, proposed_strategy, StrategyState.BACKTESTED, reason="")
     await transition_strategy(
         db_session,
         proposed_strategy,
@@ -220,8 +234,11 @@ async def test_strategy_paper_to_live_requires_human_approval(db_session, propos
         reason="",
         payload={
             "backtest_metrics": {
-                "sharpe": 1.8, "mc_pvalue": 0.02, "profit_factor": 1.7,
-                "min_trades": 350, "max_drawdown": 0.18,
+                "sharpe": 1.8,
+                "mc_pvalue": 0.02,
+                "profit_factor": 1.7,
+                "min_trades": 350,
+                "max_drawdown": 0.18,
             }
         },
     )
@@ -241,17 +258,17 @@ async def test_strategy_backtested_to_paper_rejects_failing_metrics(db_session, 
 
     settings.criteria_dir.mkdir(parents=True, exist_ok=True)
     (settings.criteria_dir / "INDEX.yaml").write_text(
-        yaml.safe_dump({
-            "backtest_to_paper": {
-                "required_all": [{"sharpe": ">= 1.5"}],
-            },
-            "paper_to_live": {},
-        })
+        yaml.safe_dump(
+            {
+                "backtest_to_paper": {
+                    "required_all": [{"sharpe": ">= 1.5"}],
+                },
+                "paper_to_live": {},
+            }
+        )
     )
 
-    await transition_strategy(
-        db_session, proposed_strategy, StrategyState.BACKTESTED, reason=""
-    )
+    await transition_strategy(db_session, proposed_strategy, StrategyState.BACKTESTED, reason="")
     with pytest.raises(InvalidTransitionError):
         await transition_strategy(
             db_session,
@@ -303,6 +320,7 @@ async def test_abandon_persists_post_mortem_path(db_session, proposed_strategy, 
 async def test_abandon_from_paper_trading_is_allowed(db_session, proposed_strategy):
     """Soft-abandon must be reachable from every non-terminal state."""
     from fwbg_agents.config import settings
+
     _seed_index_criteria(settings)
     await transition_strategy(db_session, proposed_strategy, StrategyState.BACKTESTED, reason="")
     await transition_strategy(
@@ -310,10 +328,15 @@ async def test_abandon_from_paper_trading_is_allowed(db_session, proposed_strate
         proposed_strategy,
         StrategyState.PAPER_TRADING,
         reason="",
-        payload={"backtest_metrics": {
-            "sharpe": 1.8, "mc_pvalue": 0.02, "profit_factor": 1.7,
-            "min_trades": 350, "max_drawdown": 0.18,
-        }},
+        payload={
+            "backtest_metrics": {
+                "sharpe": 1.8,
+                "mc_pvalue": 0.02,
+                "profit_factor": 1.7,
+                "min_trades": 350,
+                "max_drawdown": 0.18,
+            }
+        },
     )
     pm_path = strategy_dir("orb_dax_m15") / "post_mortem.yaml"
     await transition_strategy(
@@ -350,9 +373,7 @@ async def test_cannot_leave_terminal_state(db_session, proposed_strategy):
 async def test_strategy_dir_created_on_first_transition(db_session, proposed_strategy):
     """Directory is lazy — only materialised when first transition fires."""
     assert not strategy_dir("orb_dax_m15").exists()
-    await transition_strategy(
-        db_session, proposed_strategy, StrategyState.BACKTESTED, reason=""
-    )
+    await transition_strategy(db_session, proposed_strategy, StrategyState.BACKTESTED, reason="")
     assert strategy_dir("orb_dax_m15").is_dir()
 
 
@@ -414,18 +435,20 @@ def test_check_criteria_against_metrics_required_all(tmp_path, monkeypatch):
     monkeypatch.setattr(settings, "data_dir", tmp_path / "data")
     settings.criteria_dir.mkdir(parents=True)
     (settings.criteria_dir / "INDEX.yaml").write_text(
-        yaml.safe_dump({
-            "backtest_to_paper": {
-                "required_all": [
-                    {"sharpe": ">= 1.5"},
-                    {"mc_pvalue": "<= 0.05"},
-                ],
-                "hard_blockers": [
-                    {"max_drawdown": "<= 0.25"},
-                ],
-            },
-            "paper_to_live": {},
-        })
+        yaml.safe_dump(
+            {
+                "backtest_to_paper": {
+                    "required_all": [
+                        {"sharpe": ">= 1.5"},
+                        {"mc_pvalue": "<= 0.05"},
+                    ],
+                    "hard_blockers": [
+                        {"max_drawdown": "<= 0.25"},
+                    ],
+                },
+                "paper_to_live": {},
+            }
+        )
     )
     ok, failed = check_backtest_criteria(
         asset_class="INDEX",
@@ -465,10 +488,12 @@ def test_non_numeric_metric_fails_cleanly(tmp_path, monkeypatch):
     monkeypatch.setattr(settings, "data_dir", tmp_path / "data")
     settings.criteria_dir.mkdir(parents=True)
     (settings.criteria_dir / "INDEX.yaml").write_text(
-        yaml.safe_dump({
-            "backtest_to_paper": {"required_all": [{"sharpe": ">= 1.5"}]},
-            "paper_to_live": {},
-        })
+        yaml.safe_dump(
+            {
+                "backtest_to_paper": {"required_all": [{"sharpe": ">= 1.5"}]},
+                "paper_to_live": {},
+            }
+        )
     )
     ok, failed = check_backtest_criteria(asset_class="INDEX", metrics={"sharpe": "n/a"})
     assert not ok

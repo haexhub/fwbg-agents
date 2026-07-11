@@ -57,8 +57,11 @@ def _hyp_args(**over):
         key_indicators=["rsi", "atr", "session_clock"],
         tags=["mean_reversion", "intraday", "forex_majors", "session_filter"],
         sources=[
-            {"url": "https://example.com/a", "title": "Mean reversion in FX",
-             "why_relevant": "documents the London-open effect on EUR/USD"},
+            {
+                "url": "https://example.com/a",
+                "title": "Mean reversion in FX",
+                "why_relevant": "documents the London-open effect on EUR/USD",
+            },
         ],
         differentiates_from=[],
     )
@@ -85,9 +88,7 @@ def _lookup_then_final_handler(lookup_args, hyp_args):
             for part in getattr(msg, "parts", [])
         )
         if not seen_tool_return:
-            return ModelResponse(
-                parts=[ToolCallPart("lookup_prior_art_tool", lookup_args)]
-            )
+            return ModelResponse(parts=[ToolCallPart("lookup_prior_art_tool", lookup_args)])
         return ModelResponse(parts=[ToolCallPart("final_result", hyp_args)])
 
     return handler
@@ -151,14 +152,20 @@ async def test_happy_path_no_prior_art(db):
 @pytest.mark.asyncio
 async def test_hypothesis_rejected_when_prior_art_and_no_differentiates_from(db):
     await _seed_prior_strategy(
-        db, "rsimeanrev__forex__001", "RSI_meanrev", "FOREX",
+        db,
+        "rsimeanrev__forex__001",
+        "RSI_meanrev",
+        "FOREX",
         ["mean_reversion", "intraday", "forex_majors"],
     )
 
     model = FunctionModel(
         _lookup_then_final_handler(
-            {"strategy_family": "RSI_meanrev", "asset_class": "FOREX",
-             "tags": ["mean_reversion", "intraday", "forex_majors"]},
+            {
+                "strategy_family": "RSI_meanrev",
+                "asset_class": "FOREX",
+                "tags": ["mean_reversion", "intraday", "forex_majors"],
+            },
             _hyp_args(),  # differentiates_from=[]
         )
     )
@@ -176,14 +183,20 @@ async def test_hypothesis_rejected_when_prior_art_and_no_differentiates_from(db)
 @pytest.mark.asyncio
 async def test_hypothesis_accepted_when_differentiates_from_covers_prior_art(db):
     await _seed_prior_strategy(
-        db, "rsimeanrev__forex__001", "RSI_meanrev", "FOREX",
+        db,
+        "rsimeanrev__forex__001",
+        "RSI_meanrev",
+        "FOREX",
         ["mean_reversion", "intraday", "forex_majors"],
     )
 
     model = FunctionModel(
         _lookup_then_final_handler(
-            {"strategy_family": "RSI_meanrev", "asset_class": "FOREX",
-             "tags": ["mean_reversion", "intraday", "forex_majors"]},
+            {
+                "strategy_family": "RSI_meanrev",
+                "asset_class": "FOREX",
+                "tags": ["mean_reversion", "intraday", "forex_majors"],
+            },
             _hyp_args(differentiates_from=["rsimeanrev__forex__001"]),
         )
     )
@@ -241,8 +254,8 @@ async def test_search_web_with_tavily_set_logs_tavily_quota(db):
     await researcher.run(ResearcherInput(asset_class="FOREX"))
 
     tavily_rows = (
-        await db.execute(select(LlmCall).where(LlmCall.model == "tavily-search"))
-    ).scalars().all()
+        (await db.execute(select(LlmCall).where(LlmCall.model == "tavily-search"))).scalars().all()
+    )
     assert len(tavily_rows) == 1
 
 
@@ -255,8 +268,11 @@ async def test_researcher_falls_back_to_brave_when_tavily_unavailable(db):
     brave_payload = {
         "web": {
             "results": [
-                {"url": "https://brave.example/fx-meanrev", "title": "Brave hit",
-                 "description": "from brave"},
+                {
+                    "url": "https://brave.example/fx-meanrev",
+                    "title": "Brave hit",
+                    "description": "from brave",
+                },
             ]
         }
     }
@@ -273,8 +289,11 @@ async def test_researcher_falls_back_to_brave_when_tavily_unavailable(db):
                     url = part.content[0]["url"]
                     hyp = _hyp_args(
                         sources=[
-                            {"url": url, "title": "Brave hit",
-                             "why_relevant": "served via fallback after Tavily was unavailable"},
+                            {
+                                "url": url,
+                                "title": "Brave hit",
+                                "why_relevant": "served via fallback after Tavily was unavailable",
+                            },
                         ]
                     )
                     return ModelResponse(parts=[ToolCallPart("final_result", hyp)])
@@ -286,8 +305,8 @@ async def test_researcher_falls_back_to_brave_when_tavily_unavailable(db):
     assert any(s.url == "https://brave.example/fx-meanrev" for s in result.sources)
 
     quota_rows = (
-        await db.execute(select(LlmCall).where(LlmCall.model == "brave-search"))
-    ).scalars().all()
+        (await db.execute(select(LlmCall).where(LlmCall.model == "brave-search"))).scalars().all()
+    )
     assert len(quota_rows) == 1
 
 
@@ -297,9 +316,7 @@ async def test_search_results_are_framed_untrusted(db):
     — the interim defence against search-result prompt injection."""
     long_snippet = "A" * 5000
     tavily_payload = {
-        "results": [
-            {"url": "https://x", "title": "X", "content": long_snippet, "score": 0.9}
-        ]
+        "results": [{"url": "https://x", "title": "X", "content": long_snippet, "score": 0.9}]
     }
     tavily = TavilyClient(
         api_key="k",

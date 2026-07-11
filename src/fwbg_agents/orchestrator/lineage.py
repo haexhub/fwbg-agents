@@ -48,9 +48,7 @@ async def generation_depth(session: AsyncSession, strategy: Strategy) -> int:
     cur = strategy
     while cur.parent_strategy_id is not None:
         parent = (
-            await session.execute(
-                select(Strategy).where(Strategy.id == cur.parent_strategy_id)
-            )
+            await session.execute(select(Strategy).where(Strategy.id == cur.parent_strategy_id))
         ).scalar_one_or_none()
         if parent is None or parent.id in seen:
             break
@@ -60,17 +58,13 @@ async def generation_depth(session: AsyncSession, strategy: Strategy) -> int:
     return depth
 
 
-async def family_strategies(
-    session: AsyncSession, strategy: Strategy
-) -> list[Strategy]:
+async def family_strategies(session: AsyncSession, strategy: Strategy) -> list[Strategy]:
     """Every member of `strategy`'s family (root + all descendants), oldest first."""
     root = strategy
     seen = {strategy.id}
     while root.parent_strategy_id is not None:
         parent = (
-            await session.execute(
-                select(Strategy).where(Strategy.id == root.parent_strategy_id)
-            )
+            await session.execute(select(Strategy).where(Strategy.id == root.parent_strategy_id))
         ).scalar_one_or_none()
         if parent is None or parent.id in seen:
             break
@@ -174,9 +168,7 @@ async def _applied_change(session: AsyncSession, strategy: Strategy) -> str | No
     return _rec_summary(rec) if isinstance(rec, dict) else None
 
 
-async def render_family_history(
-    session: AsyncSession, strategy: Strategy
-) -> tuple[int, str]:
+async def render_family_history(session: AsyncSession, strategy: Strategy) -> tuple[int, str]:
     """(generation depth of `strategy`, markdown block of the whole family).
 
     One bullet per family member, oldest first, so the Analyst can compare
@@ -191,9 +183,7 @@ async def render_family_history(
     lines: list[str] = []
     for m in members:
         marker = " ← CURRENT" if m.id == strategy.id else ""
-        lines.append(
-            f"- generation {depths[m.id]} · `{m.slug}` [{m.current_state}]{marker}"
-        )
+        lines.append(f"- generation {depths[m.id]} · `{m.slug}` [{m.current_state}]{marker}")
         applied = await _applied_change(session, m)
         if applied:
             lines.append(f"  - change applied vs parent: {applied}")

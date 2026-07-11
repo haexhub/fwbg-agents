@@ -110,6 +110,7 @@ async def _generate_valid_hypothesis(
 
 def _render_research_notes(hypothesis: ResearcherHypothesis) -> str:
     """Render a ResearcherHypothesis to a human-readable Markdown notes string."""
+
     def _source_md(s) -> str:
         """Format a single Source as a Markdown bullet with nested key points."""
         lines = [f"- [{s.title}]({s.url}) — {s.why_relevant}"]
@@ -137,18 +138,14 @@ def _render_research_notes(hypothesis: ResearcherHypothesis) -> str:
         else ""
     )
     return (
-        f"# Research Notes — {hypothesis.title}\n\n"
-        + model_kb_note
-        + "\n## Hypothesis\n\n"
+        f"# Research Notes — {hypothesis.title}\n\n" + model_kb_note + "\n## Hypothesis\n\n"
         f"{hypothesis.hypothesis.strip()}\n\n"
         "## Expected Edge\n\n"
         f"{hypothesis.expected_edge_explanation.strip()}\n\n"
         "## Key Indicators\n\n"
         + "\n".join(f"- `{ind}`" for ind in hypothesis.key_indicators)
         + "\n\n"
-        "## Tags\n\n"
-        + ", ".join(f"`{t}`" for t in hypothesis.tags)
-        + "\n\n"
+        "## Tags\n\n" + ", ".join(f"`{t}`" for t in hypothesis.tags) + "\n\n"
         "## Suggested Universe\n\n"
         f"{universe_md}\n\n"
         "## Differentiates From\n\n"
@@ -200,7 +197,9 @@ async def publish_strategy_to_fwbg(
             return filename
         log.warning(
             "could not publish %s to fwbg: all name candidates taken (%s..%s)",
-            strategy.slug, candidates[0], candidates[-1],
+            strategy.slug,
+            candidates[0],
+            candidates[-1],
         )
         return None
     except Exception:
@@ -233,9 +232,7 @@ async def research_and_translate(
     caller is responsible for wrapping bookkeeping (e.g. the API
     background task).
     """
-    client = fwbg_client if fwbg_client is not None else FwbgClient(
-        base_url=settings.fwbg_api_url
-    )
+    client = fwbg_client if fwbg_client is not None else FwbgClient(base_url=settings.fwbg_api_url)
     try:
         return await _research_and_translate(
             session,
@@ -273,9 +270,7 @@ async def _research_and_translate(
         available_plugins=researcher_summary(live),
     )
 
-    slug = await generate_slug(
-        session, hypothesis.strategy_family, hypothesis.asset_class
-    )
+    slug = await generate_slug(session, hypothesis.strategy_family, hypothesis.asset_class)
 
     now = datetime.now(UTC)
     strategy = Strategy(
@@ -299,9 +294,7 @@ async def _research_and_translate(
     iteration_dir.mkdir(parents=True, exist_ok=True)
     hypothesis_path = iteration_dir / "hypothesis.json"
     hypothesis_path.write_text(hypothesis.model_dump_json(indent=2))
-    (iteration_dir / "research_notes.md").write_text(
-        _render_research_notes(hypothesis)
-    )
+    (iteration_dir / "research_notes.md").write_text(_render_research_notes(hypothesis))
 
     strategy.hypothesis_path = str(hypothesis_path)
     strategy.updated_at = datetime.now(UTC)
@@ -329,9 +322,7 @@ async def _research_and_translate(
 
     # Register the finished strategy in fwbg right away so it shows up on the
     # dashboard's /strategy page, editable and startable before any backtest.
-    await publish_strategy_to_fwbg(
-        session, strategy, strategy_path, fwbg_client=fwbg_client
-    )
+    await publish_strategy_to_fwbg(session, strategy, strategy_path, fwbg_client=fwbg_client)
 
     return strategy.id
 
@@ -379,9 +370,7 @@ async def reiterate(
             f"at {sidecar}; run /strategies/{parent_id}/analyze first"
         )
 
-    client = fwbg_client if fwbg_client is not None else FwbgClient(
-        base_url=settings.fwbg_api_url
-    )
+    client = fwbg_client if fwbg_client is not None else FwbgClient(base_url=settings.fwbg_api_url)
     try:
         translator = Translator(session, model=model, fwbg_client=client)
         child = await translator.run_reiterate(parent)

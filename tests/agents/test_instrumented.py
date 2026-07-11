@@ -45,11 +45,7 @@ async def test_run_instrumented_writes_transcript_and_events(data_dir):
     # events.jsonl carries the live tool call + result + round-done markers.
     epath = data_dir / "agent-runs" / "42" / "events.jsonl"
     assert epath.exists()
-    types = [
-        json.loads(line)["type"]
-        for line in epath.read_text().splitlines()
-        if line.strip()
-    ]
+    types = [json.loads(line)["type"] for line in epath.read_text().splitlines() if line.strip()]
     assert "llm_tool_call" in types
     assert "llm_tool_result" in types
     assert "llm_round_done" in types

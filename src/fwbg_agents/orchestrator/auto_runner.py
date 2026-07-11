@@ -138,11 +138,7 @@ async def _count_runs(
     """Count AgentRun rows for the given agent name(s), optionally scoped to a
     strategy and/or a set of statuses."""
     names = (agent_name,) if isinstance(agent_name, str) else agent_name
-    stmt = (
-        select(func.count())
-        .select_from(AgentRun)
-        .where(AgentRun.agent_name.in_(names))
-    )
+    stmt = select(func.count()).select_from(AgentRun).where(AgentRun.agent_name.in_(names))
     if strategy_id is not None:
         stmt = stmt.where(AgentRun.strategy_id == strategy_id)
     if statuses is not None:
@@ -161,12 +157,16 @@ async def pick_next_strategy_id(session: AsyncSession) -> int | None:
         return None
 
     proposed = (
-        await session.execute(
-            select(Strategy)
-            .where(Strategy.current_state == StrategyState.PROPOSED.value)
-            .order_by(nulls_last(Strategy.queue_position), Strategy.created_at)
+        (
+            await session.execute(
+                select(Strategy)
+                .where(Strategy.current_state == StrategyState.PROPOSED.value)
+                .order_by(nulls_last(Strategy.queue_position), Strategy.created_at)
+            )
         )
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
 
     for s in proposed:
         if not (strategy_dir(s.slug) / "iteration_001" / "strategy.json").is_file():
@@ -178,9 +178,7 @@ async def pick_next_strategy_id(session: AsyncSession) -> int | None:
     return None
 
 
-async def _genuine_failed_attempts(
-    session: AsyncSession, agent_name: str, strategy_id: int
-) -> int:
+async def _genuine_failed_attempts(session: AsyncSession, agent_name: str, strategy_id: int) -> int:
     """Failed attempts that count against a retry cap. Orphaned and
     transient-network failures were not the strategy's fault, so they are
     excluded."""
@@ -212,20 +210,24 @@ async def pick_next_backtested_unanalyzed(session: AsyncSession) -> int | None:
     forever, never advancing and clogging the pipeline-fill "active" count.
     """
     rows = (
-        await session.execute(
-            select(Strategy)
-            .where(Strategy.current_state == StrategyState.BACKTESTED.value)
-            .order_by(Strategy.created_at)
+        (
+            await session.execute(
+                select(Strategy)
+                .where(Strategy.current_state == StrategyState.BACKTESTED.value)
+                .order_by(Strategy.created_at)
+            )
         )
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
     for s in rows:
         done = await _count_runs(
-            session, "analyst", strategy_id=s.id,
+            session,
+            "analyst",
+            strategy_id=s.id,
             statuses=(AgentRunStatus.DONE.value,),
         )
-        if done == 0 and (
-            strategy_dir(s.slug) / "iteration_001" / "fwbg_results.json"
-        ).is_file():
+        if done == 0 and (strategy_dir(s.slug) / "iteration_001" / "fwbg_results.json").is_file():
             return s.id
     return None
 
@@ -246,23 +248,31 @@ async def pick_next_add_indicator_pending(session: AsyncSession) -> int | None:
     are never blocked here, but their planner runs consume the same budget.
     """
     rows = (
-        await session.execute(
-            select(Strategy)
-            .where(Strategy.current_state == StrategyState.BACKTESTED.value)
-            .order_by(Strategy.created_at)
+        (
+            await session.execute(
+                select(Strategy)
+                .where(Strategy.current_state == StrategyState.BACKTESTED.value)
+                .order_by(Strategy.created_at)
+            )
         )
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
     for s in rows:
         if _find_latest_sidecar(s.slug) is None:
             continue
         implementer_done = await _count_runs(
-            session, "plugin_implementer", strategy_id=s.id,
+            session,
+            "plugin_implementer",
+            strategy_id=s.id,
             statuses=(AgentRunStatus.DONE.value,),
         )
         if implementer_done > 0:
             continue
         planner_done = await _count_runs(
-            session, "plugin_planner", strategy_id=s.id,
+            session,
+            "plugin_planner",
+            strategy_id=s.id,
             statuses=(AgentRunStatus.DONE.value,),
         )
         planner_failed = await _genuine_failed_attempts(session, "plugin_planner", s.id)
@@ -292,30 +302,20 @@ async def _author_and_reiterate(session: AsyncSession, sid: int) -> None:
     try:
         plugin_id = await author_plugin_from_strategy(session, sid)
     except PluginAuthorError as exc:
-        log.warning(
-            "runner auto mode: plugin author failed for strategy %s: %s", sid, exc
-        )
+        log.warning("runner auto mode: plugin author failed for strategy %s: %s", sid, exc)
         return
     except Exception:
-        log.exception(
-            "runner auto mode: plugin author crashed for strategy %s", sid
-        )
+        log.exception("runner auto mode: plugin author crashed for strategy %s", sid)
         return
 
-    eval_ar = await start_agent_run(
-        session, agent_name="plugin_evaluator", plugin_id=plugin_id
-    )
+    eval_ar = await start_agent_run(session, agent_name="plugin_evaluator", plugin_id=plugin_id)
     try:
         await evaluate_plugin(session, plugin_id, agent_run_id=eval_ar.id)
     except Exception as exc:
-        log.exception(
-            "runner auto mode: plugin evaluation crashed for plugin %s", plugin_id
-        )
+        log.exception("runner auto mode: plugin evaluation crashed for plugin %s", plugin_id)
         await fail_agent_run(session, eval_ar, exc)
         return
-    plugin = (
-        await session.execute(select(Plugin).where(Plugin.id == plugin_id))
-    ).scalar_one()
+    plugin = (await session.execute(select(Plugin).where(Plugin.id == plugin_id))).scalar_one()
     verified = plugin.current_state == PluginState.VERIFIED.value
     # A non-verifying evaluation is a failed run, not a success: the evaluator
     # ran but rejected the plugin. Mark it FAILED so the runs list surfaces the
@@ -332,21 +332,22 @@ async def _author_and_reiterate(session: AsyncSession, sid: int) -> None:
         log.warning(
             "runner auto mode: plugin %s did not verify (state=%s); "
             "strategy %s stays in BACKTESTED",
-            plugin.slug, plugin.current_state, sid,
+            plugin.slug,
+            plugin.current_state,
+            sid,
         )
         return
 
     try:
         child_id = await reiterate_with_plugin(session, sid, plugin.slug)
         log.info(
-            "runner auto mode: plugin %s verified; iteration queued as "
-            "strategy %s (parent %s)",
-            plugin.slug, child_id, sid,
+            "runner auto mode: plugin %s verified; iteration queued as strategy %s (parent %s)",
+            plugin.slug,
+            child_id,
+            sid,
         )
     except Exception:
-        log.exception(
-            "runner auto mode: reiterate-with-plugin failed for strategy %s", sid
-        )
+        log.exception("runner auto mode: reiterate-with-plugin failed for strategy %s", sid)
 
 
 async def abandon_capped_proposed(session: AsyncSession) -> int:
@@ -355,12 +356,14 @@ async def abandon_capped_proposed(session: AsyncSession) -> int:
     clogs the pipeline-fill "active" count and starves fresh research. Returns
     how many were abandoned."""
     proposed = (
-        await session.execute(
-            select(Strategy).where(
-                Strategy.current_state == StrategyState.PROPOSED.value
+        (
+            await session.execute(
+                select(Strategy).where(Strategy.current_state == StrategyState.PROPOSED.value)
             )
         )
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
     abandoned = 0
     for s in proposed:
         failed = await _genuine_failed_attempts(session, "runner", s.id)
@@ -396,7 +399,8 @@ async def abandon_capped_proposed(session: AsyncSession) -> int:
             abandoned += 1
             log.info(
                 "runner auto mode: abandoned capped strategy %s (%d failed backtests)",
-                s.id, failed,
+                s.id,
+                failed,
             )
         except Exception:
             log.exception("runner auto mode: could not abandon capped strategy %s", s.id)
@@ -444,9 +448,7 @@ async def _analyze_and_apply(session: AsyncSession, sid: int) -> None:
     """Run the Analyst on a backtested strategy, apply the recommendation, and
     queue an iteration for tune/change-exit. Shared by the fresh-backtest path
     and the backtested-backlog drain."""
-    s = (
-        await session.execute(select(Strategy).where(Strategy.id == sid))
-    ).scalar_one()
+    s = (await session.execute(select(Strategy).where(Strategy.id == sid))).scalar_one()
     client = FwbgClient(base_url=settings.fwbg_api_url)
     try:
         rec = await Analyst(session, fwbg_client=client).analyze(s)
@@ -475,7 +477,9 @@ async def _analyze_and_apply(session: AsyncSession, sid: int) -> None:
             log.info(
                 "runner auto mode: overriding early abandon for strategy %s "
                 "(depth=%d < min_iterations_before_abandon=%d) — forcing tune_params",
-                s.slug, depth, settings.min_iterations_before_abandon,
+                s.slug,
+                depth,
+                settings.min_iterations_before_abandon,
             )
             try:
                 sidecar_data = _synthesize_abandon_override_sidecar(s.slug, rec.reasoning)
@@ -488,7 +492,8 @@ async def _analyze_and_apply(session: AsyncSession, sid: int) -> None:
                 log.info(
                     "runner auto mode: early-abandon override — "
                     "iteration queued as strategy %d (parent %s)",
-                    child_id, s.slug,
+                    child_id,
+                    s.slug,
                 )
                 return
             except Exception:
@@ -503,7 +508,8 @@ async def _analyze_and_apply(session: AsyncSession, sid: int) -> None:
     except Exception as exc:
         log.warning(
             "runner auto mode: analyst recommendation rejected for strategy %s: %s",
-            sid, exc,
+            sid,
+            exc,
         )
         return
 
@@ -516,14 +522,17 @@ async def _analyze_and_apply(session: AsyncSession, sid: int) -> None:
             log.info(
                 "runner auto mode: strategy %s is at generation depth %d "
                 "(reiterate_max_depth=%d); not queueing another iteration",
-                sid, depth, settings.reiterate_max_depth,
+                sid,
+                depth,
+                settings.reiterate_max_depth,
             )
             return
         try:
             child_id = await reiterate(session, sid)
             log.info(
                 "runner auto mode: iteration queued as strategy %s (parent %s)",
-                child_id, sid,
+                child_id,
+                sid,
             )
         except Exception:
             log.exception("runner auto mode: reiterate failed for strategy %s", sid)
@@ -553,9 +562,7 @@ async def tick() -> int | None:
         log.info("runner auto mode: starting backtest for strategy %s", sid)
         backtest_ok = False
         async with SessionLocal() as session:
-            s = (
-                await session.execute(select(Strategy).where(Strategy.id == sid))
-            ).scalar_one()
+            s = (await session.execute(select(Strategy).where(Strategy.id == sid))).scalar_one()
             client = FwbgClient(base_url=settings.fwbg_api_url)
             try:
                 await Runner(client, session).run(s)
@@ -578,9 +585,7 @@ async def tick() -> int | None:
     async with SessionLocal() as session:
         pending = await pick_next_backtested_unanalyzed(session)
     if pending is not None:
-        log.info(
-            "runner auto mode: analyzing backtested-but-unanalyzed strategy %s", pending
-        )
+        log.info("runner auto mode: analyzing backtested-but-unanalyzed strategy %s", pending)
         async with SessionLocal() as session:
             await _analyze_and_apply(session, pending)
         return pending
@@ -591,9 +596,7 @@ async def tick() -> int | None:
     async with SessionLocal() as session:
         pending = await pick_next_add_indicator_pending(session)
     if pending is not None:
-        log.info(
-            "runner auto mode: authoring requested plugin for strategy %s", pending
-        )
+        log.info("runner auto mode: authoring requested plugin for strategy %s", pending)
         async with SessionLocal() as session:
             await _author_and_reiterate(session, pending)
         return pending
@@ -633,13 +636,10 @@ async def _active_strategy_count(session: AsyncSession) -> int:
         )
     ).scalar_one()
 
-    analyzed_ids = (
-        select(AgentRun.strategy_id)
-        .where(
-            AgentRun.agent_name == "analyst",
-            AgentRun.status == AgentRunStatus.DONE.value,
-            AgentRun.strategy_id.isnot(None),
-        )
+    analyzed_ids = select(AgentRun.strategy_id).where(
+        AgentRun.agent_name == "analyst",
+        AgentRun.status == AgentRunStatus.DONE.value,
+        AgentRun.strategy_id.isnot(None),
     )
     unanalyzed_backtested = (
         await session.execute(
@@ -657,9 +657,7 @@ async def _active_strategy_count(session: AsyncSession) -> int:
 
 async def _research_is_busy(session: AsyncSession) -> bool:
     """Return True if a research_flow agent run is currently in-flight."""
-    return bool(
-        await _count_runs(session, "research_flow", statuses=_IN_FLIGHT_STATUSES)
-    )
+    return bool(await _count_runs(session, "research_flow", statuses=_IN_FLIGHT_STATUSES))
 
 
 async def _fill_pipeline_background(agent_run_id: int) -> None:
@@ -687,16 +685,10 @@ async def _fill_pipeline_background(agent_run_id: int) -> None:
                 fanout_n=settings.researcher_fanout_n,
                 fwbg_client=fwbg,
             )
-            await finish_agent_run(
-                session, ar, status=AgentRunStatus.DONE, strategy_id=strategy_id
-            )
-            log.info(
-                "pipeline fill: research done, strategy %s now proposed", strategy_id
-            )
+            await finish_agent_run(session, ar, status=AgentRunStatus.DONE, strategy_id=strategy_id)
+            log.info("pipeline fill: research done, strategy %s now proposed", strategy_id)
         except Exception as exc:
-            log.exception(
-                "pipeline fill: research failed (agent_run %s)", agent_run_id
-            )
+            log.exception("pipeline fill: research failed (agent_run %s)", agent_run_id)
             await fail_agent_run(session, ar, exc)
         finally:
             await fwbg.aclose()

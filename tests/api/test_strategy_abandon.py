@@ -45,9 +45,13 @@ async def client_with_db(tmp_path, monkeypatch):
 async def _seed(session, slug: str, state: StrategyState) -> Strategy:
     now = datetime.now(UTC)
     row = Strategy(
-        slug=slug, current_state=state.value, iteration_count=1,
-        asset_class="FOREX", strategy_family="ORB",
-        created_at=now, updated_at=now,
+        slug=slug,
+        current_state=state.value,
+        iteration_count=1,
+        asset_class="FOREX",
+        strategy_family="ORB",
+        created_at=now,
+        updated_at=now,
     )
     session.add(row)
     await session.commit()
@@ -75,9 +79,7 @@ async def test_abandon_proposed_strategy(client_with_db):
     assert "frozen-catalog era" in post_mortem.read_text()
     assert s.post_mortem_path == str(post_mortem)
 
-    transitions = (
-        (await session.execute(select(Transition))).scalars().all()
-    )
+    transitions = (await session.execute(select(Transition))).scalars().all()
     assert len(transitions) == 1
     assert transitions[0].to_state == "abandoned"
     assert transitions[0].created_by == "operator"

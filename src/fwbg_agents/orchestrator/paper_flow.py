@@ -96,8 +96,7 @@ async def paper_analyze(
         raise PaperFlowError(f"strategy {strategy_id} not found")
     if strategy.current_state != StrategyState.PAPER_TRADING.value:
         raise PaperFlowError(
-            f"strategy {strategy_id} not in PAPER_TRADING "
-            f"(state={strategy.current_state})"
+            f"strategy {strategy_id} not in PAPER_TRADING (state={strategy.current_state})"
         )
 
     # Let FileNotFoundError from missing paper-criteria YAML propagate —
@@ -107,9 +106,7 @@ async def paper_analyze(
     fwbg_data_dir = Path(settings.fwbg_data_dir)
     summary = read_paper_summary(strategy.slug, fwbg_data_dir)
     if summary is None:
-        raise PaperFlowError(
-            f"no on-disk paper-trading data for slug={strategy.slug!r}"
-        )
+        raise PaperFlowError(f"no on-disk paper-trading data for slug={strategy.slug!r}")
     positions = read_paper_positions(strategy.slug, fwbg_data_dir)
 
     now = datetime.now(UTC)
@@ -120,9 +117,7 @@ async def paper_analyze(
         await session.commit()
         await session.refresh(ar)
     else:
-        ar = await start_agent_run(
-            session, agent_name="paper_analyst", strategy_id=strategy.id
-        )
+        ar = await start_agent_run(session, agent_name="paper_analyst", strategy_id=strategy.id)
 
     try:
         eval_res = evaluate_paper_criteria(summary, criteria)

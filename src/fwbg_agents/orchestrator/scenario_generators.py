@@ -106,9 +106,7 @@ def gen_sparse_data() -> pd.DataFrame:
     close = drift + noise
     df = _build_ohlcv(close, vol_base=600.0, rng=rng)
     # Stretch every 10th timestamp by an extra 5 minutes to create gaps.
-    extra = pd.to_timedelta(
-        ((df.index % 10 == 0).astype(int).cumsum()) * 5, unit="m"
-    )
+    extra = pd.to_timedelta(((df.index % 10 == 0).astype(int).cumsum()) * 5, unit="m")
     df["timestamp"] = df["timestamp"] + extra
     return df
 
@@ -127,6 +125,4 @@ def generate_scenario(name: str) -> pd.DataFrame:
     try:
         return SCENARIO_GENERATORS[name]()
     except KeyError:
-        raise KeyError(
-            f"unknown scenario {name!r}; valid: {sorted(SCENARIO_GENERATORS)}"
-        ) from None
+        raise KeyError(f"unknown scenario {name!r}; valid: {sorted(SCENARIO_GENERATORS)}") from None

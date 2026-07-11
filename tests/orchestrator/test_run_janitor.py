@@ -45,8 +45,12 @@ async def env(tmp_path, monkeypatch):
         async with Session() as s:
             now = datetime.now(UTC)
             row = AgentRun(
-                agent_name=agent, status=status.value, strategy_id=strategy_id,
-                error=error, started_at=now, created_at=now,
+                agent_name=agent,
+                status=status.value,
+                strategy_id=strategy_id,
+                error=error,
+                started_at=now,
+                created_at=now,
             )
             s.add(row)
             await s.commit()
@@ -57,9 +61,13 @@ async def env(tmp_path, monkeypatch):
         async with Session() as s:
             now = datetime.now(UTC)
             row = Strategy(
-                slug=slug, current_state=StrategyState.PROPOSED.value,
-                iteration_count=1, asset_class="FOREX", strategy_family="ORB",
-                created_at=now, updated_at=now,
+                slug=slug,
+                current_state=StrategyState.PROPOSED.value,
+                iteration_count=1,
+                asset_class="FOREX",
+                strategy_family="ORB",
+                created_at=now,
+                updated_at=now,
             )
             s.add(row)
             await s.commit()
@@ -84,10 +92,7 @@ async def test_orphans_are_failed_and_terminal_runs_untouched(env):
     assert await run_janitor.fail_orphaned_runs() == 2
 
     async with Session() as s:
-        rows = {
-            r.id: r
-            for r in (await s.execute(select(AgentRun))).scalars().all()
-        }
+        rows = {r.id: r for r in (await s.execute(select(AgentRun))).scalars().all()}
     assert rows[pending_id].status == AgentRunStatus.FAILED.value
     assert rows[pending_id].error == run_janitor.ORPHAN_ERROR
     assert rows[pending_id].ended_at is not None
@@ -128,17 +133,19 @@ async def test_periodic_sweep_respects_per_agent_caps(env, monkeypatch):
         async with Session() as s:
             started = datetime.now(UTC) - timedelta(minutes=minutes_ago)
             row = AgentRun(
-                agent_name=agent, status=AgentRunStatus.RUNNING.value,
-                started_at=started, created_at=started,
+                agent_name=agent,
+                status=AgentRunStatus.RUNNING.value,
+                started_at=started,
+                created_at=started,
             )
             s.add(row)
             await s.commit()
             await s.refresh(row)
             return row.id
 
-    stale_analyst = await add_with_age("analyst", minutes_ago=45)   # > 30 min cap
-    young_analyst = await add_with_age("analyst", minutes_ago=5)    # < 30 min cap
-    long_runner = await add_with_age("runner", minutes_ago=120)     # 2h < 8h cap
+    stale_analyst = await add_with_age("analyst", minutes_ago=45)  # > 30 min cap
+    young_analyst = await add_with_age("analyst", minutes_ago=5)  # < 30 min cap
+    long_runner = await add_with_age("runner", minutes_ago=120)  # 2h < 8h cap
 
     killed = await run_janitor.sweep_stale_runs()
     assert killed == 1
@@ -186,8 +193,11 @@ async def test_prune_run_dirs_removes_old_terminal_run(env, monkeypatch):
     old = datetime.now(UTC) - timedelta(days=40)
     async with Session() as s:
         row = AgentRun(
-            agent_name="researcher", status=AgentRunStatus.DONE.value,
-            started_at=old, ended_at=old, created_at=old,
+            agent_name="researcher",
+            status=AgentRunStatus.DONE.value,
+            started_at=old,
+            ended_at=old,
+            created_at=old,
         )
         s.add(row)
         await s.commit()
@@ -213,8 +223,10 @@ async def test_prune_run_dirs_skips_non_terminal_run(env, monkeypatch):
     old = datetime.now(UTC) - timedelta(days=40)
     async with Session() as s:
         row = AgentRun(
-            agent_name="researcher", status=AgentRunStatus.RUNNING.value,
-            started_at=old, created_at=old,
+            agent_name="researcher",
+            status=AgentRunStatus.RUNNING.value,
+            started_at=old,
+            created_at=old,
         )
         s.add(row)
         await s.commit()
@@ -239,8 +251,11 @@ async def test_prune_run_dirs_disabled_when_retention_zero(env, monkeypatch):
     old = datetime.now(UTC) - timedelta(days=400)
     async with Session() as s:
         row = AgentRun(
-            agent_name="researcher", status=AgentRunStatus.DONE.value,
-            started_at=old, ended_at=old, created_at=old,
+            agent_name="researcher",
+            status=AgentRunStatus.DONE.value,
+            started_at=old,
+            ended_at=old,
+            created_at=old,
         )
         s.add(row)
         await s.commit()
@@ -287,18 +302,18 @@ async def test_orphan_failures_do_not_count_toward_retry_cap(env):
     sid = await make_strategy("orb__forex__001")
     # Two orphaned attempts (restarts) + one genuine failure: cap is 2, but
     # only the genuine failure may count.
-    await add_run("runner", AgentRunStatus.FAILED, strategy_id=sid,
-                  error=run_janitor.ORPHAN_ERROR)
-    await add_run("runner", AgentRunStatus.FAILED, strategy_id=sid,
-                  error=run_janitor.ORPHAN_ERROR)
-    await add_run("runner", AgentRunStatus.FAILED, strategy_id=sid,
-                  error="fwbg reported status='failed'")
+    await add_run("runner", AgentRunStatus.FAILED, strategy_id=sid, error=run_janitor.ORPHAN_ERROR)
+    await add_run("runner", AgentRunStatus.FAILED, strategy_id=sid, error=run_janitor.ORPHAN_ERROR)
+    await add_run(
+        "runner", AgentRunStatus.FAILED, strategy_id=sid, error="fwbg reported status='failed'"
+    )
 
     async with Session() as s:
         assert await auto_runner.pick_next_strategy_id(s) == sid
 
-    await add_run("runner", AgentRunStatus.FAILED, strategy_id=sid,
-                  error="fwbg reported status='failed'")
+    await add_run(
+        "runner", AgentRunStatus.FAILED, strategy_id=sid, error="fwbg reported status='failed'"
+    )
 
     async with Session() as s:
         assert await auto_runner.pick_next_strategy_id(s) is None  # capped

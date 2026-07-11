@@ -58,9 +58,7 @@ def _write_run(
     for symbol, trace in (tr_trace_by_symbol or {}).items():
         sym_dir = run_dir / "grid_details" / symbol
         sym_dir.mkdir(parents=True, exist_ok=True)
-        (sym_dir / "trades.json").write_text(
-            json.dumps({"tr_trace": trace, "trades_detailed": []})
-        )
+        (sym_dir / "trades.json").write_text(json.dumps({"tr_trace": trace, "trades_detailed": []}))
 
 
 @pytest.fixture
@@ -72,8 +70,13 @@ def fake_test_results(tmp_path: Path) -> Path:
         root,
         "20260301_run_a",
         [
-            {"symbol": "EURUSD", "sharpe": 1.2, "win_rate": 0.55, "trades": 320,
-             "monte_carlo": {"p_value": 0.03}},
+            {
+                "symbol": "EURUSD",
+                "sharpe": 1.2,
+                "win_rate": 0.55,
+                "trades": 320,
+                "monte_carlo": {"p_value": 0.03},
+            },
         ],
         {"EURUSD": {"max_drawdown": 0.15, "profit_factor": 1.55, "annual_return": 0.08}},
     )
@@ -81,10 +84,20 @@ def fake_test_results(tmp_path: Path) -> Path:
         root,
         "20260302_run_b",
         [
-            {"symbol": "EURUSD", "sharpe": 0.9, "win_rate": 0.48, "trades": 180,
-             "monte_carlo": {"p_value": 0.07}},
-            {"symbol": "GBPUSD", "sharpe": 1.5, "win_rate": 0.58, "trades": 410,
-             "monte_carlo": {"p_value": 0.02}},
+            {
+                "symbol": "EURUSD",
+                "sharpe": 0.9,
+                "win_rate": 0.48,
+                "trades": 180,
+                "monte_carlo": {"p_value": 0.07},
+            },
+            {
+                "symbol": "GBPUSD",
+                "sharpe": 1.5,
+                "win_rate": 0.58,
+                "trades": 410,
+                "monte_carlo": {"p_value": 0.02},
+            },
         ],
         {
             "EURUSD": {"max_drawdown": 0.21, "profit_factor": 1.20, "annual_return": 0.04},
@@ -95,8 +108,13 @@ def fake_test_results(tmp_path: Path) -> Path:
         root,
         "20260303_run_c",
         [
-            {"symbol": "NAS100", "sharpe": 0.6, "win_rate": 0.27, "trades": 750,
-             "monte_carlo": {"p_value": 0.04}},
+            {
+                "symbol": "NAS100",
+                "sharpe": 0.6,
+                "win_rate": 0.27,
+                "trades": 750,
+                "monte_carlo": {"p_value": 0.04},
+            },
         ],
         {"NAS100": {"max_drawdown": 0.22, "profit_factor": 1.25, "annual_return": 0.06}},
     )
@@ -137,11 +155,13 @@ def test_defaults_have_section_6_1_shape() -> None:
 
 def test_defaults_max_drawdown_differs_per_class() -> None:
     """Risk profile differs: FOREX/INDEX strict, CRYPTO loose."""
+
     def md(asset_class: str) -> str:
         c = default_criteria(asset_class)
         assert c is not None
         entry = next(e for e in c["backtest_to_paper"]["hard_blockers"] if "max_drawdown" in e)
         return entry["max_drawdown"]
+
     assert md("FOREX") == "<= 0.25"
     assert md("INDEX") == "<= 0.25"
     assert md("COMMODITY") == "<= 0.3"
@@ -175,9 +195,7 @@ def test_calibrate_seeds_all_known_classes_on_first_run(
     # YAML on disk is the defaults template (NOT data-derived).
     forex = yaml.safe_load((criteria_dir / "FOREX.yaml").read_text())
     assert forex["_meta"]["source"].startswith("criteria_defaults.py")
-    md_entry = next(
-        e for e in forex["backtest_to_paper"]["hard_blockers"] if "max_drawdown" in e
-    )
+    md_entry = next(e for e in forex["backtest_to_paper"]["hard_blockers"] if "max_drawdown" in e)
     assert md_entry["max_drawdown"] == "<= 0.25"
 
 
@@ -193,9 +211,7 @@ def test_calibrate_preserves_existing_yaml(tmp_path: Path) -> None:
     result = calibrate(test_results_dir=test_results, criteria_dir=criteria_dir)
 
     forex = yaml.safe_load((criteria_dir / "FOREX.yaml").read_text())
-    sharpe_entry = next(
-        e for e in forex["backtest_to_paper"]["required_all"] if "sharpe" in e
-    )
+    sharpe_entry = next(e for e in forex["backtest_to_paper"]["required_all"] if "sharpe" in e)
     assert sharpe_entry["sharpe"] == ">= 9.99"  # untouched
     forex_path = criteria_dir / "FOREX.yaml"
     assert forex_path in result.preserved_criteria_files
@@ -252,8 +268,7 @@ def test_unified_metrics_merge(tmp_path: Path) -> None:
         test_results,
         "merge_check",
         elite_results=[
-            {"symbol": "EURUSD", "sharpe": 1.1, "trades": 240,
-             "monte_carlo": {"p_value": 0.03}},
+            {"symbol": "EURUSD", "sharpe": 1.1, "trades": 240, "monte_carlo": {"p_value": 0.03}},
         ],
         unified_metrics_by_symbol={
             "EURUSD": {"max_drawdown": 0.15, "profit_factor": 1.45, "annual_return": 0.08},
@@ -346,8 +361,7 @@ def test_sortino_lands_in_baseline_quantiles(tmp_path: Path) -> None:
         test_results,
         "with_trades",
         elite_results=[
-            {"symbol": "EURUSD", "sharpe": 1.0, "trades": 100,
-             "monte_carlo": {"p_value": 0.03}},
+            {"symbol": "EURUSD", "sharpe": 1.0, "trades": 100, "monte_carlo": {"p_value": 0.03}},
         ],
         unified_metrics_by_symbol={
             "EURUSD": {
@@ -376,8 +390,7 @@ def test_sortino_skipped_when_no_test_period_years(tmp_path: Path) -> None:
         test_results,
         "no_years",
         elite_results=[
-            {"symbol": "EURUSD", "sharpe": 1.0, "trades": 100,
-             "monte_carlo": {"p_value": 0.03}},
+            {"symbol": "EURUSD", "sharpe": 1.0, "trades": 100, "monte_carlo": {"p_value": 0.03}},
         ],
         unified_metrics_by_symbol={
             "EURUSD": {"trades": 100, "max_drawdown": 0.10, "profit_factor": 1.6},

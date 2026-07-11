@@ -137,9 +137,7 @@ class TuneParams(_IterBase):
             and "new_range" in data
         ):
             data = dict(data)
-            data["params"] = [
-                {"param": data.pop("param"), "new_range": data.pop("new_range")}
-            ]
+            data["params"] = [{"param": data.pop("param"), "new_range": data.pop("new_range")}]
         return data
 
 
@@ -320,24 +318,17 @@ def _best_symbol_metrics_from_results(run: dict) -> dict:
 def _per_asset_metrics_from_results(run: dict) -> dict[str, dict]:
     """symbol → unified_metrics for every backtested asset."""
     return {
-        sym: (data.get("unified_metrics") or {})
-        for sym, data in (run.get("assets") or {}).items()
+        sym: (data.get("unified_metrics") or {}) for sym, data in (run.get("assets") or {}).items()
     }
 
 
-def _render_per_asset_criteria(
-    asset_class: str | None, per_asset: dict[str, dict]
-) -> str:
+def _render_per_asset_criteria(asset_class: str | None, per_asset: dict[str, dict]) -> str:
     """PASS/FAIL per symbol against the asset-class criteria YAML."""
     if not per_asset:
         return "(no per-asset results)"
     lines: list[str] = []
     for sym in sorted(per_asset):
-        numeric = {
-            k: float(v)
-            for k, v in per_asset[sym].items()
-            if isinstance(v, (int, float))
-        }
+        numeric = {k: float(v) for k, v in per_asset[sym].items() if isinstance(v, (int, float))}
         ok, failures = check_backtest_criteria(
             asset_class=asset_class or "unknown", metrics=numeric
         )
@@ -368,9 +359,7 @@ def _render_prompt(
     out = out.replace("{{ max_iterations }}", str(max_iterations))
     out = out.replace("{{ strategy_json }}", json.dumps(strategy_json, indent=2))
     out = out.replace("{{ metrics }}", json.dumps(metrics, indent=2))
-    out = out.replace(
-        "{{ per_asset_metrics }}", json.dumps(per_asset_metrics, indent=2)
-    )
+    out = out.replace("{{ per_asset_metrics }}", json.dumps(per_asset_metrics, indent=2))
     out = out.replace("{{ per_asset_criteria }}", per_asset_criteria)
     out = out.replace("{{ family_history }}", family_history)
     out = out.replace("{{ criteria_yaml }}", criteria_yaml or "(no criteria YAML present)")
@@ -443,9 +432,7 @@ class Analyst:
 
     async def analyze(self, strategy: Strategy) -> AnalystRecommendation:
         """Run the analyst agent on a backtested strategy and return a typed recommendation."""
-        ar = await start_agent_run(
-            self.session, agent_name="analyst", strategy_id=strategy.id
-        )
+        ar = await start_agent_run(self.session, agent_name="analyst", strategy_id=strategy.id)
 
         try:
             iteration_dir = strategy_dir(strategy.slug) / "iteration_001"
@@ -460,9 +447,7 @@ class Analyst:
             results = json.loads(results_path.read_text())
             metrics = _best_symbol_metrics_from_results(results)
             per_asset = _per_asset_metrics_from_results(results)
-            per_asset_criteria = _render_per_asset_criteria(
-                strategy.asset_class, per_asset
-            )
+            per_asset_criteria = _render_per_asset_criteria(strategy.asset_class, per_asset)
 
             criteria_path = settings.criteria_dir / f"{strategy.asset_class}.yaml"
             criteria_yaml = criteria_path.read_text() if criteria_path.is_file() else ""

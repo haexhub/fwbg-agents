@@ -216,13 +216,19 @@ async def test_post_reiterate_with_plugin_returns_202_and_creates_child(
     client, session, settings, _ = client_with_db
 
     parent = await _seed_parent_in_state(
-        session, settings, slug="parent_ok", state=StrategyState.BACKTESTED.value,
-        with_sidecar=True, capability=DEFAULT_CAPABILITY,
+        session,
+        settings,
+        slug="parent_ok",
+        state=StrategyState.BACKTESTED.value,
+        with_sidecar=True,
+        capability=DEFAULT_CAPABILITY,
     )
     plugin = await _seed_plugin(session)
     await _seed_author_agent_run_for_plugin(
-        session, settings,
-        plugin_id=plugin.id, parent_strategy_id=parent.id,
+        session,
+        settings,
+        plugin_id=plugin.id,
+        parent_strategy_id=parent.id,
         capability=DEFAULT_CAPABILITY,
     )
 
@@ -232,9 +238,8 @@ async def test_post_reiterate_with_plugin_returns_202_and_creates_child(
         captured.append((strategy_id, plugin_slug, agent_run_id))
 
     from fwbg_agents.api import plugins as plugins_api
-    monkeypatch.setattr(
-        plugins_api, "_run_reiterate_with_plugin_background", fake_reiter_bg
-    )
+
+    monkeypatch.setattr(plugins_api, "_run_reiterate_with_plugin_background", fake_reiter_bg)
 
     r = await client.post(
         f"/strategies/{parent.id}/reiterate-with-plugin",
@@ -247,9 +252,7 @@ async def test_post_reiterate_with_plugin_returns_202_and_creates_child(
     assert "agent_run_id" in body
 
     ar = (
-        await session.execute(
-            select(AgentRun).where(AgentRun.id == body["agent_run_id"])
-        )
+        await session.execute(select(AgentRun).where(AgentRun.id == body["agent_run_id"]))
     ).scalar_one()
     assert ar.agent_name == "translator_reiterate_flow"
     assert ar.status == AgentRunStatus.PENDING.value
@@ -273,8 +276,11 @@ async def test_post_reiterate_with_plugin_404_strategy_missing(client_with_db):
 async def test_post_reiterate_with_plugin_422_parent_not_backtested(client_with_db):
     client, session, settings, _ = client_with_db
     parent = await _seed_parent_in_state(
-        session, settings, slug="parent_proposed",
-        state=StrategyState.PROPOSED.value, with_sidecar=True,
+        session,
+        settings,
+        slug="parent_proposed",
+        state=StrategyState.PROPOSED.value,
+        with_sidecar=True,
     )
     await _seed_plugin(session)
     r = await client.post(
@@ -290,8 +296,11 @@ async def test_post_reiterate_with_plugin_422_parent_not_backtested(client_with_
 async def test_post_reiterate_with_plugin_422_plugin_not_verified(client_with_db):
     client, session, settings, _ = client_with_db
     parent = await _seed_parent_in_state(
-        session, settings, slug="parent_pluginauth",
-        state=StrategyState.BACKTESTED.value, with_sidecar=True,
+        session,
+        settings,
+        slug="parent_pluginauth",
+        state=StrategyState.BACKTESTED.value,
+        with_sidecar=True,
     )
     await _seed_plugin(session, state=PluginState.AUTHORED.value)
     r = await client.post(
@@ -306,13 +315,19 @@ async def test_post_reiterate_with_plugin_422_plugin_not_verified(client_with_db
 async def test_post_reiterate_with_plugin_422_no_sidecar(client_with_db):
     client, session, settings, _ = client_with_db
     parent = await _seed_parent_in_state(
-        session, settings, slug="parent_nosidecar",
-        state=StrategyState.BACKTESTED.value, with_sidecar=False,
+        session,
+        settings,
+        slug="parent_nosidecar",
+        state=StrategyState.BACKTESTED.value,
+        with_sidecar=False,
     )
     plugin = await _seed_plugin(session)
     await _seed_author_agent_run_for_plugin(
-        session, settings, plugin_id=plugin.id,
-        parent_strategy_id=parent.id, capability=DEFAULT_CAPABILITY,
+        session,
+        settings,
+        plugin_id=plugin.id,
+        parent_strategy_id=parent.id,
+        capability=DEFAULT_CAPABILITY,
     )
     r = await client.post(
         f"/strategies/{parent.id}/reiterate-with-plugin",
@@ -325,13 +340,18 @@ async def test_post_reiterate_with_plugin_422_no_sidecar(client_with_db):
 async def test_post_reiterate_with_plugin_422_capability_mismatch(client_with_db):
     client, session, settings, _ = client_with_db
     parent = await _seed_parent_in_state(
-        session, settings, slug="parent_capmismatch",
-        state=StrategyState.BACKTESTED.value, with_sidecar=True,
+        session,
+        settings,
+        slug="parent_capmismatch",
+        state=StrategyState.BACKTESTED.value,
+        with_sidecar=True,
         capability="rolling close-price mean",
     )
     plugin = await _seed_plugin(session)
     await _seed_author_agent_run_for_plugin(
-        session, settings, plugin_id=plugin.id,
+        session,
+        settings,
+        plugin_id=plugin.id,
         parent_strategy_id=parent.id,
         capability="detect strong trends",  # ← different from parent sidecar
     )

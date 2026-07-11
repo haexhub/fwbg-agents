@@ -100,6 +100,7 @@ async def _run_analyst_background(strategy_id: int) -> None:
             metrics: dict[str, float] = {}
             if results_path.is_file():
                 import json as _json
+
                 results = _json.loads(results_path.read_text())
                 metrics = {
                     k: float(v)
@@ -120,12 +121,11 @@ async def _run_analyst_background(strategy_id: int) -> None:
                     child_id = await reiterate(session, strategy_id)
                     log.info(
                         "analyst: iteration queued as strategy %s (parent %s)",
-                        child_id, strategy_id,
+                        child_id,
+                        strategy_id,
                     )
                 except Exception:
-                    log.exception(
-                        "analyst: reiterate failed for strategy %s", strategy_id
-                    )
+                    log.exception("analyst: reiterate failed for strategy %s", strategy_id)
         except Exception:
             log.exception("analyst background task failed for strategy %s", strategy_id)
         finally:
@@ -170,12 +170,16 @@ async def put_runner_auto(body: RunnerAutoUpdate) -> dict[str, Any]:
 async def get_runner_queue(session: AsyncSession = Depends(get_session)) -> dict[str, Any]:
     """All PROPOSED strategies ordered by queue_position (nulls last), then created_at."""
     rows = (
-        await session.execute(
-            select(Strategy)
-            .where(Strategy.current_state == "proposed")
-            .order_by(nulls_last(Strategy.queue_position), Strategy.created_at)
+        (
+            await session.execute(
+                select(Strategy)
+                .where(Strategy.current_state == "proposed")
+                .order_by(nulls_last(Strategy.queue_position), Strategy.created_at)
+            )
         )
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
     return {
         "strategies": [
             {
@@ -219,16 +223,16 @@ async def put_runner_queue(
                     Strategy.current_state == "proposed",
                 )
             )
-        ).scalars().all()
+        )
+        .scalars()
+        .all()
     )
 
     position = 1
     for strategy_id in body.order:
         if strategy_id not in proposed_ids:
             continue
-        s = (
-            await session.execute(select(Strategy).where(Strategy.id == strategy_id))
-        ).scalar_one()
+        s = (await session.execute(select(Strategy).where(Strategy.id == strategy_id))).scalar_one()
         s.queue_position = position
         position += 1
 
@@ -357,12 +361,16 @@ async def get_agent_run(
         raise HTTPException(404, f"agent_run {agent_run_id} not found")
 
     calls = (
-        await session.execute(
-            select(LlmCall)
-            .where(LlmCall.agent_run_id == agent_run_id)
-            .order_by(asc(LlmCall.created_at))
+        (
+            await session.execute(
+                select(LlmCall)
+                .where(LlmCall.agent_run_id == agent_run_id)
+                .order_by(asc(LlmCall.created_at))
+            )
         )
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
     llm_calls = [
         {
             "model": c.model,
@@ -376,12 +384,16 @@ async def get_agent_run(
 
     # Flow drill-down (Plan 008 Schritt 5): child runs spawned under this run.
     children = (
-        await session.execute(
-            select(AgentRun)
-            .where(AgentRun.parent_run_id == agent_run_id)
-            .order_by(asc(AgentRun.started_at))
+        (
+            await session.execute(
+                select(AgentRun)
+                .where(AgentRun.parent_run_id == agent_run_id)
+                .order_by(asc(AgentRun.started_at))
+            )
         )
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
 
     body = _serialize_agent_run(ar)
     body["llm_calls"] = llm_calls

@@ -97,14 +97,19 @@ def researcher_summary(live: LiveCatalog) -> dict[str, Any]:
     def _slim(entries: list[dict[str, Any]]) -> list[dict[str, str]]:
         """Reduce catalog entries to name/description pairs for the Researcher prompt."""
         return [
-            {"name": e.get("name", ""), "description": e.get("description", "")}
-            for e in entries
+            {"name": e.get("name", ""), "description": e.get("description", "")} for e in entries
         ]
 
     return {
         category: _slim(live.plugin_details.get(category, []))
-        for category in ("indicators", "preprocessing", "feature_selection",
-                         "data_loading", "models", "exit_strategies")
+        for category in (
+            "indicators",
+            "preprocessing",
+            "feature_selection",
+            "data_loading",
+            "models",
+            "exit_strategies",
+        )
     } | {
         "exit_modifiers": _slim(live.exit_modifiers),
         "entry_modifiers": _slim(live.entry_modifiers),
@@ -128,9 +133,7 @@ def _detail(entry: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-async def fetch_live_catalog(
-    session: AsyncSession, fwbg: FwbgClient | None
-) -> LiveCatalog:
+async def fetch_live_catalog(session: AsyncSession, fwbg: FwbgClient | None) -> LiveCatalog:
     """Fetch the current catalog from fwbg. fwbg is the single source of truth.
 
     Raises if no client is configured or the API is unreachable — there is no
@@ -138,8 +141,7 @@ async def fetch_live_catalog(
     """
     if fwbg is None:
         raise RuntimeError(
-            "fetch_live_catalog requires a FwbgClient; there is no offline "
-            "filesystem fallback"
+            "fetch_live_catalog requires a FwbgClient; there is no offline filesystem fallback"
         )
     return await _fetch_from_api(session, fwbg)
 
@@ -174,9 +176,7 @@ async def _fetch_from_api(session: AsyncSession, fwbg: FwbgClient) -> LiveCatalo
     presets: dict[str, list[str]] = {}
     for section in _PRESET_SECTIONS:
         entries = await fwbg.get_presets(section)
-        presets[section] = sorted(
-            e["id"] for e in entries if isinstance(e, dict) and e.get("id")
-        )
+        presets[section] = sorted(e["id"] for e in entries if isinstance(e, dict) and e.get("id"))
 
     datasources = await _fetch_datasources(fwbg)
 
@@ -213,9 +213,7 @@ async def _fetch_from_api(session: AsyncSession, fwbg: FwbgClient) -> LiveCatalo
         entry_modifiers=entry_modifiers,
         presets=presets,
         datasources=datasources,
-        asset_registry={
-            k: sorted(v, key=lambda e: e["symbol"]) for k, v in registry.items()
-        },
+        asset_registry={k: sorted(v, key=lambda e: e["symbol"]) for k, v in registry.items()},
         timeframes=timeframes,
     )
 

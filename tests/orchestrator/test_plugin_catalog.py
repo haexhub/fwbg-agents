@@ -15,10 +15,19 @@ from fwbg_agents.orchestrator.plugin_catalog import (
 
 
 def test_has_and_get():
-    cat = PluginCatalog(by_category={"indicators": {"ema": PluginManifest(
-        name="ema", category="indicators", provenance="fwbg-core",
-        version="1.0.0", source_path=Path("/tmp/x"),
-    )}})
+    cat = PluginCatalog(
+        by_category={
+            "indicators": {
+                "ema": PluginManifest(
+                    name="ema",
+                    category="indicators",
+                    provenance="fwbg-core",
+                    version="1.0.0",
+                    source_path=Path("/tmp/x"),
+                )
+            }
+        }
+    )
     assert cat.has("indicators", "ema")
     assert not cat.has("indicators", "nonexistent")
     assert not cat.has("models", "ema")
@@ -27,10 +36,19 @@ def test_has_and_get():
 
 
 def test_all_slugs_for_returns_sorted():
-    cat = PluginCatalog(by_category={"indicators": {
-        slug: PluginManifest(name=slug, category="indicators", provenance="fwbg-core",
-                             version="1.0.0", source_path=Path("/tmp/x"))
-        for slug in ["sma", "ema", "macd"]
-    }})
+    cat = PluginCatalog(
+        by_category={
+            "indicators": {
+                slug: PluginManifest(
+                    name=slug,
+                    category="indicators",
+                    provenance="fwbg-core",
+                    version="1.0.0",
+                    source_path=Path("/tmp/x"),
+                )
+                for slug in ["sma", "ema", "macd"]
+            }
+        }
+    )
     assert cat.all_slugs_for("indicators") == ["ema", "macd", "sma"]
     assert cat.all_slugs_for("nonexistent") == []

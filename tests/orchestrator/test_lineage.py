@@ -38,24 +38,34 @@ async def chain(tmp_path, monkeypatch):
     async with Session() as s:
         now = datetime.now(UTC)
         root = Strategy(
-            slug="fam_root", current_state=StrategyState.BACKTESTED.value,
-            iteration_count=1, asset_class="FOREX", strategy_family="ORB",
-            created_at=now, updated_at=now,
+            slug="fam_root",
+            current_state=StrategyState.BACKTESTED.value,
+            iteration_count=1,
+            asset_class="FOREX",
+            strategy_family="ORB",
+            created_at=now,
+            updated_at=now,
         )
         s.add(root)
         await s.flush()
         child = Strategy(
-            slug="fam_child", current_state=StrategyState.BACKTESTED.value,
-            iteration_count=1, parent_strategy_id=root.id,
-            asset_class="FOREX", strategy_family="ORB",
-            created_at=now, updated_at=now,
+            slug="fam_child",
+            current_state=StrategyState.BACKTESTED.value,
+            iteration_count=1,
+            parent_strategy_id=root.id,
+            asset_class="FOREX",
+            strategy_family="ORB",
+            created_at=now,
+            updated_at=now,
         )
         s.add(child)
         await s.flush()
         s.add(
             Transition(
-                entity_type="strategy", entity_id=child.id,
-                from_state=None, to_state=StrategyState.PROPOSED.value,
+                entity_type="strategy",
+                entity_id=child.id,
+                from_state=None,
+                to_state=StrategyState.PROPOSED.value,
                 reason="translator: re-iterate from fam_root (tune_params)",
                 payload={
                     "parent_strategy_id": root.id,
@@ -65,7 +75,8 @@ async def chain(tmp_path, monkeypatch):
                         "params": [{"param": "sl_mult", "new_range": [1.5, 2.0]}],
                     },
                 },
-                created_by="translator", created_at=now,
+                created_by="translator",
+                created_at=now,
             )
         )
         await s.commit()
@@ -85,8 +96,13 @@ async def chain(tmp_path, monkeypatch):
             )
         )
     # The root's analyst verdict (what led to the child).
-    (settings.data_dir / "strategies" / "fam_root" / "iteration_001"
-     / "analyst_recommendation.json").write_text(
+    (
+        settings.data_dir
+        / "strategies"
+        / "fam_root"
+        / "iteration_001"
+        / "analyst_recommendation.json"
+    ).write_text(
         json.dumps(
             {"kind": "tune_params", "params": [{"param": "sl_mult", "new_range": [1.5, 2.0]}]}
         )
@@ -146,9 +162,13 @@ async def test_render_family_history_first_iteration(chain):
         # full family block.
         now = datetime.now(UTC)
         lone = Strategy(
-            slug="lone_wolf", current_state=StrategyState.BACKTESTED.value,
-            iteration_count=1, asset_class="FOREX", strategy_family="ORB",
-            created_at=now, updated_at=now,
+            slug="lone_wolf",
+            current_state=StrategyState.BACKTESTED.value,
+            iteration_count=1,
+            asset_class="FOREX",
+            strategy_family="ORB",
+            created_at=now,
+            updated_at=now,
         )
         s.add(lone)
         await s.commit()

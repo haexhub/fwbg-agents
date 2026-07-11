@@ -88,8 +88,8 @@ async def test_search_logs_llm_call_for_quota(db):
     await client.search("q", session=db, agent_run_id=ar.id)
 
     rows = (
-        await db.execute(select(LlmCall).where(LlmCall.model == "tavily-search"))
-    ).scalars().all()
+        (await db.execute(select(LlmCall).where(LlmCall.model == "tavily-search"))).scalars().all()
+    )
     assert len(rows) == 1
     assert rows[0].agent_run_id == ar.id
     assert rows[0].latency_ms is not None and rows[0].latency_ms >= 0
@@ -101,8 +101,8 @@ async def test_search_does_not_log_without_session_and_agent_run(db):
     client = TavilyClient(api_key="k", http=http)
     await client.search("q")
     rows = (
-        await db.execute(select(LlmCall).where(LlmCall.model == "tavily-search"))
-    ).scalars().all()
+        (await db.execute(select(LlmCall).where(LlmCall.model == "tavily-search"))).scalars().all()
+    )
     assert rows == []
 
 
@@ -144,12 +144,18 @@ async def test_get_quota_usage_excludes_rows_outside_window(db):
     now = datetime.now(UTC)
 
     fresh = LlmCall(
-        agent_run_id=ar.id, model="tavily-search",
-        input_tokens=0, output_tokens=0, created_at=now,
+        agent_run_id=ar.id,
+        model="tavily-search",
+        input_tokens=0,
+        output_tokens=0,
+        created_at=now,
     )
     stale = LlmCall(
-        agent_run_id=ar.id, model="tavily-search",
-        input_tokens=0, output_tokens=0, created_at=now,
+        agent_run_id=ar.id,
+        model="tavily-search",
+        input_tokens=0,
+        output_tokens=0,
+        created_at=now,
     )
     db.add_all([fresh, stale])
     await db.commit()
@@ -157,9 +163,7 @@ async def test_get_quota_usage_excludes_rows_outside_window(db):
 
     # back-date the stale row past the 30-day window
     await db.execute(
-        update(LlmCall)
-        .where(LlmCall.id == stale.id)
-        .values(created_at=now - timedelta(days=45))
+        update(LlmCall).where(LlmCall.id == stale.id).values(created_at=now - timedelta(days=45))
     )
     await db.commit()
 
@@ -171,12 +175,22 @@ async def test_get_quota_usage_excludes_other_models(db):
     ar = await _new_agent_run(db)
     now = datetime.now(UTC)
     db.add(
-        LlmCall(agent_run_id=ar.id, model="claude-opus-4-7",
-                input_tokens=10, output_tokens=20, created_at=now)
+        LlmCall(
+            agent_run_id=ar.id,
+            model="claude-opus-4-7",
+            input_tokens=10,
+            output_tokens=20,
+            created_at=now,
+        )
     )
     db.add(
-        LlmCall(agent_run_id=ar.id, model="tavily-search",
-                input_tokens=0, output_tokens=0, created_at=now)
+        LlmCall(
+            agent_run_id=ar.id,
+            model="tavily-search",
+            input_tokens=0,
+            output_tokens=0,
+            created_at=now,
+        )
     )
     await db.commit()
     assert await get_quota_usage(db) == 1

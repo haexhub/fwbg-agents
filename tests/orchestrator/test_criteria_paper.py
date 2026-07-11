@@ -47,9 +47,7 @@ def test_evaluate_passes_when_all_metrics_clear_thresholds():
         "required_all": [{"sharpe_paper": ">= 0.8"}],
         "hard_blockers": [{"max_dd_paper": "<= 0.25"}],
     }
-    res = evaluate_paper_criteria(
-        _make_summary(sharpe_paper=1.0, max_dd_paper=0.10), criteria
-    )
+    res = evaluate_paper_criteria(_make_summary(sharpe_paper=1.0, max_dd_paper=0.10), criteria)
     assert isinstance(res, CriteriaEvalResult)
     assert res.passed is True
     assert res.failures == []
@@ -60,9 +58,7 @@ def test_evaluate_fails_when_hard_blocker_breached():
         "required_all": [{"sharpe_paper": ">= 0.8"}],
         "hard_blockers": [{"max_dd_paper": "<= 0.25"}],
     }
-    res = evaluate_paper_criteria(
-        _make_summary(sharpe_paper=1.0, max_dd_paper=0.30), criteria
-    )
+    res = evaluate_paper_criteria(_make_summary(sharpe_paper=1.0, max_dd_paper=0.30), criteria)
     assert res.passed is False
     assert any("max_dd_paper" in f for f in res.failures)
 
@@ -74,9 +70,7 @@ def test_evaluate_skips_underscore_prefix_keys():
         "required_all": [{"_note": ">= 999.0", "sharpe_paper": ">= 0.8"}],
         "hard_blockers": [],
     }
-    res = evaluate_paper_criteria(
-        _make_summary(sharpe_paper=1.0), criteria
-    )
+    res = evaluate_paper_criteria(_make_summary(sharpe_paper=1.0), criteria)
     assert res.passed is True
     assert res.failures == []
 

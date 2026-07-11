@@ -42,22 +42,14 @@ def upgrade() -> None:
         sa.Column("ended_at", sa.DateTime(timezone=True), nullable=True),
         sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
     )
-    op.create_index(
-        "ix_verification_run_plugin_id", "verification_run", ["plugin_id"]
-    )
-    op.create_index(
-        "ix_verification_run_created_at", "verification_run", ["created_at"]
-    )
+    op.create_index("ix_verification_run_plugin_id", "verification_run", ["plugin_id"])
+    op.create_index("ix_verification_run_created_at", "verification_run", ["created_at"])
 
-    op.execute(
-        sa.text("UPDATE plugin SET kind = 'exit_strategy' WHERE kind = 'exit'")
-    )
+    op.execute(sa.text("UPDATE plugin SET kind = 'exit_strategy' WHERE kind = 'exit'"))
 
 
 def downgrade() -> None:
-    op.execute(
-        sa.text("UPDATE plugin SET kind = 'exit' WHERE kind = 'exit_strategy'")
-    )
+    op.execute(sa.text("UPDATE plugin SET kind = 'exit' WHERE kind = 'exit_strategy'"))
     op.drop_index("ix_verification_run_created_at", table_name="verification_run")
     op.drop_index("ix_verification_run_plugin_id", table_name="verification_run")
     op.drop_table("verification_run")

@@ -98,8 +98,14 @@ async def lookup_prior_art(
 
     strategy_ids = [s.id for s in rows]
     tag_rows = (
-        await session.execute(select(StrategyTag).where(StrategyTag.strategy_id.in_(strategy_ids)))
-    ).scalars().all()
+        (
+            await session.execute(
+                select(StrategyTag).where(StrategyTag.strategy_id.in_(strategy_ids))
+            )
+        )
+        .scalars()
+        .all()
+    )
     tags_by_strategy: dict[int, set[str]] = {sid: set() for sid in strategy_ids}
     for tr in tag_rows:
         tags_by_strategy[tr.strategy_id].add(tr.tag)
