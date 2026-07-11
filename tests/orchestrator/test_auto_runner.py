@@ -540,7 +540,8 @@ async def test_abandon_at_min_depth_with_improvement_overrides(env, monkeypatch)
     # Build a two-member chain: root with Sharpe 0.3, child with Sharpe 0.9.
     root_id = await make_strategy("orb__forex__root_improv", state=StrategyState.BACKTESTED)
     _seed_results_metrics("orb__forex__root_improv", sharpe=0.3)
-    (settings.data_dir / "strategies" / "orb__forex__root_improv" / "iteration_001" / "strategy.json").write_text(
+    root_it = settings.data_dir / "strategies" / "orb__forex__root_improv" / "iteration_001"
+    (root_it / "strategy.json").write_text(
         json.dumps({"exit_strategies": [{"params": {"sl_mult": 1.5}}]})
     )
 
