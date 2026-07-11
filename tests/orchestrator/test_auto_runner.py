@@ -451,3 +451,122 @@ async def test_analyze_and_apply_reiterates_below_depth_cap(env, monkeypatch):
     monkeypatch.setattr(settings, "reiterate_max_depth", 5)
     reiterated = await _run_analyze_with_fake_analyst(Session, monkeypatch, sid)
     assert reiterated == [sid]
+
+
+# ---------------------------------------------------------------------------
+# Improvement-based abandon override
+# ---------------------------------------------------------------------------
+
+
+def _seed_results_metrics(slug: str, sharpe: float) -> None:
+    """Write a minimal fwbg_results.json with the given Sharpe for slug."""
+    from fwbg_agents.config import settings
+
+    it_dir = settings.data_dir / "strategies" / slug / "iteration_001"
+    it_dir.mkdir(parents=True, exist_ok=True)
+    (it_dir / "fwbg_results.json").write_text(
+        json.dumps({"assets": {"EURUSD": {"unified_metrics": {"sharpe": sharpe}}}})
+    )
+
+
+async def _run_analyze_with_abandon(Session, monkeypatch, sid):
+    """Drive _analyze_and_apply with a canned Abandon recommendation."""
+    from fwbg_agents.agents.analyst import Abandon
+
+    class _FakeClient:
+        def __init__(self, *a, **kw): ...
+        async def aclose(self): ...
+
+    class _FakeAnalyst:
+        def __init__(self, session, **kw): ...
+
+        async def analyze(self, s):
+            return Abandon(
+                confidence=0.8,
+                reasoning="consistently negative returns",
+                post_mortem_summary="never profitable",
+                lessons=["avoid ORB on FOREX"],
+            )
+
+    reiterated: list[int] = []
+
+    async def fake_reiterate(session, strategy_id):
+        reiterated.append(strategy_id)
+        return 999
+
+    monkeypatch.setattr(auto_runner, "FwbgClient", _FakeClient)
+    monkeypatch.setattr(auto_runner, "Analyst", _FakeAnalyst)
+    monkeypatch.setattr(auto_runner, "reiterate", fake_reiterate)
+
+    # validate_and_apply would fail on an unresolvable Abandon in tests; stub it.
+    async def fake_validate(session, strategy, rec, **kw):
+        pass
+
+    monkeypatch.setattr(auto_runner, "validate_and_apply", fake_validate)
+
+    async with Session() as session:
+        await auto_runner._analyze_and_apply(session, sid)
+    return reiterated
+
+
+async def test_abandon_at_min_depth_without_improvement_passes_through(env, monkeypatch):
+    """Abandon at depth >= min_iterations_before_abandon with no metric improvement
+    is not overridden — the recommendation passes through to validate_and_apply."""
+    from fwbg_agents.config import settings
+
+    Session, make_strategy, _ = env
+    monkeypatch.setattr(settings, "min_iterations_before_abandon", 1)
+    monkeypatch.setattr(settings, "reiterate_max_depth", 10)
+
+    sid = await make_strategy("orb__forex__noimprov", state=StrategyState.BACKTESTED)
+    # Flat Sharpe — no improvement.
+    _seed_results_metrics("orb__forex__noimprov", sharpe=0.2)
+
+    reiterated = await _run_analyze_with_abandon(Session, monkeypatch, sid)
+    assert reiterated == []  # no override, no reiterate
+
+
+async def test_abandon_at_min_depth_with_improvement_overrides(env, monkeypatch):
+    """Abandon at depth >= min_iterations_before_abandon but with a rising Sharpe
+    is overridden with a synthetic tune_params iteration."""
+    from datetime import UTC, datetime
+
+    from fwbg_agents.config import settings
+
+    Session, make_strategy, _ = env
+    monkeypatch.setattr(settings, "min_iterations_before_abandon", 1)
+    monkeypatch.setattr(settings, "reiterate_max_depth", 10)
+
+    # Build a two-member chain: root with Sharpe 0.3, child with Sharpe 0.9.
+    root_id = await make_strategy("orb__forex__root_improv", state=StrategyState.BACKTESTED)
+    _seed_results_metrics("orb__forex__root_improv", sharpe=0.3)
+    root_it = settings.data_dir / "strategies" / "orb__forex__root_improv" / "iteration_001"
+    (root_it / "strategy.json").write_text(
+        json.dumps({"exit_strategies": [{"params": {"sl_mult": 1.5}}]})
+    )
+
+    async with Session() as s:
+        now = datetime.now(UTC)
+        child = Strategy(
+            slug="orb__forex__child_improv",
+            current_state=StrategyState.BACKTESTED.value,
+            iteration_count=1,
+            asset_class="FOREX",
+            strategy_family="ORB",
+            parent_strategy_id=root_id,
+            created_at=now,
+            updated_at=now,
+        )
+        s.add(child)
+        await s.commit()
+        await s.refresh(child)
+        child_sid = child.id
+
+    child_slug = "orb__forex__child_improv"
+    _seed_results_metrics(child_slug, sharpe=0.9)
+    (settings.data_dir / "strategies" / child_slug / "iteration_001" / "strategy.json").write_text(
+        json.dumps({"exit_strategies": [{"params": {"sl_mult": 1.5}}]})
+    )
+
+    reiterated = await _run_analyze_with_abandon(Session, monkeypatch, child_sid)
+    assert reiterated == [child_sid]  # override fired, reiterate called

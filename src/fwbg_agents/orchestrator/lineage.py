@@ -40,6 +40,34 @@ _SUMMARY_METRIC_KEYS: tuple[str, ...] = (
     "profit_factor",
 )
 
+_IMPROVEMENT_METRIC_KEYS: tuple[str, ...] = ("sharpe", "profit_factor")
+
+
+def has_metric_improvement(
+    metrics_history: list[dict],
+    *,
+    keys: tuple[str, ...] = _IMPROVEMENT_METRIC_KEYS,
+    lookback: int = 3,
+) -> bool:
+    """True if at least one key metric shows an upward trend in recent iterations.
+
+    metrics_history: ordered list of unified_metrics dicts, oldest → newest.
+    lookback: how many of the most recent entries to consider.
+    Returns False when fewer than 2 entries with numeric values exist for a key,
+    or when no key shows improvement.
+    """
+    window = metrics_history[-lookback:]
+    if len(window) < 2:
+        return False
+    for key in keys:
+        vals = [m.get(key) for m in window]
+        numeric = [v for v in vals if isinstance(v, (int, float))]
+        if len(numeric) < 2:
+            continue
+        if numeric[-1] > numeric[0]:
+            return True
+    return False
+
 
 async def generation_depth(session: AsyncSession, strategy: Strategy) -> int:
     """1-based depth of `strategy` in its iteration chain (root = 1)."""

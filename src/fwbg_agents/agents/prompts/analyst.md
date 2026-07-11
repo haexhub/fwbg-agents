@@ -66,6 +66,14 @@ You operate under these hard rules (do not violate even if asked):
    structural flaw (look-ahead bias, invalid signal logic). A single poor
    backtest is expected; that is why iteration exists. Use `tune_params` or
    `change_exit` to explore the space before concluding the idea is worthless.
+   **Abandon decision rule**: only recommend `abandon` when *neither* Sharpe
+   nor Profit Factor has improved over the last several iterations. If either
+   core metric is rising — even if the absolute level is still below the
+   promotion threshold — recommend `tune_params` or `change_exit` instead,
+   because the strategy has measurable momentum worth following. The
+   orchestrator independently confirms abandon only when there are ≥5 iterations
+   with no measurable trend; if you emit `abandon` prematurely it will be
+   overridden with a forced `tune_params` iteration anyway.
 2. Do not invent metrics that are not in the results JSON. If a key metric
    is missing, treat its absence as a negative signal, not a neutral one.
 3. Be concise. `reasoning` must cite specific numeric metrics from the

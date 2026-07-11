@@ -42,7 +42,11 @@ from fwbg_agents.agents.runner import Runner
 from fwbg_agents.agents.translator import Translator
 from fwbg_agents.config import settings
 from fwbg_agents.orchestrator.lifecycle import strategy_dir, transition_strategy
-from fwbg_agents.orchestrator.lineage import generation_depth
+from fwbg_agents.orchestrator.lineage import (
+    family_strategies,
+    generation_depth,
+    has_metric_improvement,
+)
 from fwbg_agents.orchestrator.plugin_flow import (
     PluginAuthorError,
     _find_latest_sidecar,
@@ -541,18 +545,42 @@ async def _analyze_and_apply(session: AsyncSession, sid: int) -> None:
             if isinstance(v, (int, float))
         }
 
-    # Hard guard: if Analyst recommends abandon before min_iterations_before_abandon,
-    # override with a synthetic tune_params iteration so the strategy family gets
-    # at least one chance to improve before being discarded.
+    # Guard: override an Abandon recommendation when the strategy has not had a
+    # fair chance yet.  Two independent conditions both trigger the same override:
+    # (A) depth < min_iterations_before_abandon — too few iterations regardless
+    #     of trend; and
+    # (B) at least one core metric (Sharpe, profit_factor) is still improving
+    #     across recent iterations — the strategy has momentum worth following.
     if isinstance(rec, Abandon):
         depth = await generation_depth(session, s)
+        override_reason: str | None = None
         if depth < settings.min_iterations_before_abandon:
+            override_reason = (
+                f"depth={depth} < min_iterations_before_abandon="
+                f"{settings.min_iterations_before_abandon}"
+            )
+        else:
+            family = await family_strategies(session, s)
+            metrics_history: list[dict] = []
+            for member in family:
+                rp = strategy_dir(member.slug) / "iteration_001" / "fwbg_results.json"
+                if rp.is_file():
+                    try:
+                        metrics_history.append(
+                            _best_symbol_metrics_from_results(json.loads(rp.read_text()))
+                        )
+                    except Exception:
+                        metrics_history.append({})
+                else:
+                    metrics_history.append({})
+            if has_metric_improvement(metrics_history):
+                override_reason = "core metrics still improving across recent iterations"
+
+        if override_reason:
             log.info(
-                "runner auto mode: overriding early abandon for strategy %s "
-                "(depth=%d < min_iterations_before_abandon=%d) — forcing tune_params",
+                "runner auto mode: overriding abandon for strategy %s (%s) — forcing tune_params",
                 s.slug,
-                depth,
-                settings.min_iterations_before_abandon,
+                override_reason,
             )
             try:
                 sidecar_data = _synthesize_abandon_override_sidecar(s.slug, rec.reasoning)
@@ -563,7 +591,7 @@ async def _analyze_and_apply(session: AsyncSession, sid: int) -> None:
                 )
                 child_id = await reiterate(session, sid)
                 log.info(
-                    "runner auto mode: early-abandon override — "
+                    "runner auto mode: abandon override — "
                     "iteration queued as strategy %d (parent %s)",
                     child_id,
                     s.slug,
@@ -571,8 +599,7 @@ async def _analyze_and_apply(session: AsyncSession, sid: int) -> None:
                 return
             except Exception:
                 log.exception(
-                    "runner auto mode: early-abandon override failed for %s"
-                    " — falling through to abandon",
+                    "runner auto mode: abandon override failed for %s — falling through to abandon",
                     s.slug,
                 )
 
