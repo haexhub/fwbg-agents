@@ -80,13 +80,15 @@ def persist_transcript(
     )
 
 
-async def run_instrumented(
-    agent: Agent,
+async def run_instrumented[OutputT](
+    agent: Agent[Any, OutputT],
     user_prompt: str,
     *,
     agent_run_id: int,
     round_idx: int = 1,
-) -> AgentRunResult:
+) -> AgentRunResult[OutputT]:
+    # OutputT preserves the agent's structured output type through the wrapper
+    # so callers keep `result.output: <their OutputType>` (not str).
     """Run ``agent`` with live tool-call events + transcript persistence.
 
     Emits ``llm_tool_call`` / ``llm_tool_result`` per tool invocation, writes
