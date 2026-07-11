@@ -125,15 +125,19 @@ async def get_plugin(
     if p is None:
         raise HTTPException(status_code=404, detail=f"plugin {plugin_id} not found")
     transitions = (
-        await session.execute(
-            select(Transition)
-            .where(
-                (Transition.entity_type == EntityType.PLUGIN.value)
-                & (Transition.entity_id == plugin_id)
+        (
+            await session.execute(
+                select(Transition)
+                .where(
+                    (Transition.entity_type == EntityType.PLUGIN.value)
+                    & (Transition.entity_id == plugin_id)
+                )
+                .order_by(asc(Transition.id))
             )
-            .order_by(asc(Transition.id))
         )
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
     return {
         "plugin": _serialize_plugin(p),
         "transitions": [_serialize_transition(t) for t in transitions],
@@ -146,15 +150,19 @@ async def list_plugin_transitions(
 ) -> dict[str, Any]:
     """List all lifecycle transitions for a plugin."""
     rows = (
-        await session.execute(
-            select(Transition)
-            .where(
-                (Transition.entity_type == EntityType.PLUGIN.value)
-                & (Transition.entity_id == plugin_id)
+        (
+            await session.execute(
+                select(Transition)
+                .where(
+                    (Transition.entity_type == EntityType.PLUGIN.value)
+                    & (Transition.entity_id == plugin_id)
+                )
+                .order_by(asc(Transition.id))
             )
-            .order_by(asc(Transition.id))
         )
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
     return {"transitions": [_serialize_transition(t) for t in rows]}
 
 
@@ -200,9 +208,7 @@ async def _run_evaluator_background(plugin_id: int, agent_run_id: int) -> None:
         try:
             vr_id = await evaluate_plugin(session, plugin_id)
             vr = (
-                await session.execute(
-                    select(VerificationRun).where(VerificationRun.id == vr_id)
-                )
+                await session.execute(select(VerificationRun).where(VerificationRun.id == vr_id))
             ).scalar_one()
             # A non-verifying evaluation is a failed run (evaluator ran but
             # rejected the plugin), not a success — mirror the auto-runner path.
@@ -366,9 +372,7 @@ async def post_strategy_reiterate_with_plugin(
             await session.execute(select(Strategy).where(Strategy.id == strategy_id))
         ).scalar_one_or_none()
         if parent is None:
-            raise ReiterateWithPluginPreconditionError(
-                f"strategy {strategy_id} not found"
-            )
+            raise ReiterateWithPluginPreconditionError(f"strategy {strategy_id} not found")
         if parent.current_state != StrategyState.BACKTESTED.value:
             raise ReiterateWithPluginPreconditionError(
                 f"strategy {parent.slug} is in state {parent.current_state!r}; "
@@ -378,9 +382,7 @@ async def post_strategy_reiterate_with_plugin(
             await session.execute(select(Plugin).where(Plugin.slug == body.plugin_slug))
         ).scalar_one_or_none()
         if plugin is None:
-            raise ReiterateWithPluginPreconditionError(
-                f"plugin {body.plugin_slug!r} not found"
-            )
+            raise ReiterateWithPluginPreconditionError(f"plugin {body.plugin_slug!r} not found")
         if plugin.current_state != PluginState.VERIFIED.value:
             raise ReiterateWithPluginPreconditionError(
                 f"plugin {plugin.slug} is in state {plugin.current_state!r}; "
@@ -427,8 +429,7 @@ async def post_strategy_reiterate_with_plugin(
         "strategy_id": parent.id,
         "status": "scheduled",
         "message": (
-            f"reiterating {parent.slug} with plugin {body.plugin_slug}; "
-            f"poll /agents/runs/{ar.id}"
+            f"reiterating {parent.slug} with plugin {body.plugin_slug}; poll /agents/runs/{ar.id}"
         ),
     }
 
@@ -444,10 +445,14 @@ async def list_plugin_verification_runs(
     if plugin is None:
         raise HTTPException(404, f"plugin {plugin_id} not found")
     rows = (
-        await session.execute(
-            select(VerificationRun)
-            .where(VerificationRun.plugin_id == plugin_id)
-            .order_by(desc(VerificationRun.created_at))
+        (
+            await session.execute(
+                select(VerificationRun)
+                .where(VerificationRun.plugin_id == plugin_id)
+                .order_by(desc(VerificationRun.created_at))
+            )
         )
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
     return {"verification_runs": [_serialize_verification_run(vr) for vr in rows]}

@@ -149,7 +149,8 @@ class PluginEvaluator:
                 errors.extend(scenario_errors)
                 if agent_run_id is not None:
                     emit_run_event(
-                        agent_run_id, "scenario_failed",
+                        agent_run_id,
+                        "scenario_failed",
                         name=scenario.name,
                         index=vr.scenarios_run,
                         total=len(contract.test_scenarios),
@@ -159,7 +160,8 @@ class PluginEvaluator:
                 vr.scenarios_passed += 1
                 if agent_run_id is not None:
                     emit_run_event(
-                        agent_run_id, "scenario_passed",
+                        agent_run_id,
+                        "scenario_passed",
                         name=scenario.name,
                         index=vr.scenarios_run,
                         total=len(contract.test_scenarios),
@@ -168,7 +170,8 @@ class PluginEvaluator:
         if vr.scenarios_passed == vr.scenarios_run and vr.scenarios_run > 0:
             if agent_run_id is not None:
                 emit_run_event(
-                    agent_run_id, "evaluation_done",
+                    agent_run_id,
+                    "evaluation_done",
                     scenarios_run=vr.scenarios_run,
                     scenarios_passed=vr.scenarios_passed,
                     status="passed",
@@ -227,7 +230,8 @@ class PluginEvaluator:
         await self.session.refresh(vr)
         if agent_run_id is not None:
             emit_run_event(
-                agent_run_id, "evaluation_done",
+                agent_run_id,
+                "evaluation_done",
                 scenarios_run=vr.scenarios_run,
                 scenarios_passed=vr.scenarios_passed,
                 status="failed",
@@ -317,8 +321,7 @@ def _evaluate_scenario(
                     "scenario_name": scenario.name,
                     "invariant_violated": "length_mismatch",
                     "traceback": (
-                        f"output {declared.name!r}: got len={length}, "
-                        f"expected len={expected_len}"
+                        f"output {declared.name!r}: got len={length}, expected len={expected_len}"
                     ),
                     "ts": ts(),
                 }
@@ -331,9 +334,7 @@ def _evaluate_scenario(
         value = output_values[declared.name]
         if value is None:
             continue  # a missing output is already flagged by length_mismatch
-        errors.extend(
-            _value_invariant_errors(value, declared.name, scenario.name, ts)
-        )
+        errors.extend(_value_invariant_errors(value, declared.name, scenario.name, ts))
 
     return errors
 

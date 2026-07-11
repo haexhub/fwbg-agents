@@ -112,9 +112,7 @@ async def get_fwbg_plugin_examples(
     if bundle_dir is None:
         return []
 
-    entries = sorted(
-        live.plugin_details.get(bundle_dir, []), key=lambda e: e.get("name", "")
-    )
+    entries = sorted(live.plugin_details.get(bundle_dir, []), key=lambda e: e.get("name", ""))
     out: list[FwbgPluginExample] = []
     for entry in entries:
         if len(out) >= n:

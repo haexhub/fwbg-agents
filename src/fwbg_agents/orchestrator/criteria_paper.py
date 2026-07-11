@@ -49,9 +49,7 @@ class CriteriaEvalResult:
     failures: list[str]
 
 
-def load_paper_criteria(
-    asset_class: str, *, criteria_dir: Path | None = None
-) -> dict[str, Any]:
+def load_paper_criteria(asset_class: str, *, criteria_dir: Path | None = None) -> dict[str, Any]:
     """Load `<criteria_dir>/<asset_class.lower()>.yaml`.
 
     Defaults `criteria_dir` to `<repo_root>/data/criteria/paper/`.
@@ -60,9 +58,7 @@ def load_paper_criteria(
     base = criteria_dir or _DEFAULT_DIR
     path = base / f"{asset_class.lower()}.yaml"
     if not path.exists():
-        raise FileNotFoundError(
-            f"no paper-criteria YAML for asset_class={asset_class!r}: {path}"
-        )
+        raise FileNotFoundError(f"no paper-criteria YAML for asset_class={asset_class!r}: {path}")
     return yaml.safe_load(path.read_text()) or {}
 
 

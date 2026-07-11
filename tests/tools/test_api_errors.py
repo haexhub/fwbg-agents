@@ -88,9 +88,7 @@ def test_anthropic_sdk_ratelimit_via_status_attr():
 
 
 def test_anthropic_sdk_overloaded():
-    exc = anthropic.OverloadedError(
-        "overloaded", response=_anthropic_response(529), body=None
-    )
+    exc = anthropic.OverloadedError("overloaded", response=_anthropic_response(529), body=None)
     assert describe_api_error(exc) == "Anthropic API is overloaded. Retry later."
 
 
@@ -121,9 +119,7 @@ def test_anthropic_sdk_timeout():
 
 def test_fwbg_client_error_with_body():
     exc = FwbgClientError(503, "backend unavailable")
-    assert describe_api_error(exc) == (
-        "fwbg API error (HTTP 503): backend unavailable."
-    )
+    assert describe_api_error(exc) == ("fwbg API error (HTTP 503): backend unavailable.")
 
 
 def test_fwbg_client_error_without_body():

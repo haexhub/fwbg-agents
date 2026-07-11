@@ -161,9 +161,7 @@ class PaperAnalyst:
         if isinstance(out, AbandonPaper):
             if out.post_mortem_path is None:
                 base = data_dir if data_dir is not None else Path("data")
-                default_path = (
-                    base / "strategies" / strategy_slug / "paper_post_mortem.md"
-                )
+                default_path = base / "strategies" / strategy_slug / "paper_post_mortem.md"
                 return out.model_copy(update={"post_mortem_path": str(default_path)})
             return out
 

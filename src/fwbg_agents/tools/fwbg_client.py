@@ -83,7 +83,10 @@ class FwbgClient:
                     raise
                 log.warning(
                     "GET %s failed with %s (attempt %d/%d), retrying",
-                    path, type(exc).__name__, attempt, _GET_RETRIES,
+                    path,
+                    type(exc).__name__,
+                    attempt,
+                    _GET_RETRIES,
                 )
                 await asyncio.sleep(_GET_RETRY_BACKOFF_SECONDS * attempt)
                 continue

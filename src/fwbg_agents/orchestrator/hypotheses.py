@@ -132,10 +132,10 @@ async def generate_slug(
     prefix = f"{family}__{asset}__"
 
     rows = (
-        await session.execute(
-            select(Strategy.slug).where(Strategy.slug.like(f"{prefix}%"))
-        )
-    ).scalars().all()
+        (await session.execute(select(Strategy.slug).where(Strategy.slug.like(f"{prefix}%"))))
+        .scalars()
+        .all()
+    )
 
     max_n = 0
     for slug in rows:

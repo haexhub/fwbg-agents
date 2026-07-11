@@ -248,9 +248,7 @@ async def test_planner_raises_when_pydantic_schema_invalid():
 def test_planner_uses_canonical_prompt_path():
     """Default prompt_path points at prompts/plugin_authoring.md and is readable."""
     # Don't construct a real model — just check the class default.
-    default_path = (
-        Path(__file__).parents[2] / "prompts" / "plugin_authoring.md"
-    )
+    default_path = Path(__file__).parents[2] / "prompts" / "plugin_authoring.md"
     assert default_path.is_file()
     body = default_path.read_text(encoding="utf-8")
     assert "## BasePlugin Contract" in body
@@ -336,14 +334,26 @@ class _FakeSourceClient:
 async def test_get_fwbg_plugin_examples_fetches_source_over_http():
     from fwbg_agents.agents.plugin_authoring_shared import get_fwbg_plugin_examples
 
-    live = _live_with_details({"indicators": [
-        {"name": "ema", "fqn": "core.indicators.ema", "description": "", "default_params": {}},
-        {"name": "adx", "fqn": "core.indicators.adx", "description": "", "default_params": {}},
-    ]})
-
-    examples = await get_fwbg_plugin_examples(
-        live, _FakeSourceClient(), category="indicator", n=3
+    live = _live_with_details(
+        {
+            "indicators": [
+                {
+                    "name": "ema",
+                    "fqn": "core.indicators.ema",
+                    "description": "",
+                    "default_params": {},
+                },
+                {
+                    "name": "adx",
+                    "fqn": "core.indicators.adx",
+                    "description": "",
+                    "default_params": {},
+                },
+            ]
+        }
     )
+
+    examples = await get_fwbg_plugin_examples(live, _FakeSourceClient(), category="indicator", n=3)
 
     # sorted by name; source + filename carried through from the API response
     assert [e.slug for e in examples] == ["adx", "ema"]
@@ -354,15 +364,17 @@ async def test_get_fwbg_plugin_examples_fetches_source_over_http():
 async def test_get_fwbg_plugin_examples_skips_fetch_failures():
     from fwbg_agents.agents.plugin_authoring_shared import get_fwbg_plugin_examples
 
-    live = _live_with_details({"indicators": [
-        {"name": "ema", "fqn": "core.indicators.ema"},
-        {"name": "adx", "fqn": "core.indicators.adx"},
-    ]})
+    live = _live_with_details(
+        {
+            "indicators": [
+                {"name": "ema", "fqn": "core.indicators.ema"},
+                {"name": "adx", "fqn": "core.indicators.adx"},
+            ]
+        }
+    )
     client = _FakeSourceClient(fail={"core.indicators.adx"})
 
-    examples = await get_fwbg_plugin_examples(
-        live, client, category="indicator", n=3
-    )
+    examples = await get_fwbg_plugin_examples(live, client, category="indicator", n=3)
 
     assert [e.slug for e in examples] == ["ema"]
 

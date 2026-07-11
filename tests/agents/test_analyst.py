@@ -263,20 +263,29 @@ async def test_analyst_returns_add_indicator(db_and_backtested, monkeypatch, tmp
 
 
 def test_render_catalog_snapshot_lists_categories_and_slugs():
-    cat = PluginCatalog(by_category={
-        "indicators": {
-            slug: PluginManifest(
-                name=slug, category="indicators", provenance="fwbg-core",
-                version="1.0.0", source_path=Path("/tmp/x"),
-            ) for slug in ["ema", "sma"]
-        },
-        "exit_strategies": {
-            "fixed": PluginManifest(
-                name="fixed", category="exit_strategies", provenance="fwbg-core",
-                version="1.0.0", source_path=Path("/tmp/x"),
-            ),
-        },
-    })
+    cat = PluginCatalog(
+        by_category={
+            "indicators": {
+                slug: PluginManifest(
+                    name=slug,
+                    category="indicators",
+                    provenance="fwbg-core",
+                    version="1.0.0",
+                    source_path=Path("/tmp/x"),
+                )
+                for slug in ["ema", "sma"]
+            },
+            "exit_strategies": {
+                "fixed": PluginManifest(
+                    name="fixed",
+                    category="exit_strategies",
+                    provenance="fwbg-core",
+                    version="1.0.0",
+                    source_path=Path("/tmp/x"),
+                ),
+            },
+        }
+    )
     snap = _render_catalog_snapshot(cat)
     # Category labels are normalised to the AddIndicator.category enum spelling
     # (singular) so the model copies a valid category token.

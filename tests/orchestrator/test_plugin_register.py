@@ -71,6 +71,7 @@ def _mock_client():
 @pytest.mark.asyncio
 async def test_register_sends_slug_code_kind_spec(tmp_path, monkeypatch):
     from fwbg_agents.config import settings
+
     monkeypatch.setattr(settings, "data_dir", tmp_path)
 
     plugin = _plugin(tmp_path)
@@ -91,6 +92,7 @@ async def test_register_sends_slug_code_kind_spec(tmp_path, monkeypatch):
 @pytest.mark.asyncio
 async def test_register_closes_client_on_success(tmp_path, monkeypatch):
     from fwbg_agents.config import settings
+
     monkeypatch.setattr(settings, "data_dir", tmp_path)
 
     plugin = _plugin(tmp_path)
@@ -105,6 +107,7 @@ async def test_register_closes_client_on_success(tmp_path, monkeypatch):
 @pytest.mark.asyncio
 async def test_register_with_no_spec_sends_empty_spec_md(tmp_path, monkeypatch):
     from fwbg_agents.config import settings
+
     monkeypatch.setattr(settings, "data_dir", tmp_path)
 
     plugin = _plugin(tmp_path, spec=False)
@@ -126,6 +129,7 @@ async def test_register_with_no_spec_sends_empty_spec_md(tmp_path, monkeypatch):
 async def test_fwbg_error_is_swallowed_not_raised(tmp_path, monkeypatch):
     from fwbg_agents.config import settings
     from fwbg_agents.tools.fwbg_client import FwbgClientError
+
     monkeypatch.setattr(settings, "data_dir", tmp_path)
 
     plugin = _plugin(tmp_path)
@@ -144,6 +148,7 @@ async def test_network_error_is_swallowed_not_raised(tmp_path, monkeypatch):
     import httpx
 
     from fwbg_agents.config import settings
+
     monkeypatch.setattr(settings, "data_dir", tmp_path)
 
     plugin = _plugin(tmp_path)
@@ -159,6 +164,7 @@ async def test_network_error_is_swallowed_not_raised(tmp_path, monkeypatch):
 @pytest.mark.asyncio
 async def test_missing_plugin_py_skips_registration(tmp_path, monkeypatch):
     from fwbg_agents.config import settings
+
     monkeypatch.setattr(settings, "data_dir", tmp_path)
 
     plugin = _plugin(tmp_path, code=False)  # no plugin.py written
@@ -187,12 +193,16 @@ async def test_fwbg_client_register_plugin_posts_correct_body():
 
     async def _fake_post(request: httpx.Request) -> httpx.Response:
         import json
+
         posted.append(json.loads(request.content))
-        return httpx.Response(200, json={
-            "fqn": "agent-authored:my_indicator",
-            "slug": "my_indicator",
-            "category": "indicators",
-        })
+        return httpx.Response(
+            200,
+            json={
+                "fqn": "agent-authored:my_indicator",
+                "slug": "my_indicator",
+                "category": "indicators",
+            },
+        )
 
     transport = httpx.MockTransport(_fake_post)
     http = httpx.AsyncClient(base_url="http://fwbg", transport=transport)

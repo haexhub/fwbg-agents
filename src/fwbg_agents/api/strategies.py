@@ -63,9 +63,7 @@ class StrategyCreate(BaseModel):
     def _validate_slug(cls, v: str) -> str:
         """Validate that the slug matches the required lowercase pattern."""
         if not _SLUG_RE.match(v):
-            raise ValueError(
-                "slug must match [a-z0-9][a-z0-9_]*[a-z0-9] (3..128 chars)"
-            )
+            raise ValueError("slug must match [a-z0-9][a-z0-9_]*[a-z0-9] (3..128 chars)")
         return v
 
 
@@ -194,18 +192,28 @@ async def get_strategy(
     if s is None:
         raise HTTPException(status_code=404, detail=f"strategy {strategy_id} not found")
     tags = (
-        await session.execute(select(StrategyTag.tag).where(StrategyTag.strategy_id == strategy_id))
-    ).scalars().all()
-    transitions = (
-        await session.execute(
-            select(Transition)
-            .where(
-                (Transition.entity_type == EntityType.STRATEGY.value)
-                & (Transition.entity_id == strategy_id)
+        (
+            await session.execute(
+                select(StrategyTag.tag).where(StrategyTag.strategy_id == strategy_id)
             )
-            .order_by(asc(Transition.id))
         )
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
+    transitions = (
+        (
+            await session.execute(
+                select(Transition)
+                .where(
+                    (Transition.entity_type == EntityType.STRATEGY.value)
+                    & (Transition.entity_id == strategy_id)
+                )
+                .order_by(asc(Transition.id))
+            )
+        )
+        .scalars()
+        .all()
+    )
     return {
         "strategy": _serialize_strategy(s, tags=list(tags)),
         "transitions": [_serialize_transition(t) for t in transitions],
@@ -269,15 +277,19 @@ async def list_strategy_transitions(
 ) -> dict[str, Any]:
     """List all lifecycle transitions for a strategy."""
     rows = (
-        await session.execute(
-            select(Transition)
-            .where(
-                (Transition.entity_type == EntityType.STRATEGY.value)
-                & (Transition.entity_id == strategy_id)
+        (
+            await session.execute(
+                select(Transition)
+                .where(
+                    (Transition.entity_type == EntityType.STRATEGY.value)
+                    & (Transition.entity_id == strategy_id)
+                )
+                .order_by(asc(Transition.id))
             )
-            .order_by(asc(Transition.id))
         )
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
     return {"transitions": [_serialize_transition(t) for t in rows]}
 
 
@@ -292,8 +304,7 @@ def _require_paper_or_live_trading(strategy: Strategy) -> None:
         raise HTTPException(
             status_code=409,
             detail=(
-                f"strategy not in PAPER_TRADING or LIVE_TRADING state, "
-                f"got {strategy.current_state}"
+                f"strategy not in PAPER_TRADING or LIVE_TRADING state, got {strategy.current_state}"
             ),
         )
 
@@ -365,9 +376,7 @@ async def _run_paper_analyze_background(strategy_id: int, agent_run_id: int) -> 
         try:
             await paper_analyze(strategy_id, session, existing_ar=ar)
         except Exception as exc:
-            log.exception(
-                "paper-analyze background task failed (agent_run %s)", agent_run_id
-            )
+            log.exception("paper-analyze background task failed (agent_run %s)", agent_run_id)
             # Defensive: paper_analyze's own except block already marks FAILED +
             # commits before re-raising. This handler covers TOCTOU windows (e.g.
             # state changed between endpoint check and BG-task start) where the

@@ -46,9 +46,7 @@ def _make_plugin(tmp_path, slug: str) -> Plugin:
 
 def _list_client(fqns: list[str]) -> AsyncMock:
     inst = AsyncMock()
-    inst.get_plugins = AsyncMock(
-        return_value=[{"fqn": fqn} for fqn in fqns]
-    )
+    inst.get_plugins = AsyncMock(return_value=[{"fqn": fqn} for fqn in fqns])
     inst.aclose = AsyncMock()
     return inst
 

@@ -122,7 +122,5 @@ async def test_start_agent_run_explicit_parent_overrides_context(db):
     other = await start_agent_run(db, agent_name="plugin_author_flow")
 
     with use_parent_run(flow.id):
-        child = await start_agent_run(
-            db, agent_name="translator", parent_run_id=other.id
-        )
+        child = await start_agent_run(db, agent_name="translator", parent_run_id=other.id)
     assert child.parent_run_id == other.id

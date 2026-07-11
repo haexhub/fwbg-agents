@@ -17,9 +17,7 @@ from fwbg_agents.speckit.spec import (
     spec_index_entry,
 )
 
-CONSTITUTION_PATH = (
-    Path(__file__).parents[3] / "prompts" / "plugin_constitution.md"
-)
+CONSTITUTION_PATH = Path(__file__).parents[3] / "prompts" / "plugin_constitution.md"
 
 
 def load_constitution() -> str:

@@ -100,14 +100,16 @@ async def test_m5c_smoke_self_test(isolated_smoke_env):
             )
         ).scalar_one()
         children = (
-            await session.execute(
-                select(Strategy).where(Strategy.parent_strategy_id == parent.id)
+            (
+                await session.execute(
+                    select(Strategy).where(Strategy.parent_strategy_id == parent.id)
+                )
             )
-        ).scalars().all()
+            .scalars()
+            .all()
+        )
         plugin = (
-            await session.execute(
-                select(Plugin).where(Plugin.slug == m5c_smoke.SMOKE_PLUGIN_SLUG)
-            )
+            await session.execute(select(Plugin).where(Plugin.slug == m5c_smoke.SMOKE_PLUGIN_SLUG))
         ).scalar_one()
 
     assert plugin.current_state == PluginState.VERIFIED.value
@@ -119,11 +121,7 @@ async def test_m5c_smoke_self_test(isolated_smoke_env):
     from fwbg_agents.config import settings
 
     child_strategy_path = (
-        settings.data_dir
-        / "strategies"
-        / child.slug
-        / "iteration_001"
-        / "strategy.json"
+        settings.data_dir / "strategies" / child.slug / "iteration_001" / "strategy.json"
     )
     payload = json.loads(child_strategy_path.read_text())
     assert payload["indicators"] == [m5c_smoke.SMOKE_PLUGIN_SLUG]
@@ -159,8 +157,12 @@ async def test_m5c_smoke_idempotent_against_existing_plugin(isolated_smoke_env):
 
     async with TestSession() as session:
         children = (
-            await session.execute(
-                select(Strategy).where(Strategy.parent_strategy_id.is_not(None))
+            (
+                await session.execute(
+                    select(Strategy).where(Strategy.parent_strategy_id.is_not(None))
+                )
             )
-        ).scalars().all()
+            .scalars()
+            .all()
+        )
     assert children == [], "smoke must not create a child when aborting"

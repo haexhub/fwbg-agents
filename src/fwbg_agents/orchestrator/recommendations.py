@@ -119,9 +119,7 @@ async def validate_and_apply(
         iteration_dir.mkdir(parents=True, exist_ok=True)
         sidecar = iteration_dir / "analyst_recommendation.json"
         sidecar.write_text(json.dumps(_rec_to_dict(rec), indent=2))
-        log.info(
-            "validate_and_apply: record-only rec for %s (%s)", strategy.slug, rec.kind
-        )
+        log.info("validate_and_apply: record-only rec for %s (%s)", strategy.slug, rec.kind)
         return None
 
     # AddIndicator — record-only. M5b PluginAuthor picks up the sidecar and

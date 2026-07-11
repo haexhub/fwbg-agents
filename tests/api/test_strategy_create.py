@@ -97,8 +97,8 @@ async def test_post_strategy_persists_tags(client_with_db):
     client, session, _tmp_path = client_with_db
     await client.post("/strategies", json=_BASE_BODY)
     tags = (
-        await session.execute(select(StrategyTag.tag).order_by(StrategyTag.tag))
-    ).scalars().all()
+        (await session.execute(select(StrategyTag.tag).order_by(StrategyTag.tag))).scalars().all()
+    )
     assert sorted(tags) == ["index", "intraday", "orb"]
 
 

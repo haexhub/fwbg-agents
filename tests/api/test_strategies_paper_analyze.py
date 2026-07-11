@@ -152,9 +152,7 @@ async def test_post_paper_analyze_returns_422_when_strategy_not_in_paper_trading
     client_with_db,
 ):
     client, session, _, _ = client_with_db
-    s = await _seed_strategy(
-        session, slug="not_paper_yet", state=StrategyState.PROPOSED.value
-    )
+    s = await _seed_strategy(session, slug="not_paper_yet", state=StrategyState.PROPOSED.value)
     r = await client.post(f"/strategies/{s.id}/paper-analyze", json={})
     assert r.status_code == 422, r.text
     detail = r.json()["detail"]
@@ -164,9 +162,7 @@ async def test_post_paper_analyze_returns_422_when_strategy_not_in_paper_trading
 
 async def test_post_paper_analyze_returns_422_when_no_on_disk_data(client_with_db):
     client, session, _, _ = client_with_db
-    s = await _seed_strategy(
-        session, slug="paper_no_data", state=StrategyState.PAPER_TRADING.value
-    )
+    s = await _seed_strategy(session, slug="paper_no_data", state=StrategyState.PAPER_TRADING.value)
     # No trades.jsonl / status.json written under fwbg_data_dir.
     r = await client.post(f"/strategies/{s.id}/paper-analyze", json={})
     assert r.status_code == 422, r.text
@@ -175,13 +171,9 @@ async def test_post_paper_analyze_returns_422_when_no_on_disk_data(client_with_d
     assert s.slug in detail
 
 
-async def test_post_paper_analyze_returns_202_and_agent_run_envelope(
-    client_with_db, monkeypatch
-):
+async def test_post_paper_analyze_returns_202_and_agent_run_envelope(client_with_db, monkeypatch):
     client, session, _, fwbg_data_dir = client_with_db
-    s = await _seed_strategy(
-        session, slug="paper_ok", state=StrategyState.PAPER_TRADING.value
-    )
+    s = await _seed_strategy(session, slug="paper_ok", state=StrategyState.PAPER_TRADING.value)
     _seed_account_trades(fwbg_data_dir, s.slug)
 
     captured: list[tuple] = []
@@ -200,9 +192,7 @@ async def test_post_paper_analyze_returns_202_and_agent_run_envelope(
     assert "agent_run_id" in body
     ar_id = body["agent_run_id"]
 
-    ar = (
-        await session.execute(select(AgentRun).where(AgentRun.id == ar_id))
-    ).scalar_one()
+    ar = (await session.execute(select(AgentRun).where(AgentRun.id == ar_id))).scalar_one()
     assert ar.agent_name == "paper_analyst"
     assert ar.status == AgentRunStatus.PENDING.value
     assert ar.strategy_id == s.id

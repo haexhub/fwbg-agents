@@ -58,7 +58,10 @@ def _coerce_identity(spec: PluginSpec, *, slug: str, kind: PluginKindLit) -> Plu
     if spec.slug != slug or spec.kind != kind:
         log.info(
             "spec_generator: coercing identity slug %r->%r kind %r->%r",
-            spec.slug, slug, spec.kind, kind,
+            spec.slug,
+            slug,
+            spec.kind,
+            kind,
         )
         return spec.model_copy(update={"slug": slug, "kind": kind})
     return spec

@@ -105,14 +105,34 @@ async def test_strategy_detail_round_trip_with_transitions(client_with_db):
 async def test_list_strategies_filters_by_state_and_asset_class(client_with_db):
     client, session = client_with_db
     now = datetime.now(UTC)
-    session.add_all([
-        Strategy(slug="a", current_state="proposed", asset_class="FOREX",
-                 strategy_family="MR", created_at=now, updated_at=now),
-        Strategy(slug="b", current_state="backtested", asset_class="FOREX",
-                 strategy_family="MR", created_at=now, updated_at=now),
-        Strategy(slug="c", current_state="proposed", asset_class="INDEX",
-                 strategy_family="ORB", created_at=now, updated_at=now),
-    ])
+    session.add_all(
+        [
+            Strategy(
+                slug="a",
+                current_state="proposed",
+                asset_class="FOREX",
+                strategy_family="MR",
+                created_at=now,
+                updated_at=now,
+            ),
+            Strategy(
+                slug="b",
+                current_state="backtested",
+                asset_class="FOREX",
+                strategy_family="MR",
+                created_at=now,
+                updated_at=now,
+            ),
+            Strategy(
+                slug="c",
+                current_state="proposed",
+                asset_class="INDEX",
+                strategy_family="ORB",
+                created_at=now,
+                updated_at=now,
+            ),
+        ]
+    )
     await session.commit()
 
     r = await client.get("/strategies?state=proposed")

@@ -52,6 +52,7 @@ def _research_input_path(agent_run_id: int) -> Path:
     p.mkdir(parents=True, exist_ok=True)
     return p / f"{agent_run_id}.json"
 
+
 log = logging.getLogger(__name__)
 
 router = APIRouter(tags=["research"])
@@ -88,11 +89,9 @@ async def _run_research_background(input: ResearcherInput, agent_run_id: int) ->
                 )
             output_artifact_path = str(
                 strategy_dir(
-                    (
-                        await session.execute(
-                            select(Strategy).where(Strategy.id == strategy_id)
-                        )
-                    ).scalar_one().slug
+                    (await session.execute(select(Strategy).where(Strategy.id == strategy_id)))
+                    .scalar_one()
+                    .slug
                 )
                 / "iteration_001"
                 / "strategy.json"
@@ -153,9 +152,7 @@ async def _run_reiterate_background(parent_id: int, agent_run_id: int) -> None:
         try:
             with use_parent_run(agent_run_id):
                 child_id = await reiterate(session, parent_id, fwbg_client=fwbg)
-            await finish_agent_run(
-                session, ar, status=AgentRunStatus.DONE, strategy_id=child_id
-            )
+            await finish_agent_run(session, ar, status=AgentRunStatus.DONE, strategy_id=child_id)
         except Exception as exc:
             log.exception("reiterate background task failed (agent_run %s)", agent_run_id)
             await fail_agent_run(session, ar, exc)
@@ -201,9 +198,7 @@ async def post_research_brief(
             )
 
     scope = body.asset_class if body.asset_class else "asset-agnostic"
-    ar = await start_agent_run(
-        session, agent_name="research_flow", status=AgentRunStatus.PENDING
-    )
+    ar = await start_agent_run(session, agent_name="research_flow", status=AgentRunStatus.PENDING)
 
     input_path = _research_input_path(ar.id)
     input_path.write_text(body.model_dump_json())
@@ -237,9 +232,7 @@ async def post_strategy_reiterate(
             "reiterate requires BACKTESTED",
         )
 
-    sidecar = (
-        strategy_dir(parent.slug) / "iteration_001" / "analyst_recommendation.json"
-    )
+    sidecar = strategy_dir(parent.slug) / "iteration_001" / "analyst_recommendation.json"
     if not sidecar.is_file():
         raise HTTPException(
             409,
@@ -340,13 +333,17 @@ async def list_hypotheses(
     """List strategies that have a hypothesis_path set, newest first."""
     limit = max(1, min(limit, 200))
     rows = (
-        await session.execute(
-            select(Strategy)
-            .where(Strategy.hypothesis_path.is_not(None))
-            .order_by(desc(Strategy.created_at))
-            .limit(limit)
+        (
+            await session.execute(
+                select(Strategy)
+                .where(Strategy.hypothesis_path.is_not(None))
+                .order_by(desc(Strategy.created_at))
+                .limit(limit)
+            )
         )
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
     return {
         "hypotheses": [
             {

@@ -147,9 +147,7 @@ def _check_plugin_list_field(
         raise StrategyValidationError(f"{field} must be a list of strings")
     for i, entry in enumerate(value):
         if not isinstance(entry, str) or not entry:
-            raise StrategyValidationError(
-                f"{field}[{i}] must be a non-empty string"
-            )
+            raise StrategyValidationError(f"{field}[{i}] must be a non-empty string")
     if catalog is None:
         return
     allowed = catalog.all_slugs_for(catalog_category)
@@ -209,13 +207,10 @@ def _check_inline_pipeline(value: dict, *, catalog: PluginCatalog | None) -> Non
     unknown = set(value) - valid_phases
     if unknown:
         raise StrategyValidationError(
-            f"pipeline has unknown phase keys {sorted(unknown)}; "
-            f"valid: {sorted(valid_phases)}"
+            f"pipeline has unknown phase keys {sorted(unknown)}; valid: {sorted(valid_phases)}"
         )
     if not value.get("indicators"):
-        raise StrategyValidationError(
-            "pipeline.indicators must contain at least one plugin entry"
-        )
+        raise StrategyValidationError("pipeline.indicators must contain at least one plugin entry")
     for phase, category in _PIPELINE_PHASES:
         entries = value.get(phase)
         if entries is None:
@@ -230,13 +225,9 @@ def _check_inline_pipeline(value: dict, *, catalog: PluginCatalog | None) -> Non
                 )
             name = entry.get("name")
             if not isinstance(name, str) or not name:
-                raise StrategyValidationError(
-                    f"pipeline.{phase}[{i}].name is required (str)"
-                )
+                raise StrategyValidationError(f"pipeline.{phase}[{i}].name is required (str)")
             if "params" in entry and not isinstance(entry["params"], dict):
-                raise StrategyValidationError(
-                    f"pipeline.{phase}[{i}].params must be an object"
-                )
+                raise StrategyValidationError(f"pipeline.{phase}[{i}].params must be an object")
             if allowed and name not in allowed:
                 raise StrategyValidationError(
                     f"pipeline.{phase}[{i}].name={name!r} is not in the catalog "
@@ -268,8 +259,7 @@ def _check_inline_model(value: dict, *, catalog: PluginCatalog | None) -> None:
         or not set(directions) <= _TRADE_DIRECTIONS
     ):
         raise StrategyValidationError(
-            "model.trade_directions must be a non-empty subset of "
-            f"{sorted(_TRADE_DIRECTIONS)}"
+            f"model.trade_directions must be a non-empty subset of {sorted(_TRADE_DIRECTIONS)}"
         )
     if "hyperparameters" in value and not isinstance(value["hyperparameters"], dict):
         raise StrategyValidationError("model.hyperparameters must be an object")
@@ -334,8 +324,11 @@ def validate_strategy_json(
         _check_inline_pipeline(data["pipeline"], catalog=catalog)
     elif isinstance(data["pipeline"], str):
         _check_preset_string(
-            "pipeline", data["pipeline"],
-            section="pipelines", presets=presets, frozen_fallback=KNOWN_PIPELINES,
+            "pipeline",
+            data["pipeline"],
+            section="pipelines",
+            presets=presets,
+            frozen_fallback=KNOWN_PIPELINES,
         )
     else:
         raise StrategyValidationError("pipeline must be an object or a preset name")
@@ -345,33 +338,47 @@ def validate_strategy_json(
     elif isinstance(data["model"], str):
         if catalog is not None and catalog.all_slugs_for("models"):
             _check_field_with_catalog(
-                "model", data["model"],
-                catalog=catalog, catalog_category="models",
+                "model",
+                data["model"],
+                catalog=catalog,
+                catalog_category="models",
                 frozen_fallback=KNOWN_MODELS,
             )
         else:
             _check_preset_string(
-                "model", data["model"],
-                section="models", presets=presets, frozen_fallback=KNOWN_MODELS,
+                "model",
+                data["model"],
+                section="models",
+                presets=presets,
+                frozen_fallback=KNOWN_MODELS,
             )
     else:
         raise StrategyValidationError("model must be an object or a preset name")
 
     if isinstance(data["filters"], str):
         _check_preset_string(
-            "filters", data["filters"],
-            section="filters", presets=presets, frozen_fallback=KNOWN_FILTERS,
+            "filters",
+            data["filters"],
+            section="filters",
+            presets=presets,
+            frozen_fallback=KNOWN_FILTERS,
         )
     elif not isinstance(data["filters"], dict):
         raise StrategyValidationError("filters must be an object or a preset name")
 
     _check_preset_string(
-        "validation", data["validation"],
-        section="validations", presets=presets, frozen_fallback=KNOWN_VALIDATIONS,
+        "validation",
+        data["validation"],
+        section="validations",
+        presets=presets,
+        frozen_fallback=KNOWN_VALIDATIONS,
     )
     _check_preset_string(
-        "resources", data["resources"],
-        section="resources", presets=presets, frozen_fallback=KNOWN_RESOURCES,
+        "resources",
+        data["resources"],
+        section="resources",
+        presets=presets,
+        frozen_fallback=KNOWN_RESOURCES,
     )
 
     _check_exit_strategies(data["exit_strategies"], catalog=catalog)
@@ -381,7 +388,10 @@ def validate_strategy_json(
     for field, category in _PLUGIN_LIST_FIELDS:
         if field in data:
             _check_plugin_list_field(
-                field, data[field], catalog=catalog, catalog_category=category,
+                field,
+                data[field],
+                catalog=catalog,
+                catalog_category=category,
             )
 
     if not isinstance(data["name"], str) or not data["name"]:

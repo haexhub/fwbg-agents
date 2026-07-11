@@ -49,9 +49,7 @@ async def _wait_for_agent_run(agent_run_id: int, deadline_s: float) -> AgentRun:
     while time.monotonic() < end:
         async with SessionLocal() as session:
             ar = (
-                await session.execute(
-                    select(AgentRun).where(AgentRun.id == agent_run_id)
-                )
+                await session.execute(select(AgentRun).where(AgentRun.id == agent_run_id))
             ).scalar_one()
             if ar.status in {"done", "failed"}:
                 return ar
@@ -97,15 +95,13 @@ async def main() -> int:
         print(f"[3/3] verifying artifacts for strategy {ar.strategy_id}")
         async with SessionLocal() as session:
             s = (
-                await session.execute(
-                    select(Strategy).where(Strategy.id == ar.strategy_id)
-                )
+                await session.execute(select(Strategy).where(Strategy.id == ar.strategy_id))
             ).scalar_one()
             tavily_rows = (
-                await session.execute(
-                    select(LlmCall).where(LlmCall.model == "tavily-search")
-                )
-            ).scalars().all()
+                (await session.execute(select(LlmCall).where(LlmCall.model == "tavily-search")))
+                .scalars()
+                .all()
+            )
 
         it_dir = Path(s.hypothesis_path).parent
         artifacts = {

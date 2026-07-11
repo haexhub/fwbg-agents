@@ -80,8 +80,6 @@ def test_existing_exit_kind_migrated_to_exit_strategy(tmp_path, monkeypatch):
 
     engine = create_engine(f"sqlite:///{db_path}", future=True)
     with engine.begin() as conn:
-        row = conn.execute(
-            text("SELECT kind FROM plugin WHERE slug='legacy-exit'")
-        ).one()
+        row = conn.execute(text("SELECT kind FROM plugin WHERE slug='legacy-exit'")).one()
     engine.dispose()
     assert row[0] == "exit_strategy"

@@ -79,15 +79,12 @@ def render_spec_md(spec: PluginSpec) -> str:
     """Render a PluginSpec to spec-kit-flavored markdown (the on-disk spec.md)."""
     params = (
         "\n".join(
-            f"- `{p.name}` ({p.type}, default={p.default!r}): {p.description}"
-            for p in spec.params
+            f"- `{p.name}` ({p.type}, default={p.default!r}): {p.description}" for p in spec.params
         )
         if spec.params
         else "- _none_"
     )
-    acceptance = "\n".join(
-        f"- AC-{i:03d}: {c}" for i, c in enumerate(spec.acceptance_criteria, 1)
-    )
+    acceptance = "\n".join(f"- AC-{i:03d}: {c}" for i, c in enumerate(spec.acceptance_criteria, 1))
     sections = [
         f"# Plugin Spec — {spec.slug}",
         "",

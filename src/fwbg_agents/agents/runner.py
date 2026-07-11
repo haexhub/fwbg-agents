@@ -144,9 +144,7 @@ class Runner:
 
     async def run(self, strategy: Strategy) -> RunnerResult:
         """Execute backtests across universe attempts and return the first successful result."""
-        ar = await start_agent_run(
-            self.session, agent_name="runner", strategy_id=strategy.id
-        )
+        ar = await start_agent_run(self.session, agent_name="runner", strategy_id=strategy.id)
 
         try:
             iteration_dir = strategy_dir(strategy.slug) / "iteration_001"
@@ -163,9 +161,7 @@ class Runner:
                 "fwbg_strategy_name"
             ) or safe_fwbg_strategy_name(strategy.slug, 1)
             try:
-                created = await self.fwbg.create_strategy(
-                    fwbg_name, json.loads(src.read_text())
-                )
+                created = await self.fwbg.create_strategy(fwbg_name, json.loads(src.read_text()))
                 fwbg_name = created.get("filename", fwbg_name)
             except FwbgClientError as exc:
                 if exc.status != 409:
@@ -192,7 +188,10 @@ class Runner:
 
                 log.info(
                     "runner: attempt %r for %s (assets=%s, asset_classes=%s)",
-                    attempt.label, strategy.slug, assets, asset_classes,
+                    attempt.label,
+                    strategy.slug,
+                    assets,
+                    asset_classes,
                 )
                 try:
                     job_id, run_data = await self._execute_backtest(
@@ -344,8 +343,7 @@ class Runner:
                 active = [
                     r
                     for r in await self.fwbg.list_runs()
-                    if r.get("status") == "running"
-                    and r.get("strategy_name") == fwbg_name
+                    if r.get("status") == "running" and r.get("strategy_name") == fwbg_name
                 ]
             except (httpx.TransportError, FwbgClientError):
                 active = []
@@ -387,9 +385,7 @@ class Runner:
     ) -> tuple[str, dict[str, Any]]:
         """Start one fwbg run and poll it to completion. Raises RunnerError on
         a failed/errored run or a polling timeout."""
-        job_id = await self._acquire_run(
-            fwbg_name, assets=assets, asset_classes=asset_classes
-        )
+        job_id = await self._acquire_run(fwbg_name, assets=assets, asset_classes=asset_classes)
         # Anchor event for the dashboard's link to /runs/<fwbg_run_id>.
         emit_run_event(
             agent_run_id,

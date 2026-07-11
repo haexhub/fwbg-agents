@@ -55,9 +55,11 @@ PARENT_STRATEGY_JSON = {
     "resources": "standard_v1",
     "timeframe": "MINUTE_15",
     "exit_strategies": [
-        {"name": "orb_based",
-         "params": {"sl_mult": 1.0, "tp_mult": 5.0, "atr_period": 14},
-         "ct": [0.5]},
+        {
+            "name": "orb_based",
+            "params": {"sl_mult": 1.0, "tp_mult": 5.0, "atr_period": 14},
+            "ct": [0.5],
+        },
     ],
     "tags": ["orb", "intraday", "forex_majors"],
     "optimization": {"grid_params": {"sl_mult": [0.9, 1.0, 1.1]}},
@@ -144,10 +146,10 @@ async def test_reiterate_tune_params_creates_child_with_mutated_param(db_with_pa
 
     async with SessionMaker() as v:
         children = (
-            await v.execute(
-                select(Strategy).where(Strategy.parent_strategy_id == parent_id)
-            )
-        ).scalars().all()
+            (await v.execute(select(Strategy).where(Strategy.parent_strategy_id == parent_id)))
+            .scalars()
+            .all()
+        )
         assert len(children) == 1
         ch = children[0]
         assert ch.id == child.id
@@ -165,8 +167,10 @@ async def test_reiterate_tune_params_creates_child_with_mutated_param(db_with_pa
 
         # transition row for child PROPOSED
         ts = (
-            await v.execute(select(Transition).where(Transition.entity_id == ch.id))
-        ).scalars().all()
+            (await v.execute(select(Transition).where(Transition.entity_id == ch.id)))
+            .scalars()
+            .all()
+        )
         assert len(ts) == 1
         assert ts[0].to_state == StrategyState.PROPOSED.value
         assert ts[0].payload.get("parent_strategy_id") == parent_id
