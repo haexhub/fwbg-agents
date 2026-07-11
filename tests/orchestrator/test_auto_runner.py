@@ -311,7 +311,7 @@ async def test_author_and_reiterate_happy_path(env, monkeypatch):
         calls["author"] = strategy_id
         return plugin_id
 
-    async def fake_evaluate(session, pid):
+    async def fake_evaluate(session, pid, **_kwargs):
         calls["evaluate"] = pid
         return 1
 
@@ -353,7 +353,7 @@ async def test_author_and_reiterate_stops_when_plugin_unverified(env, monkeypatc
     async def fake_author(session, strategy_id):
         return plugin_id
 
-    async def fake_evaluate(session, pid):
+    async def fake_evaluate(session, pid, **_kwargs):
         return 1  # evaluation ran but did not verify
 
     async def fail_reiterate(session, strategy_id, plugin_slug):

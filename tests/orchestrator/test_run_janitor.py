@@ -175,6 +175,113 @@ async def test_run_registry_cancels_tracked_task():
     assert run_registry.request_cancel(42) is False
 
 
+async def test_prune_run_dirs_removes_old_terminal_run(env, monkeypatch):
+    """DONE run older than retention threshold has its directory removed."""
+    from fwbg_agents.config import settings
+    from fwbg_agents.orchestrator.run_janitor import prune_run_dirs
+
+    monkeypatch.setattr(settings, "run_events_retention_days", 30)
+    Session, _, _ = env
+
+    old = datetime.now(UTC) - timedelta(days=40)
+    async with Session() as s:
+        row = AgentRun(
+            agent_name="researcher", status=AgentRunStatus.DONE.value,
+            started_at=old, ended_at=old, created_at=old,
+        )
+        s.add(row)
+        await s.commit()
+        await s.refresh(row)
+        run_id = row.id
+
+    run_dir = settings.data_dir / "agent-runs" / str(run_id)
+    run_dir.mkdir(parents=True, exist_ok=True)
+    (run_dir / "events.jsonl").write_text("")
+
+    assert await prune_run_dirs() == 1
+    assert not run_dir.exists()
+
+
+async def test_prune_run_dirs_skips_non_terminal_run(env, monkeypatch):
+    """RUNNING run directory is never deleted."""
+    from fwbg_agents.config import settings
+    from fwbg_agents.orchestrator.run_janitor import prune_run_dirs
+
+    monkeypatch.setattr(settings, "run_events_retention_days", 30)
+    Session, _, _ = env
+
+    old = datetime.now(UTC) - timedelta(days=40)
+    async with Session() as s:
+        row = AgentRun(
+            agent_name="researcher", status=AgentRunStatus.RUNNING.value,
+            started_at=old, created_at=old,
+        )
+        s.add(row)
+        await s.commit()
+        await s.refresh(row)
+        run_id = row.id
+
+    run_dir = settings.data_dir / "agent-runs" / str(run_id)
+    run_dir.mkdir(parents=True, exist_ok=True)
+
+    assert await prune_run_dirs() == 0
+    assert run_dir.exists()
+
+
+async def test_prune_run_dirs_disabled_when_retention_zero(env, monkeypatch):
+    """retention_days=0 disables pruning entirely."""
+    from fwbg_agents.config import settings
+    from fwbg_agents.orchestrator.run_janitor import prune_run_dirs
+
+    monkeypatch.setattr(settings, "run_events_retention_days", 0)
+    Session, _, _ = env
+
+    old = datetime.now(UTC) - timedelta(days=400)
+    async with Session() as s:
+        row = AgentRun(
+            agent_name="researcher", status=AgentRunStatus.DONE.value,
+            started_at=old, ended_at=old, created_at=old,
+        )
+        s.add(row)
+        await s.commit()
+        await s.refresh(row)
+        run_id = row.id
+
+    run_dir = settings.data_dir / "agent-runs" / str(run_id)
+    run_dir.mkdir(parents=True, exist_ok=True)
+
+    assert await prune_run_dirs() == 0
+    assert run_dir.exists()
+
+
+async def test_prune_run_dirs_skips_unparseable_dir_name(env, monkeypatch):
+    """Directory with a non-integer name is silently skipped."""
+    from fwbg_agents.config import settings
+    from fwbg_agents.orchestrator.run_janitor import prune_run_dirs
+
+    monkeypatch.setattr(settings, "run_events_retention_days", 30)
+
+    mystery = settings.data_dir / "agent-runs" / "not-an-id"
+    mystery.mkdir(parents=True, exist_ok=True)
+
+    assert await prune_run_dirs() == 0
+    assert mystery.exists()
+
+
+async def test_prune_run_dirs_skips_dir_without_db_row(env, monkeypatch):
+    """Directory whose id has no DB row is silently skipped."""
+    from fwbg_agents.config import settings
+    from fwbg_agents.orchestrator.run_janitor import prune_run_dirs
+
+    monkeypatch.setattr(settings, "run_events_retention_days", 30)
+
+    orphan = settings.data_dir / "agent-runs" / "99999"
+    orphan.mkdir(parents=True, exist_ok=True)
+
+    assert await prune_run_dirs() == 0
+    assert orphan.exists()
+
+
 async def test_orphan_failures_do_not_count_toward_retry_cap(env):
     Session, add_run, make_strategy = env
     sid = await make_strategy("orb__forex__001")

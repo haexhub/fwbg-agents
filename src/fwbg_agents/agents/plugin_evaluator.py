@@ -38,6 +38,7 @@ from fwbg_agents.persistence.models import (
     PluginState,
     VerificationRun,
 )
+from fwbg_agents.run_events import emit_run_event
 
 log = logging.getLogger(__name__)
 
@@ -49,7 +50,7 @@ class PluginEvaluator:
         """Initialize."""
         self.session = session
 
-    async def run(self, plugin: Plugin) -> int:
+    async def run(self, plugin: Plugin, *, agent_run_id: int | None = None) -> int:
         """Verify a plugin against its contract. Returns verification_run.id."""
         now = datetime.now(UTC)
         vr = VerificationRun(
@@ -138,8 +139,35 @@ class PluginEvaluator:
             )
             if scenario_errors:
                 errors.extend(scenario_errors)
+                if agent_run_id is not None:
+                    emit_run_event(
+                        agent_run_id, "scenario_failed",
+                        name=scenario.name,
+                        index=vr.scenarios_run,
+                        total=len(contract.test_scenarios),
+                        invariant_violated=scenario_errors[0].get("invariant_violated"),
+                    )
             else:
                 vr.scenarios_passed += 1
+                if agent_run_id is not None:
+                    emit_run_event(
+                        agent_run_id, "scenario_passed",
+                        name=scenario.name,
+                        index=vr.scenarios_run,
+                        total=len(contract.test_scenarios),
+                    )
+
+        if agent_run_id is not None:
+            emit_run_event(
+                agent_run_id, "evaluation_done",
+                scenarios_run=vr.scenarios_run,
+                scenarios_passed=vr.scenarios_passed,
+                status=(
+                    "passed"
+                    if vr.scenarios_passed == vr.scenarios_run and vr.scenarios_run > 0
+                    else "failed"
+                ),
+            )
 
         if vr.scenarios_passed == vr.scenarios_run and vr.scenarios_run > 0:
             vr.status = "passed"
