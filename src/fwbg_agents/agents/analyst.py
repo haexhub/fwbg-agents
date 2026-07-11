@@ -37,14 +37,18 @@ from pydantic_ai import Agent
 from pydantic_ai.models import Model
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from fwbg_agents.agents.instrumented import run_instrumented
 from fwbg_agents.config import settings
 from fwbg_agents.orchestrator.lifecycle import check_backtest_criteria, strategy_dir
 from fwbg_agents.orchestrator.lineage import render_family_history
 from fwbg_agents.orchestrator.live_catalog import LiveCatalog, fetch_live_catalog
 from fwbg_agents.orchestrator.plugin_catalog import PluginCatalog
-from fwbg_agents.persistence.agent_runs import fail_agent_run
+from fwbg_agents.persistence.agent_runs import (
+    fail_agent_run,
+    finish_agent_run,
+    start_agent_run,
+)
 from fwbg_agents.persistence.models import (
-    AgentRun,
     AgentRunStatus,
     LlmCall,
     Strategy,
@@ -133,9 +137,7 @@ class TuneParams(_IterBase):
             and "new_range" in data
         ):
             data = dict(data)
-            data["params"] = [
-                {"param": data.pop("param"), "new_range": data.pop("new_range")}
-            ]
+            data["params"] = [{"param": data.pop("param"), "new_range": data.pop("new_range")}]
         return data
 
 
@@ -316,24 +318,17 @@ def _best_symbol_metrics_from_results(run: dict) -> dict:
 def _per_asset_metrics_from_results(run: dict) -> dict[str, dict]:
     """symbol → unified_metrics for every backtested asset."""
     return {
-        sym: (data.get("unified_metrics") or {})
-        for sym, data in (run.get("assets") or {}).items()
+        sym: (data.get("unified_metrics") or {}) for sym, data in (run.get("assets") or {}).items()
     }
 
 
-def _render_per_asset_criteria(
-    asset_class: str | None, per_asset: dict[str, dict]
-) -> str:
+def _render_per_asset_criteria(asset_class: str | None, per_asset: dict[str, dict]) -> str:
     """PASS/FAIL per symbol against the asset-class criteria YAML."""
     if not per_asset:
         return "(no per-asset results)"
     lines: list[str] = []
     for sym in sorted(per_asset):
-        numeric = {
-            k: float(v)
-            for k, v in per_asset[sym].items()
-            if isinstance(v, (int, float))
-        }
+        numeric = {k: float(v) for k, v in per_asset[sym].items() if isinstance(v, (int, float))}
         ok, failures = check_backtest_criteria(
             asset_class=asset_class or "unknown", metrics=numeric
         )
@@ -364,9 +359,7 @@ def _render_prompt(
     out = out.replace("{{ max_iterations }}", str(max_iterations))
     out = out.replace("{{ strategy_json }}", json.dumps(strategy_json, indent=2))
     out = out.replace("{{ metrics }}", json.dumps(metrics, indent=2))
-    out = out.replace(
-        "{{ per_asset_metrics }}", json.dumps(per_asset_metrics, indent=2)
-    )
+    out = out.replace("{{ per_asset_metrics }}", json.dumps(per_asset_metrics, indent=2))
     out = out.replace("{{ per_asset_criteria }}", per_asset_criteria)
     out = out.replace("{{ family_history }}", family_history)
     out = out.replace("{{ criteria_yaml }}", criteria_yaml or "(no criteria YAML present)")
@@ -439,17 +432,7 @@ class Analyst:
 
     async def analyze(self, strategy: Strategy) -> AnalystRecommendation:
         """Run the analyst agent on a backtested strategy and return a typed recommendation."""
-        now = datetime.now(UTC)
-        ar = AgentRun(
-            agent_name="analyst",
-            status=AgentRunStatus.RUNNING.value,
-            strategy_id=strategy.id,
-            started_at=now,
-            created_at=now,
-        )
-        self.session.add(ar)
-        await self.session.commit()
-        await self.session.refresh(ar)
+        ar = await start_agent_run(self.session, agent_name="analyst", strategy_id=strategy.id)
 
         try:
             iteration_dir = strategy_dir(strategy.slug) / "iteration_001"
@@ -464,9 +447,7 @@ class Analyst:
             results = json.loads(results_path.read_text())
             metrics = _best_symbol_metrics_from_results(results)
             per_asset = _per_asset_metrics_from_results(results)
-            per_asset_criteria = _render_per_asset_criteria(
-                strategy.asset_class, per_asset
-            )
+            per_asset_criteria = _render_per_asset_criteria(strategy.asset_class, per_asset)
 
             criteria_path = settings.criteria_dir / f"{strategy.asset_class}.yaml"
             criteria_yaml = criteria_path.read_text() if criteria_path.is_file() else ""
@@ -498,7 +479,9 @@ class Analyst:
                 retries={"output": 3},
             )
             t0 = time.monotonic()
-            result = await agent.run("Emit your recommendation now.")
+            result = await run_instrumented(
+                agent, "Emit your recommendation now.", agent_run_id=ar.id
+            )
             latency_ms = int((time.monotonic() - t0) * 1000)
 
             usage = result.usage
@@ -520,10 +503,12 @@ class Analyst:
                 f"```json\n{result.output.model_dump_json(indent=2)}\n```\n"
             )
 
-            ar.status = AgentRunStatus.DONE.value
-            ar.ended_at = datetime.now(UTC)
-            ar.output_artifact_path = str(report_path)
-            await self.session.commit()
+            await finish_agent_run(
+                self.session,
+                ar,
+                status=AgentRunStatus.DONE,
+                output_artifact_path=str(report_path),
+            )
 
             return result.output
         except Exception as exc:

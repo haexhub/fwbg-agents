@@ -90,9 +90,6 @@ def list_key_status() -> dict[str, dict[str, bool]]:
     result: dict[str, dict[str, bool]] = {}
     for key in KNOWN_KEYS:
         env_var = _ENV_FALLBACK.get(key)
-        is_set = bool(
-            stored.get(key)
-            or (env_var and os.environ.get(env_var))
-        )
+        is_set = bool(stored.get(key) or (env_var and os.environ.get(env_var)))
         result[key] = {"set": is_set}
     return result

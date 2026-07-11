@@ -10,7 +10,6 @@ from __future__ import annotations
 
 import json
 import logging
-from datetime import UTC, datetime
 from typing import Any
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
@@ -26,7 +25,12 @@ from fwbg_agents.orchestrator.plugin_flow import (
     lookup_plugin_capability,
     reiterate_with_plugin,
 )
-from fwbg_agents.persistence.agent_runs import fail_agent_run
+from fwbg_agents.persistence.agent_runs import (
+    fail_agent_run,
+    finish_agent_run,
+    start_agent_run,
+    use_parent_run,
+)
 from fwbg_agents.persistence.database import SessionLocal, get_session
 from fwbg_agents.persistence.models import (
     AgentRun,
@@ -121,15 +125,19 @@ async def get_plugin(
     if p is None:
         raise HTTPException(status_code=404, detail=f"plugin {plugin_id} not found")
     transitions = (
-        await session.execute(
-            select(Transition)
-            .where(
-                (Transition.entity_type == EntityType.PLUGIN.value)
-                & (Transition.entity_id == plugin_id)
+        (
+            await session.execute(
+                select(Transition)
+                .where(
+                    (Transition.entity_type == EntityType.PLUGIN.value)
+                    & (Transition.entity_id == plugin_id)
+                )
+                .order_by(asc(Transition.id))
             )
-            .order_by(asc(Transition.id))
         )
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
     return {
         "plugin": _serialize_plugin(p),
         "transitions": [_serialize_transition(t) for t in transitions],
@@ -142,15 +150,19 @@ async def list_plugin_transitions(
 ) -> dict[str, Any]:
     """List all lifecycle transitions for a plugin."""
     rows = (
-        await session.execute(
-            select(Transition)
-            .where(
-                (Transition.entity_type == EntityType.PLUGIN.value)
-                & (Transition.entity_id == plugin_id)
+        (
+            await session.execute(
+                select(Transition)
+                .where(
+                    (Transition.entity_type == EntityType.PLUGIN.value)
+                    & (Transition.entity_id == plugin_id)
+                )
+                .order_by(asc(Transition.id))
             )
-            .order_by(asc(Transition.id))
         )
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
     return {"transitions": [_serialize_transition(t) for t in rows]}
 
 
@@ -168,15 +180,18 @@ async def _run_author_background(strategy_id: int, agent_run_id: int) -> None:
         ar.status = AgentRunStatus.RUNNING.value
         await session.commit()
         try:
-            plugin_id = await author_plugin_from_strategy(session, strategy_id)
+            with use_parent_run(agent_run_id):
+                plugin_id = await author_plugin_from_strategy(session, strategy_id)
             plugin = (
                 await session.execute(select(Plugin).where(Plugin.id == plugin_id))
             ).scalar_one()
-            ar.status = AgentRunStatus.DONE.value
-            ar.plugin_id = plugin_id
-            ar.output_artifact_path = plugin.contract_path
-            ar.ended_at = datetime.now(UTC)
-            await session.commit()
+            await finish_agent_run(
+                session,
+                ar,
+                status=AgentRunStatus.DONE,
+                plugin_id=plugin_id,
+                output_artifact_path=plugin.contract_path,
+            )
         except Exception as exc:
             log.exception("author background task failed (agent_run %s)", agent_run_id)
             await fail_agent_run(session, ar, exc)
@@ -193,15 +208,19 @@ async def _run_evaluator_background(plugin_id: int, agent_run_id: int) -> None:
         try:
             vr_id = await evaluate_plugin(session, plugin_id)
             vr = (
-                await session.execute(
-                    select(VerificationRun).where(VerificationRun.id == vr_id)
-                )
+                await session.execute(select(VerificationRun).where(VerificationRun.id == vr_id))
             ).scalar_one()
-            ar.status = AgentRunStatus.DONE.value
-            ar.plugin_id = plugin_id
-            ar.output_artifact_path = vr.error_log_path  # None on success
-            ar.ended_at = datetime.now(UTC)
-            await session.commit()
+            # A non-verifying evaluation is a failed run (evaluator ran but
+            # rejected the plugin), not a success — mirror the auto-runner path.
+            verified = vr.status == "passed"
+            await finish_agent_run(
+                session,
+                ar,
+                status=AgentRunStatus.DONE if verified else AgentRunStatus.FAILED,
+                plugin_id=plugin_id,
+                output_artifact_path=vr.error_log_path,  # None on success
+                error=None if verified else "plugin did not verify",
+            )
         except Exception as exc:
             log.exception("evaluate background task failed (agent_run %s)", agent_run_id)
             await fail_agent_run(session, ar, exc)
@@ -234,18 +253,13 @@ async def post_strategy_author_plugin(
             f"{strategy.slug}; run /strategies/{strategy_id}/analyze first",
         )
 
-    now = datetime.now(UTC)
-    ar = AgentRun(
+    ar = await start_agent_run(
+        session,
         agent_name="plugin_author_flow",
-        status=AgentRunStatus.PENDING.value,
         strategy_id=strategy.id,
         input_artifact_path=str(sidecar),
-        started_at=now,
-        created_at=now,
+        status=AgentRunStatus.PENDING,
     )
-    session.add(ar)
-    await session.commit()
-    await session.refresh(ar)
 
     background_tasks.add_task(_run_author_background, strategy.id, ar.id)
     return {
@@ -275,17 +289,12 @@ async def post_plugin_evaluate(
             "evaluate requires AUTHORED",
         )
 
-    now = datetime.now(UTC)
-    ar = AgentRun(
+    ar = await start_agent_run(
+        session,
         agent_name="plugin_evaluator_flow",
-        status=AgentRunStatus.PENDING.value,
         plugin_id=plugin.id,
-        started_at=now,
-        created_at=now,
+        status=AgentRunStatus.PENDING,
     )
-    session.add(ar)
-    await session.commit()
-    await session.refresh(ar)
 
     background_tasks.add_task(_run_evaluator_background, plugin.id, ar.id)
     return {
@@ -320,16 +329,19 @@ async def _run_reiterate_with_plugin_background(
         ar.status = AgentRunStatus.RUNNING.value
         await session.commit()
         try:
-            child_id = await reiterate_with_plugin(session, strategy_id, plugin_slug)
+            with use_parent_run(agent_run_id):
+                child_id = await reiterate_with_plugin(session, strategy_id, plugin_slug)
             child = (
                 await session.execute(select(Strategy).where(Strategy.id == child_id))
             ).scalar_one()
-            ar.status = AgentRunStatus.DONE.value
-            ar.output_artifact_path = str(
-                strategy_dir(child.slug) / "iteration_001" / "strategy.json"
+            await finish_agent_run(
+                session,
+                ar,
+                status=AgentRunStatus.DONE,
+                output_artifact_path=str(
+                    strategy_dir(child.slug) / "iteration_001" / "strategy.json"
+                ),
             )
-            ar.ended_at = datetime.now(UTC)
-            await session.commit()
         except Exception as exc:
             log.exception(
                 "reiterate-with-plugin background task failed (agent_run %s)",
@@ -360,9 +372,7 @@ async def post_strategy_reiterate_with_plugin(
             await session.execute(select(Strategy).where(Strategy.id == strategy_id))
         ).scalar_one_or_none()
         if parent is None:
-            raise ReiterateWithPluginPreconditionError(
-                f"strategy {strategy_id} not found"
-            )
+            raise ReiterateWithPluginPreconditionError(f"strategy {strategy_id} not found")
         if parent.current_state != StrategyState.BACKTESTED.value:
             raise ReiterateWithPluginPreconditionError(
                 f"strategy {parent.slug} is in state {parent.current_state!r}; "
@@ -372,9 +382,7 @@ async def post_strategy_reiterate_with_plugin(
             await session.execute(select(Plugin).where(Plugin.slug == body.plugin_slug))
         ).scalar_one_or_none()
         if plugin is None:
-            raise ReiterateWithPluginPreconditionError(
-                f"plugin {body.plugin_slug!r} not found"
-            )
+            raise ReiterateWithPluginPreconditionError(f"plugin {body.plugin_slug!r} not found")
         if plugin.current_state != PluginState.VERIFIED.value:
             raise ReiterateWithPluginPreconditionError(
                 f"plugin {plugin.slug} is in state {plugin.current_state!r}; "
@@ -404,19 +412,14 @@ async def post_strategy_reiterate_with_plugin(
             raise HTTPException(404, msg) from exc
         raise HTTPException(422, msg) from exc
 
-    now = datetime.now(UTC)
-    ar = AgentRun(
+    ar = await start_agent_run(
+        session,
         agent_name="translator_reiterate_flow",
-        status=AgentRunStatus.PENDING.value,
         strategy_id=parent.id,
         plugin_id=plugin.id,
         input_artifact_path=str(sidecar_path),
-        started_at=now,
-        created_at=now,
+        status=AgentRunStatus.PENDING,
     )
-    session.add(ar)
-    await session.commit()
-    await session.refresh(ar)
 
     background_tasks.add_task(
         _run_reiterate_with_plugin_background, parent.id, body.plugin_slug, ar.id
@@ -426,8 +429,7 @@ async def post_strategy_reiterate_with_plugin(
         "strategy_id": parent.id,
         "status": "scheduled",
         "message": (
-            f"reiterating {parent.slug} with plugin {body.plugin_slug}; "
-            f"poll /agents/runs/{ar.id}"
+            f"reiterating {parent.slug} with plugin {body.plugin_slug}; poll /agents/runs/{ar.id}"
         ),
     }
 
@@ -443,10 +445,14 @@ async def list_plugin_verification_runs(
     if plugin is None:
         raise HTTPException(404, f"plugin {plugin_id} not found")
     rows = (
-        await session.execute(
-            select(VerificationRun)
-            .where(VerificationRun.plugin_id == plugin_id)
-            .order_by(desc(VerificationRun.created_at))
+        (
+            await session.execute(
+                select(VerificationRun)
+                .where(VerificationRun.plugin_id == plugin_id)
+                .order_by(desc(VerificationRun.created_at))
+            )
         )
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
     return {"verification_runs": [_serialize_verification_run(vr) for vr in rows]}

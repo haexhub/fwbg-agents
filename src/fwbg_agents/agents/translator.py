@@ -27,6 +27,7 @@ from pydantic_ai import Agent
 from pydantic_ai.models import Model
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from fwbg_agents.agents.instrumented import run_instrumented
 from fwbg_agents.orchestrator.hypotheses import generate_slug
 from fwbg_agents.orchestrator.lifecycle import strategy_dir
 from fwbg_agents.orchestrator.live_catalog import LiveCatalog, fetch_live_catalog
@@ -36,9 +37,12 @@ from fwbg_agents.orchestrator.strategy_validator import (
     StrategyValidationError,
     validate_strategy_json,
 )
-from fwbg_agents.persistence.agent_runs import fail_agent_run
+from fwbg_agents.persistence.agent_runs import (
+    fail_agent_run,
+    finish_agent_run,
+    start_agent_run,
+)
 from fwbg_agents.persistence.models import (
-    AgentRun,
     AgentRunStatus,
     LlmCall,
     Strategy,
@@ -91,8 +95,7 @@ def _apply_plugin_op(payload: dict, op: dict) -> None:
         raise TranslatorError(f"invalid modify_plugins op: {op}")
     if section not in _MODIFY_SECTIONS:
         raise TranslatorError(
-            f"modify_plugins: unknown section {section!r} "
-            f"(must be one of {list(_MODIFY_SECTIONS)})"
+            f"modify_plugins: unknown section {section!r} (must be one of {list(_MODIFY_SECTIONS)})"
         )
     if action == "replace" and (not isinstance(replaces, str) or not replaces):
         raise TranslatorError(f"modify_plugins: replace op needs 'replaces': {op}")
@@ -117,9 +120,7 @@ def _apply_plugin_op(payload: dict, op: dict) -> None:
         elif action == "remove":
             i = _idx(slug)
             if i is None:
-                raise TranslatorError(
-                    f"modify_plugins: {slug!r} not found in pipeline.{section}"
-                )
+                raise TranslatorError(f"modify_plugins: {slug!r} not found in pipeline.{section}")
             entries.pop(i)
         else:  # replace
             i = _idx(replaces)  # type: ignore[arg-type]  # validated as non-empty str above
@@ -143,9 +144,7 @@ def _apply_plugin_op(payload: dict, op: dict) -> None:
         )
     if action == "add":
         if slug in entries:
-            raise TranslatorError(
-                f"modify_plugins: {slug!r} already present in {section}"
-            )
+            raise TranslatorError(f"modify_plugins: {slug!r} already present in {section}")
         entries.append(slug)
     elif action == "remove":
         if slug not in entries:
@@ -153,9 +152,7 @@ def _apply_plugin_op(payload: dict, op: dict) -> None:
         entries.remove(slug)
     else:  # replace
         if replaces not in entries:
-            raise TranslatorError(
-                f"modify_plugins: {replaces!r} not found in {section}"
-            )
+            raise TranslatorError(f"modify_plugins: {replaces!r} not found in {section}")
         entries[entries.index(replaces)] = slug
 
 
@@ -276,15 +273,20 @@ def _catalog_prompt_dict(live: LiveCatalog) -> dict:
     """
     composable = {
         category: live.plugin_details.get(category, [])
-        for category in ("indicators", "preprocessing", "feature_selection",
-                         "data_loading", "models", "exit_strategies")
+        for category in (
+            "indicators",
+            "preprocessing",
+            "feature_selection",
+            "data_loading",
+            "models",
+            "exit_strategies",
+        )
     }
     return {
         **composable,
         "exit_modifiers": live.exit_modifiers,
         "entry_modifiers": live.entry_modifiers,
-        "validation_presets": live.presets.get("validations")
-        or sorted(KNOWN_VALIDATIONS),
+        "validation_presets": live.presets.get("validations") or sorted(KNOWN_VALIDATIONS),
         "resources_presets": live.presets.get("resources") or sorted(KNOWN_RESOURCES),
         # Configured datasources (their asset lists = CURRENT downloads; more
         # is fetched on demand) plus the full downloadable asset registry.
@@ -346,17 +348,7 @@ class Translator:
 
     async def run_fresh(self, strategy: Strategy) -> Path:
         """Translate a hypothesis into strategy.json via LLM and validate the result."""
-        now = datetime.now(UTC)
-        ar = AgentRun(
-            agent_name="translator",
-            status=AgentRunStatus.RUNNING.value,
-            strategy_id=strategy.id,
-            started_at=now,
-            created_at=now,
-        )
-        self.session.add(ar)
-        await self.session.commit()
-        await self.session.refresh(ar)
+        ar = await start_agent_run(self.session, agent_name="translator", strategy_id=strategy.id)
 
         try:
             iteration_dir = strategy_dir(strategy.slug) / "iteration_001"
@@ -390,7 +382,9 @@ class Translator:
                 return catalog_prompt
 
             t0 = time.monotonic()
-            result = await agent.run("Emit the strategy.json now.")
+            result = await run_instrumented(
+                agent, "Emit the strategy.json now.", agent_run_id=ar.id
+            )
             latency_ms = int((time.monotonic() - t0) * 1000)
 
             usage = result.usage
@@ -441,10 +435,12 @@ class Translator:
             strategy.spec_path = str(spec_path)
             strategy.updated_at = datetime.now(UTC)
 
-            ar.status = AgentRunStatus.DONE.value
-            ar.ended_at = datetime.now(UTC)
-            ar.output_artifact_path = str(strategy_path)
-            await self.session.commit()
+            await finish_agent_run(
+                self.session,
+                ar,
+                status=AgentRunStatus.DONE,
+                output_artifact_path=str(strategy_path),
+            )
 
             return strategy_path
         except Exception as exc:
@@ -469,17 +465,7 @@ class Translator:
         - modify_plugins: {kind, ..., ops: [{action, section, slug, params, replaces}],
           target_assets}
         """
-        now = datetime.now(UTC)
-        ar = AgentRun(
-            agent_name="translator",
-            status=AgentRunStatus.RUNNING.value,
-            strategy_id=parent.id,
-            started_at=now,
-            created_at=now,
-        )
-        self.session.add(ar)
-        await self.session.commit()
-        await self.session.refresh(ar)
+        ar = await start_agent_run(self.session, agent_name="translator", strategy_id=parent.id)
 
         try:
             parent_dir = strategy_dir(parent.slug) / "iteration_001"
@@ -488,13 +474,9 @@ class Translator:
             parent_hypothesis_path = parent_dir / "hypothesis.json"
 
             if not sidecar_path.is_file():
-                raise TranslatorError(
-                    f"missing analyst_recommendation.json at {sidecar_path}"
-                )
+                raise TranslatorError(f"missing analyst_recommendation.json at {sidecar_path}")
             if not parent_strategy_path.is_file():
-                raise TranslatorError(
-                    f"parent missing strategy.json at {parent_strategy_path}"
-                )
+                raise TranslatorError(f"parent missing strategy.json at {parent_strategy_path}")
             ar.input_artifact_path = str(sidecar_path)
 
             rec = json.loads(sidecar_path.read_text())
@@ -507,16 +489,12 @@ class Translator:
                 if not isinstance(tunes, list):
                     # Legacy pre-M8 single-param sidecar shape.
                     tunes = [{"param": rec.get("param"), "new_range": rec.get("new_range")}]
-                grid = child_payload.setdefault("optimization", {}).setdefault(
-                    "grid_params", {}
-                )
+                grid = child_payload.setdefault("optimization", {}).setdefault("grid_params", {})
                 for entry in tunes:
                     param = entry.get("param") if isinstance(entry, dict) else None
                     new_range = entry.get("new_range") if isinstance(entry, dict) else None
                     if not param or not isinstance(new_range, list):
-                        raise TranslatorError(
-                            f"tune_params entry missing param/new_range: {entry}"
-                        )
+                        raise TranslatorError(f"tune_params entry missing param/new_range: {entry}")
                     grid[param] = new_range
             elif kind == "change_exit":
                 new_exit = rec.get("new_exit_strategy")
@@ -587,9 +565,7 @@ class Translator:
 
             if parent_hypothesis_path.is_file():
                 hypothesis_data = json.loads(parent_hypothesis_path.read_text())
-                (child_dir / "hypothesis.json").write_text(
-                    json.dumps(hypothesis_data, indent=2)
-                )
+                (child_dir / "hypothesis.json").write_text(json.dumps(hypothesis_data, indent=2))
                 child.hypothesis_path = str(child_dir / "hypothesis.json")
             else:
                 hypothesis_data = {
@@ -625,11 +601,13 @@ class Translator:
                 )
             )
 
-            ar.strategy_id = child.id
-            ar.status = AgentRunStatus.DONE.value
-            ar.ended_at = datetime.now(UTC)
-            ar.output_artifact_path = str(child_dir / "strategy.json")
-            await self.session.commit()
+            await finish_agent_run(
+                self.session,
+                ar,
+                status=AgentRunStatus.DONE,
+                strategy_id=child.id,
+                output_artifact_path=str(child_dir / "strategy.json"),
+            )
             await self.session.refresh(child)
             return child
         except Exception as exc:
@@ -657,17 +635,7 @@ class Translator:
             "preprocessing"      -> preprocessing
             "filter"             -> extra_filters
         """
-        now = datetime.now(UTC)
-        ar = AgentRun(
-            agent_name="translator",
-            status=AgentRunStatus.RUNNING.value,
-            strategy_id=parent.id,
-            started_at=now,
-            created_at=now,
-        )
-        self.session.add(ar)
-        await self.session.commit()
-        await self.session.refresh(ar)
+        ar = await start_agent_run(self.session, agent_name="translator", strategy_id=parent.id)
 
         try:
             if parent.current_state != StrategyState.BACKTESTED.value:
@@ -690,9 +658,7 @@ class Translator:
             sidecar_input_path = parent_dir / "add_indicator_request.json"
 
             if not parent_strategy_path.is_file():
-                raise TranslatorError(
-                    f"parent missing strategy.json at {parent_strategy_path}"
-                )
+                raise TranslatorError(f"parent missing strategy.json at {parent_strategy_path}")
             ar.input_artifact_path = str(sidecar_input_path)
 
             parent_payload = json.loads(parent_strategy_path.read_text())
@@ -702,11 +668,11 @@ class Translator:
             # they keep the old top-level list-field (advisory only).
             pipeline = child_payload.get("pipeline")
             if isinstance(pipeline, dict) and list_field in (
-                "indicators", "preprocessing", "feature_selection"
+                "indicators",
+                "preprocessing",
+                "feature_selection",
             ):
-                pipeline.setdefault(list_field, []).append(
-                    {"name": plugin_slug, "params": {}}
-                )
+                pipeline.setdefault(list_field, []).append({"name": plugin_slug, "params": {}})
             else:
                 child_payload.setdefault(list_field, []).append(plugin_slug)
 
@@ -825,9 +791,7 @@ class Translator:
                 }
 
             hypothesis_path = child_dir / "hypothesis.json"
-            hypothesis_path.write_text(
-                json.dumps(child_hypothesis, indent=2, sort_keys=False)
-            )
+            hypothesis_path.write_text(json.dumps(child_hypothesis, indent=2, sort_keys=False))
             child.hypothesis_path = str(hypothesis_path)
 
             spec_path = child_dir / "spec.md"
@@ -857,11 +821,13 @@ class Translator:
                 )
             )
 
-            ar.strategy_id = child.id
-            ar.status = AgentRunStatus.DONE.value
-            ar.ended_at = datetime.now(UTC)
-            ar.output_artifact_path = str(strategy_path)
-            await self.session.commit()
+            await finish_agent_run(
+                self.session,
+                ar,
+                status=AgentRunStatus.DONE,
+                strategy_id=child.id,
+                output_artifact_path=str(strategy_path),
+            )
             await self.session.refresh(child)
             return child
         except Exception as exc:

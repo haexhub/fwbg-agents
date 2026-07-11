@@ -1,0 +1,12 @@
+# Local dev automation: lint + format staged files before each commit.
+# Enable once per clone:  uv run pre-commit install
+# CI enforces the same gates (ruff check + ruff format --check) in deploy.yml,
+# so a missed local hook is still caught there. Keep `rev` in sync with the
+# ruff version pinned via pyproject/uv.lock.
+repos:
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.15.18
+    hooks:
+      - id: ruff-check
+        args: [--fix]
+      - id: ruff-format

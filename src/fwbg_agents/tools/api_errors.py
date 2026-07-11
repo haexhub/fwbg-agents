@@ -47,10 +47,7 @@ def _describe_status(status: int, body: str) -> str:
     if status == 401:
         return "Anthropic API authentication failed — invalid API key."
     if status == 403:
-        return (
-            "Anthropic API permission denied — your API key is not allowed to "
-            "use this resource."
-        )
+        return "Anthropic API permission denied — your API key is not allowed to use this resource."
     if status == 400:
         low = body.lower()
         if (
@@ -89,10 +86,7 @@ def _classify(exc: BaseException) -> str | None:
     if isinstance(exc, httpx.TimeoutException | TimeoutError):
         return f"Network timeout during an API call{_snippet(str(exc))}. Retry later."
     if isinstance(exc, httpx.ConnectError):
-        return (
-            f"Network connection error during an API call{_snippet(str(exc))}. "
-            "Retry later."
-        )
+        return f"Network connection error during an API call{_snippet(str(exc))}. Retry later."
 
     # HTTP status errors from Anthropic (raw SDK or wrapped by pydantic-ai).
     status, body = _anthropic_status_body(exc)

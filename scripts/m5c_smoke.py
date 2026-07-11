@@ -227,9 +227,7 @@ async def _wait_for_run(agent_run_id: int, deadline_s: float = DEADLINE_S) -> Ag
     while time.monotonic() < end:
         async with SessionLocal() as session:
             ar = (
-                await session.execute(
-                    select(AgentRun).where(AgentRun.id == agent_run_id)
-                )
+                await session.execute(select(AgentRun).where(AgentRun.id == agent_run_id))
             ).scalar_one()
             if ar.status in {"done", "failed"}:
                 return ar
@@ -242,9 +240,7 @@ async def _seed_parent_strategy() -> int:
     now = datetime.now(UTC)
     async with SessionLocal() as session:
         existing = (
-            await session.execute(
-                select(Strategy).where(Strategy.slug == SMOKE_STRATEGY_SLUG)
-            )
+            await session.execute(select(Strategy).where(Strategy.slug == SMOKE_STRATEGY_SLUG))
         ).scalar_one_or_none()
         if existing is not None:
             strategy_id = existing.id
@@ -268,12 +264,8 @@ async def _seed_parent_strategy() -> int:
 
     it_dir = strategy_dir(SMOKE_STRATEGY_SLUG) / "iteration_001"
     it_dir.mkdir(parents=True, exist_ok=True)
-    (it_dir / "strategy.json").write_text(
-        json.dumps(_PARENT_STRATEGY_JSON, indent=2)
-    )
-    (it_dir / "hypothesis.json").write_text(
-        json.dumps(_PARENT_HYPOTHESIS, indent=2)
-    )
+    (it_dir / "strategy.json").write_text(json.dumps(_PARENT_STRATEGY_JSON, indent=2))
+    (it_dir / "hypothesis.json").write_text(json.dumps(_PARENT_HYPOTHESIS, indent=2))
     (it_dir / "add_indicator_request.json").write_text(
         json.dumps(
             {
@@ -309,18 +301,18 @@ async def _cleanup_previous_run() -> None:
     child_slugs: list[str] = []
     async with SessionLocal() as session:
         prior_parent = (
-            await session.execute(
-                select(Strategy).where(Strategy.slug == SMOKE_STRATEGY_SLUG)
-            )
+            await session.execute(select(Strategy).where(Strategy.slug == SMOKE_STRATEGY_SLUG))
         ).scalar_one_or_none()
         if prior_parent is not None:
             children = (
-                await session.execute(
-                    select(Strategy).where(
-                        Strategy.parent_strategy_id == prior_parent.id
+                (
+                    await session.execute(
+                        select(Strategy).where(Strategy.parent_strategy_id == prior_parent.id)
                     )
                 )
-            ).scalars().all()
+                .scalars()
+                .all()
+            )
             for ch in children:
                 child_slugs.append(ch.slug)
                 await session.delete(ch)
@@ -345,9 +337,7 @@ async def main() -> int:
 
     async with SessionLocal() as session:
         existing = (
-            await session.execute(
-                select(Plugin).where(Plugin.slug == SMOKE_PLUGIN_SLUG)
-            )
+            await session.execute(select(Plugin).where(Plugin.slug == SMOKE_PLUGIN_SLUG))
         ).scalar_one_or_none()
         if existing is not None:
             print(
@@ -418,10 +408,14 @@ async def main() -> int:
     # Final assertions — the M5c-specific part.
     async with SessionLocal() as session:
         children = (
-            await session.execute(
-                select(Strategy).where(Strategy.parent_strategy_id == strategy_id)
+            (
+                await session.execute(
+                    select(Strategy).where(Strategy.parent_strategy_id == strategy_id)
+                )
             )
-        ).scalars().all()
+            .scalars()
+            .all()
+        )
 
     if len(children) != 1:
         print(
@@ -474,22 +468,18 @@ async def main() -> int:
         return 1
     if SMOKE_PLUGIN_SLUG not in last.get("rationale", ""):
         print(
-            f"       ✗ slug {SMOKE_PLUGIN_SLUG!r} not in rationale: "
-            f"{last.get('rationale')!r}",
+            f"       ✗ slug {SMOKE_PLUGIN_SLUG!r} not in rationale: {last.get('rationale')!r}",
             file=sys.stderr,
         )
         return 1
 
     # Decision D: parent sidecar must still exist (append-only audit).
     parent_sidecar = (
-        strategy_dir(SMOKE_STRATEGY_SLUG)
-        / "iteration_001"
-        / "add_indicator_request.json"
+        strategy_dir(SMOKE_STRATEGY_SLUG) / "iteration_001" / "add_indicator_request.json"
     )
     if not parent_sidecar.is_file():
         print(
-            f"       ✗ parent sidecar missing (append-only audit broken): "
-            f"{parent_sidecar}",
+            f"       ✗ parent sidecar missing (append-only audit broken): {parent_sidecar}",
             file=sys.stderr,
         )
         return 1

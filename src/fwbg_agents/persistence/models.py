@@ -172,9 +172,7 @@ class StrategyTag(Base):
 
     __tablename__ = "strategy_tag"
 
-    strategy_id: Mapped[int] = mapped_column(
-        Integer, ForeignKey("strategy.id"), primary_key=True
-    )
+    strategy_id: Mapped[int] = mapped_column(Integer, ForeignKey("strategy.id"), primary_key=True)
     tag: Mapped[str] = mapped_column(String(128), primary_key=True, index=True)
 
 
@@ -234,6 +232,9 @@ class AgentRun(Base):
     )
     plugin_id: Mapped[int | None] = mapped_column(
         Integer, ForeignKey("plugin.id"), nullable=True, index=True
+    )
+    parent_run_id: Mapped[int | None] = mapped_column(
+        Integer, ForeignKey("agent_run.id"), nullable=True, index=True
     )
     input_artifact_path: Mapped[str | None] = mapped_column(String(512), nullable=True)
     output_artifact_path: Mapped[str | None] = mapped_column(String(512), nullable=True)

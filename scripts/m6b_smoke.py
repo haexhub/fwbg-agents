@@ -149,9 +149,7 @@ def _write_fixture_files(data_dir: Path, slug: str) -> None:
     trades_lines: list[str] = []
     equity = 10000.0
     starting_equity = equity
-    curve: list[dict] = [
-        {"timestamp": first_entry.isoformat(), "equity": round(equity, 2)}
-    ]
+    curve: list[dict] = [{"timestamp": first_entry.isoformat(), "equity": round(equity, 2)}]
     for i, pnl in enumerate(pnls):
         entry_time = first_entry + delta * i
         side = "buy" if i % 2 == 0 else "sell"
@@ -221,9 +219,7 @@ async def _seed_strategy() -> int:
     now = datetime.now(UTC)
     async with SessionLocal() as session:
         existing = (
-            await session.execute(
-                select(Strategy).where(Strategy.slug == SMOKE_STRATEGY_SLUG)
-            )
+            await session.execute(select(Strategy).where(Strategy.slug == SMOKE_STRATEGY_SLUG))
         ).scalar_one_or_none()
         if existing is not None:
             existing.current_state = StrategyState.PAPER_TRADING.value
@@ -263,14 +259,10 @@ async def _cleanup_previous_run() -> None:
     """
     async with SessionLocal() as session:
         prior = (
-            await session.execute(
-                select(Strategy).where(Strategy.slug == SMOKE_STRATEGY_SLUG)
-            )
+            await session.execute(select(Strategy).where(Strategy.slug == SMOKE_STRATEGY_SLUG))
         ).scalar_one_or_none()
         if prior is not None:
-            await session.execute(
-                delete(AgentRun).where(AgentRun.strategy_id == prior.id)
-            )
+            await session.execute(delete(AgentRun).where(AgentRun.strategy_id == prior.id))
             await session.execute(
                 delete(Transition).where(
                     Transition.entity_type == EntityType.STRATEGY.value,
@@ -293,9 +285,7 @@ async def _wait_for_run(agent_run_id: int, deadline_s: float = DEADLINE_S) -> Ag
     while time.monotonic() < end:
         async with SessionLocal() as session:
             ar = (
-                await session.execute(
-                    select(AgentRun).where(AgentRun.id == agent_run_id)
-                )
+                await session.execute(select(AgentRun).where(AgentRun.id == agent_run_id))
             ).scalar_one()
             if ar.status in {AgentRunStatus.DONE.value, AgentRunStatus.FAILED.value}:
                 return ar
@@ -396,9 +386,7 @@ async def main() -> int:
         print("[m6b_smoke] [7/10] refresh Strategy + assert paper_analyst_promote_recommended=True")
         async with SessionLocal() as session:
             s = (
-                await session.execute(
-                    select(Strategy).where(Strategy.id == strategy_id)
-                )
+                await session.execute(select(Strategy).where(Strategy.id == strategy_id))
             ).scalar_one()
             meta_after_analyze = dict(s.metadata_json or {})
         if not meta_after_analyze.get("paper_analyst_promote_recommended"):
@@ -425,40 +413,41 @@ async def main() -> int:
             )
             return 1
         promote_ar_id = body.get("agent_run_id")
-        print(
-            f"       ✓ new_state=live_trading promote_agent_run_id={promote_ar_id}"
-        )
+        print(f"       ✓ new_state=live_trading promote_agent_run_id={promote_ar_id}")
 
     print("[m6b_smoke] [9/10] final assertions: Strategy + Transition + AgentRun(promote_live)")
     async with SessionLocal() as session:
-        s = (
-            await session.execute(
-                select(Strategy).where(Strategy.id == strategy_id)
-            )
-        ).scalar_one()
+        s = (await session.execute(select(Strategy).where(Strategy.id == strategy_id))).scalar_one()
         meta_final = dict(s.metadata_json or {})
 
         transitions = (
-            await session.execute(
-                select(Transition)
-                .where(
-                    Transition.entity_type == EntityType.STRATEGY.value,
-                    Transition.entity_id == strategy_id,
-                    Transition.from_state == StrategyState.PAPER_TRADING.value,
-                    Transition.to_state == StrategyState.LIVE_TRADING.value,
+            (
+                await session.execute(
+                    select(Transition).where(
+                        Transition.entity_type == EntityType.STRATEGY.value,
+                        Transition.entity_id == strategy_id,
+                        Transition.from_state == StrategyState.PAPER_TRADING.value,
+                        Transition.to_state == StrategyState.LIVE_TRADING.value,
+                    )
                 )
             )
-        ).scalars().all()
+            .scalars()
+            .all()
+        )
 
         promote_ars = (
-            await session.execute(
-                select(AgentRun).where(
-                    AgentRun.strategy_id == strategy_id,
-                    AgentRun.agent_name == "promote_live",
-                    AgentRun.status == AgentRunStatus.DONE.value,
+            (
+                await session.execute(
+                    select(AgentRun).where(
+                        AgentRun.strategy_id == strategy_id,
+                        AgentRun.agent_name == "promote_live",
+                        AgentRun.status == AgentRunStatus.DONE.value,
+                    )
                 )
             )
-        ).scalars().all()
+            .scalars()
+            .all()
+        )
 
     if s.current_state != StrategyState.LIVE_TRADING.value:
         print(

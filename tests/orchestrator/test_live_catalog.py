@@ -13,17 +13,42 @@ from fwbg_agents.persistence.database import Base
 class _FakeFwbg:
     async def get_plugins(self):
         return [
-            {"name": "adx", "fqn": "fwbg-core.indicators.adx", "phase": "indicators",
-             "description": "trend strength", "defaults": {"period": 14}},
-            {"name": "xgboost", "fqn": "fwbg-core.model.xgboost", "phase": "model",
-             "description": "", "defaults": {}},
-            {"name": "atr_based", "fqn": "fwbg-premium.exit_strategies.atr_based",
-             "phase": "exit_strategies", "description": "", "defaults": {}},
-            {"name": "kelly", "fqn": "fwbg-core.risk_management.kelly",
-             "phase": "risk_management", "description": "", "defaults": {}},
+            {
+                "name": "adx",
+                "fqn": "fwbg-core.indicators.adx",
+                "phase": "indicators",
+                "description": "trend strength",
+                "defaults": {"period": 14},
+            },
+            {
+                "name": "xgboost",
+                "fqn": "fwbg-core.model.xgboost",
+                "phase": "model",
+                "description": "",
+                "defaults": {},
+            },
+            {
+                "name": "atr_based",
+                "fqn": "fwbg-premium.exit_strategies.atr_based",
+                "phase": "exit_strategies",
+                "description": "",
+                "defaults": {},
+            },
+            {
+                "name": "kelly",
+                "fqn": "fwbg-core.risk_management.kelly",
+                "phase": "risk_management",
+                "description": "",
+                "defaults": {},
+            },
             # unmapped phase — must be ignored, not crashed on
-            {"name": "labeler", "fqn": "x.labeling.labeler", "phase": "labeling",
-             "description": "", "defaults": {}},
+            {
+                "name": "labeler",
+                "fqn": "x.labeling.labeler",
+                "phase": "labeling",
+                "description": "",
+                "defaults": {},
+            },
         ]
 
     async def get_exit_modifiers(self):
@@ -39,10 +64,12 @@ class _FakeFwbg:
         return [{"type": "csv", "name": "eur-usd", "path": "/data"}]
 
     async def get_datasource_assets(self):
-        return {"assets": [
-            {"symbol": "EURUSD", "timeframes": ["HOUR_1"], "source": "eur-usd"},
-            {"symbol": "ORPHAN", "timeframes": ["DAY_1"], "source": "other"},
-        ]}
+        return {
+            "assets": [
+                {"symbol": "EURUSD", "timeframes": ["HOUR_1"], "source": "eur-usd"},
+                {"symbol": "ORPHAN", "timeframes": ["DAY_1"], "source": "other"},
+            ]
+        }
 
     async def get_assets(self):
         return [
@@ -56,9 +83,15 @@ class _FakeFwbg:
 
     async def get_dukascopy_instruments(self):
         return [
-            {"symbol": "EURUSD", "group": "Forex",
-             "historyStart": {"minute": "2003-05-04", "hourly": "2003-05-04",
-                              "daily": "1973-03-01"}},
+            {
+                "symbol": "EURUSD",
+                "group": "Forex",
+                "historyStart": {
+                    "minute": "2003-05-04",
+                    "hourly": "2003-05-04",
+                    "daily": "1973-03-01",
+                },
+            },
         ]
 
 
@@ -66,6 +99,7 @@ class _BrokenFwbg:
     def __getattr__(self, name):
         async def _fail(*a, **kw):
             raise ConnectionError("fwbg down")
+
         return _fail
 
 
@@ -101,16 +135,19 @@ async def test_fetch_builds_catalog_from_api(session):
     assert live.exit_modifiers[0]["name"] == "trailing_stop"
     # datasources carry their actual data availability
     assert live.datasource_names() == ["eur-usd"]
-    assert live.datasources[0]["assets"] == [
-        {"symbol": "EURUSD", "timeframes": ["HOUR_1"]}
-    ]
+    assert live.datasources[0]["assets"] == [{"symbol": "EURUSD", "timeframes": ["HOUR_1"]}]
     # the downloadable universe comes from the asset registry, sorted per
     # class, with history depth where the Dukascopy catalogue knows it
     assert live.asset_registry == {
         "FOREX": [
-            {"symbol": "EURUSD",
-             "history_start": {"minute": "2003-05-04", "hourly": "2003-05-04",
-                               "daily": "1973-03-01"}},
+            {
+                "symbol": "EURUSD",
+                "history_start": {
+                    "minute": "2003-05-04",
+                    "hourly": "2003-05-04",
+                    "daily": "1973-03-01",
+                },
+            },
             {"symbol": "GBPUSD"},
         ],
         "INDEX": [{"symbol": "DAX"}],

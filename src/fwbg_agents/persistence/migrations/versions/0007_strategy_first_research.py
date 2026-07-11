@@ -34,9 +34,7 @@ def upgrade() -> None:
             existing_type=sa.String(32),
             nullable=True,
         )
-        batch_op.add_column(
-            sa.Column("suggested_universe", sa.JSON(), nullable=True)
-        )
+        batch_op.add_column(sa.Column("suggested_universe", sa.JSON(), nullable=True))
         batch_op.add_column(
             sa.Column(
                 "model_knowledge_only",

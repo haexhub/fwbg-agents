@@ -28,7 +28,12 @@ from fwbg_agents.orchestrator.research_flow import (
     reiterate,
     research_and_translate,
 )
-from fwbg_agents.persistence.agent_runs import fail_agent_run
+from fwbg_agents.persistence.agent_runs import (
+    fail_agent_run,
+    finish_agent_run,
+    start_agent_run,
+    use_parent_run,
+)
 from fwbg_agents.persistence.database import SessionLocal, get_session
 from fwbg_agents.persistence.models import (
     AgentRun,
@@ -46,6 +51,7 @@ def _research_input_path(agent_run_id: int) -> Path:
     p = settings.data_dir / "research_inputs"
     p.mkdir(parents=True, exist_ok=True)
     return p / f"{agent_run_id}.json"
+
 
 log = logging.getLogger(__name__)
 
@@ -70,28 +76,33 @@ async def _run_research_background(input: ResearcherInput, agent_run_id: int) ->
         search_client = FallbackSearchClient([tavily, brave])
         fwbg = FwbgClient(base_url=settings.fwbg_api_url)
         try:
-            strategy_id = await research_and_translate(
-                session,
-                input,
-                search_client=search_client,
-                fanout_n=settings.researcher_fanout_n,
-                fwbg_client=fwbg,
-            )
-            ar.status = AgentRunStatus.DONE.value
-            ar.strategy_id = strategy_id
-            ar.ended_at = datetime.now(UTC)
-            ar.output_artifact_path = str(
+            # Scope this flow run as parent so the researcher + translator runs
+            # spawned inside link back to it (Plan 008 Schritt 5). The auto-
+            # backtest below stays a top-level run, as when started standalone.
+            with use_parent_run(agent_run_id):
+                strategy_id = await research_and_translate(
+                    session,
+                    input,
+                    search_client=search_client,
+                    fanout_n=settings.researcher_fanout_n,
+                    fwbg_client=fwbg,
+                )
+            output_artifact_path = str(
                 strategy_dir(
-                    (
-                        await session.execute(
-                            select(Strategy).where(Strategy.id == strategy_id)
-                        )
-                    ).scalar_one().slug
+                    (await session.execute(select(Strategy).where(Strategy.id == strategy_id)))
+                    .scalar_one()
+                    .slug
                 )
                 / "iteration_001"
                 / "strategy.json"
             )
-            await session.commit()
+            await finish_agent_run(
+                session,
+                ar,
+                status=AgentRunStatus.DONE,
+                strategy_id=strategy_id,
+                output_artifact_path=output_artifact_path,
+            )
 
             # Auto-start backtest — runs independently in its own session.
             log.info(
@@ -139,11 +150,9 @@ async def _run_reiterate_background(parent_id: int, agent_run_id: int) -> None:
         await session.commit()
         fwbg = FwbgClient(base_url=settings.fwbg_api_url)
         try:
-            child_id = await reiterate(session, parent_id, fwbg_client=fwbg)
-            ar.status = AgentRunStatus.DONE.value
-            ar.strategy_id = child_id
-            ar.ended_at = datetime.now(UTC)
-            await session.commit()
+            with use_parent_run(agent_run_id):
+                child_id = await reiterate(session, parent_id, fwbg_client=fwbg)
+            await finish_agent_run(session, ar, status=AgentRunStatus.DONE, strategy_id=child_id)
         except Exception as exc:
             log.exception("reiterate background task failed (agent_run %s)", agent_run_id)
             await fail_agent_run(session, ar, exc)
@@ -189,16 +198,7 @@ async def post_research_brief(
             )
 
     scope = body.asset_class if body.asset_class else "asset-agnostic"
-    now = datetime.now(UTC)
-    ar = AgentRun(
-        agent_name="research_flow",
-        status=AgentRunStatus.PENDING.value,
-        started_at=now,
-        created_at=now,
-    )
-    session.add(ar)
-    await session.commit()
-    await session.refresh(ar)
+    ar = await start_agent_run(session, agent_name="research_flow", status=AgentRunStatus.PENDING)
 
     input_path = _research_input_path(ar.id)
     input_path.write_text(body.model_dump_json())
@@ -232,9 +232,7 @@ async def post_strategy_reiterate(
             "reiterate requires BACKTESTED",
         )
 
-    sidecar = (
-        strategy_dir(parent.slug) / "iteration_001" / "analyst_recommendation.json"
-    )
+    sidecar = strategy_dir(parent.slug) / "iteration_001" / "analyst_recommendation.json"
     if not sidecar.is_file():
         raise HTTPException(
             409,
@@ -242,17 +240,12 @@ async def post_strategy_reiterate(
             f"run /strategies/{strategy_id}/analyze first",
         )
 
-    now = datetime.now(UTC)
-    ar = AgentRun(
+    ar = await start_agent_run(
+        session,
         agent_name="reiterate",
-        status=AgentRunStatus.PENDING.value,
         strategy_id=parent.id,
-        started_at=now,
-        created_at=now,
+        status=AgentRunStatus.PENDING,
     )
-    session.add(ar)
-    await session.commit()
-    await session.refresh(ar)
 
     _spawn(ar.id, _run_reiterate_background(parent.id, ar.id))
     return {
@@ -314,16 +307,9 @@ async def retry_agent_run(
         raise HTTPException(409, f"input file not found at {ar.input_artifact_path}")
 
     original_input = ResearcherInput.model_validate_json(input_path.read_text())
-    now = datetime.now(UTC)
-    new_ar = AgentRun(
-        agent_name="research_flow",
-        status=AgentRunStatus.PENDING.value,
-        started_at=now,
-        created_at=now,
+    new_ar = await start_agent_run(
+        session, agent_name="research_flow", status=AgentRunStatus.PENDING
     )
-    session.add(new_ar)
-    await session.commit()
-    await session.refresh(new_ar)
 
     new_input_path = _research_input_path(new_ar.id)
     new_input_path.write_text(original_input.model_dump_json())
@@ -347,13 +333,17 @@ async def list_hypotheses(
     """List strategies that have a hypothesis_path set, newest first."""
     limit = max(1, min(limit, 200))
     rows = (
-        await session.execute(
-            select(Strategy)
-            .where(Strategy.hypothesis_path.is_not(None))
-            .order_by(desc(Strategy.created_at))
-            .limit(limit)
+        (
+            await session.execute(
+                select(Strategy)
+                .where(Strategy.hypothesis_path.is_not(None))
+                .order_by(desc(Strategy.created_at))
+                .limit(limit)
+            )
         )
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
     return {
         "hypotheses": [
             {

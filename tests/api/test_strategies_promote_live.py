@@ -186,9 +186,7 @@ async def test_promote_live_happy_path_transitions_to_live_trading(client_with_d
     assert s.current_state == StrategyState.LIVE_TRADING.value
 
     ar = (
-        await session.execute(
-            select(AgentRun).where(AgentRun.id == body["agent_run_id"])
-        )
+        await session.execute(select(AgentRun).where(AgentRun.id == body["agent_run_id"]))
     ).scalar_one()
     assert ar.agent_name == "promote_live"
     assert ar.status == AgentRunStatus.DONE.value
@@ -214,15 +212,19 @@ async def test_promote_live_records_audit_transition_with_human_approval_payload
     assert r.status_code == 200, r.text
 
     rows = (
-        await session.execute(
-            select(Transition)
-            .where(
-                (Transition.entity_type == EntityType.STRATEGY.value)
-                & (Transition.entity_id == s.id)
+        (
+            await session.execute(
+                select(Transition)
+                .where(
+                    (Transition.entity_type == EntityType.STRATEGY.value)
+                    & (Transition.entity_id == s.id)
+                )
+                .order_by(Transition.id.desc())
             )
-            .order_by(Transition.id.desc())
         )
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
     assert rows, "no Transition row was written"
     t = rows[0]
     assert t.entity_type == EntityType.STRATEGY.value
@@ -255,15 +257,19 @@ async def test_promote_live_happy_path_accepts_omitted_operator_note(client_with
     assert r.json()["new_state"] == StrategyState.LIVE_TRADING.value
 
     rows = (
-        await session.execute(
-            select(Transition)
-            .where(
-                (Transition.entity_type == EntityType.STRATEGY.value)
-                & (Transition.entity_id == s.id)
+        (
+            await session.execute(
+                select(Transition)
+                .where(
+                    (Transition.entity_type == EntityType.STRATEGY.value)
+                    & (Transition.entity_id == s.id)
+                )
+                .order_by(Transition.id.desc())
             )
-            .order_by(Transition.id.desc())
         )
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
     assert rows, "no Transition row was written"
     t = rows[0]
     # The endpoint sets operator_note from a normalized `note` var; omitted in
@@ -296,15 +302,19 @@ async def test_promote_live_empty_operator_note_normalizes_to_none(client_with_d
     assert r.status_code == 200, r.text
 
     rows = (
-        await session.execute(
-            select(Transition)
-            .where(
-                (Transition.entity_type == EntityType.STRATEGY.value)
-                & (Transition.entity_id == s.id)
+        (
+            await session.execute(
+                select(Transition)
+                .where(
+                    (Transition.entity_type == EntityType.STRATEGY.value)
+                    & (Transition.entity_id == s.id)
+                )
+                .order_by(Transition.id.desc())
             )
-            .order_by(Transition.id.desc())
         )
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
     assert rows
     t = rows[0]
     assert t.payload.get("operator_note") is None

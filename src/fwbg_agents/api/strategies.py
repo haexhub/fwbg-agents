@@ -28,7 +28,7 @@ from fwbg_agents.orchestrator.lifecycle import (
     transition_strategy,
 )
 from fwbg_agents.orchestrator.paper_flow import paper_analyze
-from fwbg_agents.persistence.agent_runs import fail_agent_run
+from fwbg_agents.persistence.agent_runs import fail_agent_run, start_agent_run
 from fwbg_agents.persistence.database import SessionLocal, get_session
 from fwbg_agents.persistence.models import (
     AgentRun,
@@ -63,9 +63,7 @@ class StrategyCreate(BaseModel):
     def _validate_slug(cls, v: str) -> str:
         """Validate that the slug matches the required lowercase pattern."""
         if not _SLUG_RE.match(v):
-            raise ValueError(
-                "slug must match [a-z0-9][a-z0-9_]*[a-z0-9] (3..128 chars)"
-            )
+            raise ValueError("slug must match [a-z0-9][a-z0-9_]*[a-z0-9] (3..128 chars)")
         return v
 
 
@@ -194,18 +192,28 @@ async def get_strategy(
     if s is None:
         raise HTTPException(status_code=404, detail=f"strategy {strategy_id} not found")
     tags = (
-        await session.execute(select(StrategyTag.tag).where(StrategyTag.strategy_id == strategy_id))
-    ).scalars().all()
-    transitions = (
-        await session.execute(
-            select(Transition)
-            .where(
-                (Transition.entity_type == EntityType.STRATEGY.value)
-                & (Transition.entity_id == strategy_id)
+        (
+            await session.execute(
+                select(StrategyTag.tag).where(StrategyTag.strategy_id == strategy_id)
             )
-            .order_by(asc(Transition.id))
         )
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
+    transitions = (
+        (
+            await session.execute(
+                select(Transition)
+                .where(
+                    (Transition.entity_type == EntityType.STRATEGY.value)
+                    & (Transition.entity_id == strategy_id)
+                )
+                .order_by(asc(Transition.id))
+            )
+        )
+        .scalars()
+        .all()
+    )
     return {
         "strategy": _serialize_strategy(s, tags=list(tags)),
         "transitions": [_serialize_transition(t) for t in transitions],
@@ -269,15 +277,19 @@ async def list_strategy_transitions(
 ) -> dict[str, Any]:
     """List all lifecycle transitions for a strategy."""
     rows = (
-        await session.execute(
-            select(Transition)
-            .where(
-                (Transition.entity_type == EntityType.STRATEGY.value)
-                & (Transition.entity_id == strategy_id)
+        (
+            await session.execute(
+                select(Transition)
+                .where(
+                    (Transition.entity_type == EntityType.STRATEGY.value)
+                    & (Transition.entity_id == strategy_id)
+                )
+                .order_by(asc(Transition.id))
             )
-            .order_by(asc(Transition.id))
         )
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
     return {"transitions": [_serialize_transition(t) for t in rows]}
 
 
@@ -292,8 +304,7 @@ def _require_paper_or_live_trading(strategy: Strategy) -> None:
         raise HTTPException(
             status_code=409,
             detail=(
-                f"strategy not in PAPER_TRADING or LIVE_TRADING state, "
-                f"got {strategy.current_state}"
+                f"strategy not in PAPER_TRADING or LIVE_TRADING state, got {strategy.current_state}"
             ),
         )
 
@@ -365,9 +376,7 @@ async def _run_paper_analyze_background(strategy_id: int, agent_run_id: int) -> 
         try:
             await paper_analyze(strategy_id, session, existing_ar=ar)
         except Exception as exc:
-            log.exception(
-                "paper-analyze background task failed (agent_run %s)", agent_run_id
-            )
+            log.exception("paper-analyze background task failed (agent_run %s)", agent_run_id)
             # Defensive: paper_analyze's own except block already marks FAILED +
             # commits before re-raising. This handler covers TOCTOU windows (e.g.
             # state changed between endpoint check and BG-task start) where the
@@ -409,17 +418,12 @@ async def post_strategy_paper_analyze(
             detail=f"no on-disk paper-trade data for strategy {s.slug}",
         )
 
-    now = datetime.now(UTC)
-    ar = AgentRun(
+    ar = await start_agent_run(
+        session,
         agent_name="paper_analyst",
-        status=AgentRunStatus.PENDING.value,
         strategy_id=s.id,
-        started_at=now,
-        created_at=now,
+        status=AgentRunStatus.PENDING,
     )
-    session.add(ar)
-    await session.commit()
-    await session.refresh(ar)
 
     background_tasks.add_task(_run_paper_analyze_background, s.id, ar.id)
     return PaperAnalyzeResponse(agent_run_id=ar.id, status="scheduled")
@@ -507,16 +511,15 @@ async def post_strategy_promote_live(
     # same transaction (transition_strategy's internal commit covers them).
     # If transition_strategy fails for any reason (guard, IO, …), the AgentRun
     # is rolled back as part of the same SQLAlchemy session — no orphan audit.
-    now = datetime.now(UTC)
-    ar = AgentRun(
+    # commit=False keeps the row uncommitted (flushed for its PK) so it shares
+    # the transition's transaction.
+    ar = await start_agent_run(
+        session,
         agent_name="promote_live",
-        status=AgentRunStatus.DONE.value,
         strategy_id=s.id,
-        started_at=now,
-        ended_at=now,
-        created_at=now,
+        status=AgentRunStatus.DONE,
+        commit=False,
     )
-    session.add(ar)
 
     # M2 guard re-validates payload["human_approval"]; deferred-defence by design.
     await transition_strategy(

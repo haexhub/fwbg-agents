@@ -39,8 +39,7 @@ def _fake_fwbg_tree(root: Path) -> Path:
 
     # Premium root plugin.
     premium = (
-        root / "packages" / "fwbg-premium" / "src" / "fwbg_premium"
-        / "plugins" / "fwbg-premium"
+        root / "packages" / "fwbg-premium" / "src" / "fwbg_premium" / "plugins" / "fwbg-premium"
     )
     baz = premium / "models" / "baz"
     baz.mkdir(parents=True)

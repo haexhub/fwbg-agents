@@ -35,7 +35,11 @@ from fwbg_agents.orchestrator.criteria_paper import (
     load_paper_criteria,
 )
 from fwbg_agents.orchestrator.lifecycle import strategy_dir
-from fwbg_agents.persistence.agent_runs import fail_agent_run
+from fwbg_agents.persistence.agent_runs import (
+    fail_agent_run,
+    finish_agent_run,
+    start_agent_run,
+)
 from fwbg_agents.persistence.models import (
     AgentRun,
     AgentRunStatus,
@@ -92,8 +96,7 @@ async def paper_analyze(
         raise PaperFlowError(f"strategy {strategy_id} not found")
     if strategy.current_state != StrategyState.PAPER_TRADING.value:
         raise PaperFlowError(
-            f"strategy {strategy_id} not in PAPER_TRADING "
-            f"(state={strategy.current_state})"
+            f"strategy {strategy_id} not in PAPER_TRADING (state={strategy.current_state})"
         )
 
     # Let FileNotFoundError from missing paper-criteria YAML propagate —
@@ -103,9 +106,7 @@ async def paper_analyze(
     fwbg_data_dir = Path(settings.fwbg_data_dir)
     summary = read_paper_summary(strategy.slug, fwbg_data_dir)
     if summary is None:
-        raise PaperFlowError(
-            f"no on-disk paper-trading data for slug={strategy.slug!r}"
-        )
+        raise PaperFlowError(f"no on-disk paper-trading data for slug={strategy.slug!r}")
     positions = read_paper_positions(strategy.slug, fwbg_data_dir)
 
     now = datetime.now(UTC)
@@ -116,16 +117,7 @@ async def paper_analyze(
         await session.commit()
         await session.refresh(ar)
     else:
-        ar = AgentRun(
-            agent_name="paper_analyst",
-            status=AgentRunStatus.RUNNING.value,
-            strategy_id=strategy.id,
-            started_at=now,
-            created_at=now,
-        )
-        session.add(ar)
-        await session.commit()
-        await session.refresh(ar)
+        ar = await start_agent_run(session, agent_name="paper_analyst", strategy_id=strategy.id)
 
     try:
         eval_res = evaluate_paper_criteria(summary, criteria)
@@ -136,6 +128,7 @@ async def paper_analyze(
             paper_phase_target_days=strategy.paper_phase_target_days,
             paper_criteria_eval=eval_res,
             strategy_slug=strategy.slug,
+            agent_run_id=ar.id,
         )
 
         sidecar_dir = strategy_dir(strategy.slug)
@@ -156,10 +149,12 @@ async def paper_analyze(
             strategy.metadata_json = meta
         # ContinueObservation: no metadata write — sidecar only.
 
-        ar.status = AgentRunStatus.DONE.value
-        ar.output_artifact_path = str(sidecar_path)
-        ar.ended_at = datetime.now(UTC)
-        await session.commit()
+        await finish_agent_run(
+            session,
+            ar,
+            status=AgentRunStatus.DONE,
+            output_artifact_path=str(sidecar_path),
+        )
         await session.refresh(ar)
         log.info(
             "paper_analyze: slug=%s decision=%s sidecar=%s",

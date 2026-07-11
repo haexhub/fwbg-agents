@@ -128,11 +128,11 @@ def _compute_sortino(
     downside_var = sum(sq_neg) / len(trade_pnls)
     if downside_var <= 0:
         return None
-    downside_dev = downside_var ** 0.5
+    downside_dev = downside_var**0.5
     per_trade = mean / downside_dev
     if trades_per_year is None or trades_per_year <= 0:
         return None
-    return per_trade * (trades_per_year ** 0.5)
+    return per_trade * (trades_per_year**0.5)
 
 
 def _trades_per_year(unified: dict[str, Any]) -> float | None:

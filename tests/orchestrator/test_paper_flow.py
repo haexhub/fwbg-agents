@@ -212,9 +212,7 @@ async def test_paper_analyze_promote_outcome_sets_metadata_and_marks_done(
     stub = _StubAnalyst(outcome=PromotePaperToLive(rationale="all gates clear"))
 
     async with Session() as session:
-        ar = await paper_analyze(
-            sid, session, settings=settings_stub, analyst=stub
-        )
+        ar = await paper_analyze(sid, session, settings=settings_stub, analyst=stub)
         assert ar.status == AgentRunStatus.DONE.value
         assert ar.output_artifact_path is not None
         assert ar.ended_at is not None
@@ -244,9 +242,7 @@ async def test_paper_analyze_abandon_outcome_sets_metadata_with_post_mortem_path
     )
 
     async with Session() as session:
-        ar = await paper_analyze(
-            sid, session, settings=settings_stub, analyst=stub
-        )
+        ar = await paper_analyze(sid, session, settings=settings_stub, analyst=stub)
         assert ar.status == AgentRunStatus.DONE.value
 
     async with Session() as v:
@@ -270,13 +266,9 @@ async def test_paper_analyze_continue_outcome_leaves_metadata_unchanged(
         s.metadata_json = {"pre_existing_marker": "keep_me"}
         await session.commit()
 
-    stub = _StubAnalyst(
-        outcome=ContinueObservation(rationale="need more samples", stale=False)
-    )
+    stub = _StubAnalyst(outcome=ContinueObservation(rationale="need more samples", stale=False))
     async with Session() as session:
-        ar = await paper_analyze(
-            sid, session, settings=settings_stub, analyst=stub
-        )
+        ar = await paper_analyze(sid, session, settings=settings_stub, analyst=stub)
         assert ar.status == AgentRunStatus.DONE.value
 
     async with Session() as v:
@@ -295,9 +287,7 @@ async def test_paper_analyze_marks_agent_run_failed_on_exception(db_and_paper):
 
     async with Session() as session:
         with pytest.raises(RuntimeError, match="analyst exploded"):
-            await paper_analyze(
-                sid, session, settings=settings_stub, analyst=stub
-            )
+            await paper_analyze(sid, session, settings=settings_stub, analyst=stub)
 
     async with Session() as v:
         runs = (await v.execute(select(AgentRun))).scalars().all()

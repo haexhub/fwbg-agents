@@ -32,24 +32,30 @@ def make_live_catalog(
     datasources: list[dict] | None = None,
 ) -> LiveCatalog:
     """Canned LiveCatalog for tests — replaces the live fwbg API fetch."""
-    categories = categories if categories is not None else {
-        "indicators": ["opening_range", "atr"],
-        "models": ["signal_orb_v1"],
-        "exit_strategies": ["orb_based", "atr_trailing_sl"],
-    }
+    categories = (
+        categories
+        if categories is not None
+        else {
+            "indicators": ["opening_range", "atr"],
+            "models": ["signal_orb_v1"],
+            "exit_strategies": ["orb_based", "atr_trailing_sl"],
+        }
+    )
     by_category = {
         category: {
             slug: PluginManifest(
-                name=slug, category=category, provenance="fwbg-core",
-                version="1", source_path=".",
+                name=slug,
+                category=category,
+                provenance="fwbg-core",
+                version="1",
+                source_path=".",
             )
             for slug in slugs
         }
         for category, slugs in categories.items()
     }
     details = {
-        category: [{"name": slug, "description": "", "default_params": {}}
-                   for slug in slugs]
+        category: [{"name": slug, "description": "", "default_params": {}} for slug in slugs]
         for category, slugs in categories.items()
     }
     return LiveCatalog(
@@ -95,9 +101,11 @@ VALID_OUTPUT = {
     "resources": "standard_v1",
     "timeframe": "MINUTE_15",
     "exit_strategies": [
-        {"name": "orb_based",
-         "params": {"sl_mult": 1.0, "tp_mult": 5.0, "atr_period": 14},
-         "ct": [0.5]},
+        {
+            "name": "orb_based",
+            "params": {"sl_mult": 1.0, "tp_mult": 5.0, "atr_period": 14},
+            "ct": [0.5],
+        },
     ],
     "tags": ["orb", "intraday", "forex_majors"],
     "optimization": {},
@@ -209,9 +217,7 @@ async def test_fresh_invalid_structure_fails_translator_run(db_with_strategy):
 async def test_fresh_unknown_plugin_slug_fails(db_with_strategy):
     SessionMaker, strategy_id, *_ = db_with_strategy
     bad = dict(VALID_OUTPUT)
-    bad["pipeline"] = {
-        "indicators": [{"name": "totally_made_up_indicator_v77", "params": {}}]
-    }
+    bad["pipeline"] = {"indicators": [{"name": "totally_made_up_indicator_v77", "params": {}}]}
     async with SessionMaker() as session:
         s = (await session.execute(select(Strategy).where(Strategy.id == strategy_id))).scalar_one()
         translator = Translator(session, model=_stub_model(bad))

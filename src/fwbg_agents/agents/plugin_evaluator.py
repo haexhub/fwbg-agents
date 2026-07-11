@@ -38,6 +38,7 @@ from fwbg_agents.persistence.models import (
     PluginState,
     VerificationRun,
 )
+from fwbg_agents.run_events import emit_run_event
 
 log = logging.getLogger(__name__)
 
@@ -49,7 +50,7 @@ class PluginEvaluator:
         """Initialize."""
         self.session = session
 
-    async def run(self, plugin: Plugin) -> int:
+    async def run(self, plugin: Plugin, *, agent_run_id: int | None = None) -> int:
         """Verify a plugin against its contract. Returns verification_run.id."""
         now = datetime.now(UTC)
         vr = VerificationRun(
@@ -81,7 +82,9 @@ class PluginEvaluator:
                     "ts": datetime.now(UTC).isoformat(),
                 }
             )
-            return await self._finalise_failed(vr, errors, error_log_path)
+            return await self._finalise_failed(
+                vr, errors, error_log_path, agent_run_id=agent_run_id
+            )
 
         if not contract.test_scenarios:
             errors.append(
@@ -92,7 +95,9 @@ class PluginEvaluator:
                     "ts": datetime.now(UTC).isoformat(),
                 }
             )
-            return await self._finalise_failed(vr, errors, error_log_path)
+            return await self._finalise_failed(
+                vr, errors, error_log_path, agent_run_id=agent_run_id
+            )
 
         # Pre-flight: refuse the whole run if any declared scenario name has
         # no generator. A contract bug is not a plugin bug — staying strict
@@ -107,7 +112,9 @@ class PluginEvaluator:
                         "ts": datetime.now(UTC).isoformat(),
                     }
                 )
-                return await self._finalise_failed(vr, errors, error_log_path)
+                return await self._finalise_failed(
+                    vr, errors, error_log_path, agent_run_id=agent_run_id
+                )
 
         # Load compute() callable from the on-disk plugin.py
         try:
@@ -121,7 +128,9 @@ class PluginEvaluator:
                     "ts": datetime.now(UTC).isoformat(),
                 }
             )
-            return await self._finalise_failed(vr, errors, error_log_path)
+            return await self._finalise_failed(
+                vr, errors, error_log_path, agent_run_id=agent_run_id
+            )
 
         # Build the param-defaults dict once.
         param_defaults = {p.name: p.default for p in contract.params}
@@ -138,10 +147,35 @@ class PluginEvaluator:
             )
             if scenario_errors:
                 errors.extend(scenario_errors)
+                if agent_run_id is not None:
+                    emit_run_event(
+                        agent_run_id,
+                        "scenario_failed",
+                        name=scenario.name,
+                        index=vr.scenarios_run,
+                        total=len(contract.test_scenarios),
+                        invariant_violated=scenario_errors[0].get("invariant_violated"),
+                    )
             else:
                 vr.scenarios_passed += 1
+                if agent_run_id is not None:
+                    emit_run_event(
+                        agent_run_id,
+                        "scenario_passed",
+                        name=scenario.name,
+                        index=vr.scenarios_run,
+                        total=len(contract.test_scenarios),
+                    )
 
         if vr.scenarios_passed == vr.scenarios_run and vr.scenarios_run > 0:
+            if agent_run_id is not None:
+                emit_run_event(
+                    agent_run_id,
+                    "evaluation_done",
+                    scenarios_run=vr.scenarios_run,
+                    scenarios_passed=vr.scenarios_passed,
+                    status="passed",
+                )
             vr.status = "passed"
             vr.ended_at = datetime.now(UTC)
             await self.session.flush()
@@ -165,15 +199,22 @@ class PluginEvaluator:
             return vr.id
 
         # else — failed.
-        return await self._finalise_failed(vr, errors, error_log_path)
+        return await self._finalise_failed(vr, errors, error_log_path, agent_run_id=agent_run_id)
 
     async def _finalise_failed(
         self,
         vr: VerificationRun,
         errors: list[dict[str, Any]],
         error_log_path: Path,
+        *,
+        agent_run_id: int | None = None,
     ) -> int:
-        """Mark the verification run as failed, write the error log, and return its id."""
+        """Mark the verification run as failed, write the error log, and return its id.
+
+        Emits the ``evaluation_done`` summary event so every terminal path — the
+        early contract/scenario/compute failures as well as scenario failures —
+        closes the timeline, not only the scenario-loop-completed path.
+        """
         vr.status = "failed"
         vr.ended_at = datetime.now(UTC)
         error_log_path.parent.mkdir(parents=True, exist_ok=True)
@@ -187,6 +228,14 @@ class PluginEvaluator:
         vr.error_log_path = str(error_log_path)
         await self.session.commit()
         await self.session.refresh(vr)
+        if agent_run_id is not None:
+            emit_run_event(
+                agent_run_id,
+                "evaluation_done",
+                scenarios_run=vr.scenarios_run,
+                scenarios_passed=vr.scenarios_passed,
+                status="failed",
+            )
         return vr.id
 
 
@@ -272,8 +321,7 @@ def _evaluate_scenario(
                     "scenario_name": scenario.name,
                     "invariant_violated": "length_mismatch",
                     "traceback": (
-                        f"output {declared.name!r}: got len={length}, "
-                        f"expected len={expected_len}"
+                        f"output {declared.name!r}: got len={length}, expected len={expected_len}"
                     ),
                     "ts": ts(),
                 }
@@ -286,9 +334,7 @@ def _evaluate_scenario(
         value = output_values[declared.name]
         if value is None:
             continue  # a missing output is already flagged by length_mismatch
-        errors.extend(
-            _value_invariant_errors(value, declared.name, scenario.name, ts)
-        )
+        errors.extend(_value_invariant_errors(value, declared.name, scenario.name, ts))
 
     return errors
 

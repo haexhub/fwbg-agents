@@ -223,8 +223,12 @@ async def test_runner_happy_path_transitions_to_backtested(runner_env):
     assert create[1] == ("demo_orb_v1__it001",)
     assert create[2]["data"] == {"name": "demo_orb_v1"}
     results_path = (
-        tmp_path / "agents_data" / "strategies" / "demo_orb_v1"
-        / "iteration_001" / "fwbg_results.json"
+        tmp_path
+        / "agents_data"
+        / "strategies"
+        / "demo_orb_v1"
+        / "iteration_001"
+        / "fwbg_results.json"
     )
     assert json.loads(results_path.read_text())["status"] == "completed"
 
@@ -354,7 +358,7 @@ async def test_runner_keeps_class_when_symbol_of_same_rung_has_no_data(runner_en
     assert result.universe["label"] == "suggested"
     starts = fake.calls_of("start_run")
     assert len(starts) == 1
-    assert starts[0][2]["assets"] is None          # dataless symbol dropped
+    assert starts[0][2]["assets"] is None  # dataless symbol dropped
     assert starts[0][2]["asset_classes"] == ["FOREX"]  # class portion still ran
 
 
@@ -372,7 +376,7 @@ async def test_runner_falls_back_on_empty_metrics(runner_env):
     assert result.metrics["sharpe"] == 1.5
     assert result.universe["label"] == "class"
     starts = fake.calls_of("start_run")
-    assert starts[0][2]["assets"] == ["EURUSD"]      # attempt 1: suggested
+    assert starts[0][2]["assets"] == ["EURUSD"]  # attempt 1: suggested
     assert starts[1][2]["asset_classes"] == ["FOREX"]  # attempt 2: class
 
 
@@ -491,8 +495,11 @@ async def test_adopts_active_run_of_same_strategy_instead_of_starting(runner_env
     sid = await make_strategy()
     fake = FakeFwbgClient(
         list_runs_response=[
-            {"run_id": "job_external_7", "status": "running",
-             "strategy_name": "demo_orb_v1__it001"},
+            {
+                "run_id": "job_external_7",
+                "status": "running",
+                "strategy_name": "demo_orb_v1__it001",
+            },
         ],
     )
 
@@ -507,8 +514,11 @@ async def test_active_run_of_other_strategy_is_not_adopted(runner_env):
     sid = await make_strategy()
     fake = FakeFwbgClient(
         list_runs_response=[
-            {"run_id": "job_other", "status": "running",
-             "strategy_name": "somebody_elses_strategy"},
+            {
+                "run_id": "job_other",
+                "status": "running",
+                "strategy_name": "somebody_elses_strategy",
+            },
         ],
     )
 

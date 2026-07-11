@@ -129,7 +129,7 @@ async def test_fallback_logs_serving_provider_for_quota(db):
     await client.search("q", session=db, agent_run_id=ar.id)
 
     rows = (
-        await db.execute(select(LlmCall).where(LlmCall.model == "brave-search"))
-    ).scalars().all()
+        (await db.execute(select(LlmCall).where(LlmCall.model == "brave-search"))).scalars().all()
+    )
     assert len(rows) == 1
     assert rows[0].agent_run_id == ar.id

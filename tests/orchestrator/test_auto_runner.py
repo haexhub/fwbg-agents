@@ -37,9 +37,13 @@ async def env(tmp_path, monkeypatch):
         async with Session() as s:
             now = datetime.now(UTC)
             row = Strategy(
-                slug=slug, current_state=state.value, iteration_count=1,
-                asset_class="FOREX", strategy_family="ORB",
-                created_at=now, updated_at=now,
+                slug=slug,
+                current_state=state.value,
+                iteration_count=1,
+                asset_class="FOREX",
+                strategy_family="ORB",
+                created_at=now,
+                updated_at=now,
             )
             s.add(row)
             await s.commit()
@@ -51,12 +55,21 @@ async def env(tmp_path, monkeypatch):
             (it_dir / "strategy.json").write_text(json.dumps({"name": slug}))
         return sid
 
-    async def add_run(agent: str, status: AgentRunStatus, strategy_id: int | None = None,
-                      error: str | None = None):
+    async def add_run(
+        agent: str, status: AgentRunStatus, strategy_id: int | None = None, error: str | None = None
+    ):
         async with Session() as s:
             now = datetime.now(UTC)
-            s.add(AgentRun(agent_name=agent, status=status.value, error=error,
-                           strategy_id=strategy_id, started_at=now, created_at=now))
+            s.add(
+                AgentRun(
+                    agent_name=agent,
+                    status=status.value,
+                    error=error,
+                    strategy_id=strategy_id,
+                    started_at=now,
+                    created_at=now,
+                )
+            )
             await s.commit()
 
     yield Session, make_strategy, add_run
@@ -212,8 +225,7 @@ def _seed_sidecar(slug: str) -> None:
     from fwbg_agents.config import settings
 
     (
-        settings.data_dir / "strategies" / slug / "iteration_001"
-        / "add_indicator_request.json"
+        settings.data_dir / "strategies" / slug / "iteration_001" / "add_indicator_request.json"
     ).write_text(json.dumps({"capability": "pivot zones", "phase": "indicators"}))
 
 
@@ -257,9 +269,7 @@ async def test_pick_next_add_indicator_skips_in_flight_chain(env):
             async with Session() as session:
                 assert await auto_runner.pick_next_add_indicator_pending(session) is None
             async with Session() as s:
-                await s.execute(
-                    AgentRun.__table__.delete().where(AgentRun.strategy_id == sid)
-                )
+                await s.execute(AgentRun.__table__.delete().where(AgentRun.strategy_id == sid))
                 await s.commit()
 
     async with Session() as session:
@@ -297,8 +307,11 @@ async def test_author_and_reiterate_happy_path(env, monkeypatch):
     async with Session() as s:
         now = datetime.now(UTC)
         plugin = Plugin(
-            slug="pivot_zones", current_state=PluginState.VERIFIED.value,
-            kind="indicator", created_at=now, updated_at=now,
+            slug="pivot_zones",
+            current_state=PluginState.VERIFIED.value,
+            kind="indicator",
+            created_at=now,
+            updated_at=now,
         )
         s.add(plugin)
         await s.commit()
@@ -311,7 +324,7 @@ async def test_author_and_reiterate_happy_path(env, monkeypatch):
         calls["author"] = strategy_id
         return plugin_id
 
-    async def fake_evaluate(session, pid):
+    async def fake_evaluate(session, pid, **_kwargs):
         calls["evaluate"] = pid
         return 1
 
@@ -332,6 +345,13 @@ async def test_author_and_reiterate_happy_path(env, monkeypatch):
         "reiterate": (sid, "pivot_zones"),
     }
 
+    # Verified plugin → the evaluator run is DONE.
+    async with Session() as s:
+        ar = (
+            await s.execute(select(AgentRun).where(AgentRun.agent_name == "plugin_evaluator"))
+        ).scalar_one()
+        assert ar.status == AgentRunStatus.DONE.value
+
 
 async def test_author_and_reiterate_stops_when_plugin_unverified(env, monkeypatch):
     from fwbg_agents.persistence.models import Plugin, PluginState
@@ -342,8 +362,11 @@ async def test_author_and_reiterate_stops_when_plugin_unverified(env, monkeypatc
     async with Session() as s:
         now = datetime.now(UTC)
         plugin = Plugin(
-            slug="broken_plugin", current_state=PluginState.AUTHORED.value,
-            kind="indicator", created_at=now, updated_at=now,
+            slug="broken_plugin",
+            current_state=PluginState.AUTHORED.value,
+            kind="indicator",
+            created_at=now,
+            updated_at=now,
         )
         s.add(plugin)
         await s.commit()
@@ -353,7 +376,7 @@ async def test_author_and_reiterate_stops_when_plugin_unverified(env, monkeypatc
     async def fake_author(session, strategy_id):
         return plugin_id
 
-    async def fake_evaluate(session, pid):
+    async def fake_evaluate(session, pid, **_kwargs):
         return 1  # evaluation ran but did not verify
 
     async def fail_reiterate(session, strategy_id, plugin_slug):
@@ -365,6 +388,14 @@ async def test_author_and_reiterate_stops_when_plugin_unverified(env, monkeypatc
 
     async with Session() as session:
         await auto_runner._author_and_reiterate(session, sid)  # must not raise
+
+    # Non-verifying evaluation → the evaluator run is FAILED, not DONE.
+    async with Session() as s:
+        ar = (
+            await s.execute(select(AgentRun).where(AgentRun.agent_name == "plugin_evaluator"))
+        ).scalar_one()
+        assert ar.status == AgentRunStatus.FAILED.value
+        assert ar.error is not None
 
 
 async def _run_analyze_with_fake_analyst(Session, monkeypatch, sid):
@@ -380,7 +411,8 @@ async def _run_analyze_with_fake_analyst(Session, monkeypatch, sid):
 
         async def analyze(self, s):
             return TuneParams(
-                confidence=0.6, reasoning="x",
+                confidence=0.6,
+                reasoning="x",
                 params=[{"param": "sl_mult", "new_range": [1.0, 2.0]}],
             )
 

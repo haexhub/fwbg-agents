@@ -20,7 +20,10 @@ from fwbg_agents.orchestrator.plugin_contract import (
 
 EXAMPLE_PATH = (
     Path(__file__).resolve().parents[2].parent
-    / "fwbg" / "docs" / "specs" / "plugin_contract.example.yaml"
+    / "fwbg"
+    / "docs"
+    / "specs"
+    / "plugin_contract.example.yaml"
 )
 
 
@@ -50,10 +53,18 @@ def test_dump_then_load_equal(tmp_path):
 
 def test_missing_kind_raises(tmp_path):
     bad = tmp_path / "bad.yaml"
-    bad.write_text(yaml.safe_dump({
-        "name": "x", "inputs": [], "outputs": [], "params": [],
-        "invariants": ["dummy"], "test_scenarios": [],
-    }))
+    bad.write_text(
+        yaml.safe_dump(
+            {
+                "name": "x",
+                "inputs": [],
+                "outputs": [],
+                "params": [],
+                "invariants": ["dummy"],
+                "test_scenarios": [],
+            }
+        )
+    )
     with pytest.raises(PluginContractError) as exc:
         load_contract(bad)
     assert "kind" in str(exc.value).lower()
@@ -61,10 +72,19 @@ def test_missing_kind_raises(tmp_path):
 
 def test_bogus_kind_raises(tmp_path):
     bad = tmp_path / "bad.yaml"
-    bad.write_text(yaml.safe_dump({
-        "name": "x", "kind": "bogus", "inputs": [], "outputs": [], "params": [],
-        "invariants": ["dummy"], "test_scenarios": [],
-    }))
+    bad.write_text(
+        yaml.safe_dump(
+            {
+                "name": "x",
+                "kind": "bogus",
+                "inputs": [],
+                "outputs": [],
+                "params": [],
+                "invariants": ["dummy"],
+                "test_scenarios": [],
+            }
+        )
+    )
     with pytest.raises(PluginContractError):
         load_contract(bad)
 
@@ -72,12 +92,19 @@ def test_bogus_kind_raises(tmp_path):
 def test_empty_scenarios_allowed(tmp_path):
     """Some indicators legitimately have no test scenarios — parse must succeed."""
     f = tmp_path / "c.yaml"
-    f.write_text(yaml.safe_dump({
-        "name": "trivial", "kind": "model",
-        "inputs": [{"name": "x", "dtype": "series"}],
-        "outputs": [{"name": "y", "dtype": "scalar"}],
-        "params": [], "invariants": [], "test_scenarios": [],
-    }))
+    f.write_text(
+        yaml.safe_dump(
+            {
+                "name": "trivial",
+                "kind": "model",
+                "inputs": [{"name": "x", "dtype": "series"}],
+                "outputs": [{"name": "y", "dtype": "scalar"}],
+                "params": [],
+                "invariants": [],
+                "test_scenarios": [],
+            }
+        )
+    )
     contract = load_contract(f)
     assert contract.test_scenarios == []
 
@@ -85,12 +112,19 @@ def test_empty_scenarios_allowed(tmp_path):
 def test_indicator_must_have_invariants(tmp_path):
     """An indicator with zero invariants is meaningless — Evaluator has nothing to check."""
     f = tmp_path / "c.yaml"
-    f.write_text(yaml.safe_dump({
-        "name": "i", "kind": "indicator",
-        "inputs": [{"name": "ohlcv", "dtype": "ohlcv"}],
-        "outputs": [{"name": "y", "dtype": "series"}],
-        "params": [], "invariants": [], "test_scenarios": [],
-    }))
+    f.write_text(
+        yaml.safe_dump(
+            {
+                "name": "i",
+                "kind": "indicator",
+                "inputs": [{"name": "ohlcv", "dtype": "ohlcv"}],
+                "outputs": [{"name": "y", "dtype": "series"}],
+                "params": [],
+                "invariants": [],
+                "test_scenarios": [],
+            }
+        )
+    )
     with pytest.raises(PluginContractError) as exc:
         load_contract(f)
     assert "invariant" in str(exc.value).lower()

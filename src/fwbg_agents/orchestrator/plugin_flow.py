@@ -34,7 +34,16 @@ from fwbg_agents.config import settings
 from fwbg_agents.orchestrator.lifecycle import strategy_dir, transition_plugin
 from fwbg_agents.orchestrator.live_catalog import fetch_live_catalog
 from fwbg_agents.orchestrator.plugin_contract import dump_contract
-from fwbg_agents.persistence.agent_runs import fail_agent_run
+from fwbg_agents.persistence.agent_runs import (
+    fail_agent_run,
+)
+from fwbg_agents.persistence.agent_runs import (
+    finish_agent_run as _finish_agent_run,
+)
+from fwbg_agents.persistence.agent_runs import (
+    start_agent_run as _start_agent_run,
+)
+from fwbg_agents.persistence.database import SessionLocal
 from fwbg_agents.persistence.models import (
     AgentRun,
     AgentRunStatus,
@@ -44,6 +53,7 @@ from fwbg_agents.persistence.models import (
     Strategy,
     StrategyState,
 )
+from fwbg_agents.run_events import emit_run_event
 from fwbg_agents.tools.fwbg_client import FwbgClient
 
 log = logging.getLogger(__name__)
@@ -93,50 +103,6 @@ def _find_latest_sidecar(slug: str) -> Path | None:
 def _plugin_dir(slug: str) -> Path:
     """Return the filesystem directory for a plugin's generated artifacts."""
     return settings.data_dir / "plugins" / slug
-
-
-async def _start_agent_run(
-    session: AsyncSession,
-    *,
-    agent_name: str,
-    strategy_id: int,
-    input_artifact_path: str | None,
-) -> AgentRun:
-    """Create and persist a new AgentRun row in RUNNING state."""
-    now = datetime.now(UTC)
-    ar = AgentRun(
-        agent_name=agent_name,
-        status=AgentRunStatus.RUNNING.value,
-        strategy_id=strategy_id,
-        input_artifact_path=input_artifact_path,
-        started_at=now,
-        created_at=now,
-    )
-    session.add(ar)
-    await session.commit()
-    await session.refresh(ar)
-    return ar
-
-
-async def _finish_agent_run(
-    session: AsyncSession,
-    ar: AgentRun,
-    *,
-    status: AgentRunStatus,
-    output_artifact_path: str | None = None,
-    error: str | None = None,
-    plugin_id: int | None = None,
-) -> None:
-    """Update an AgentRun row with final status, end time, and optional output fields."""
-    ar.status = status.value
-    ar.ended_at = datetime.now(UTC)
-    if output_artifact_path is not None:
-        ar.output_artifact_path = output_artifact_path
-    if error is not None:
-        ar.error = error
-    if plugin_id is not None:
-        ar.plugin_id = plugin_id
-    await session.commit()
 
 
 async def _persist_llm_call(
@@ -234,7 +200,11 @@ async def author_plugin_from_strategy(
         try:
             planner = PluginPlanner(model=planner_model)
             planner_result = await planner.run_plan(
-                parent_strategy=strategy, sidecar=sidecar, live=live, client=client
+                parent_strategy=strategy,
+                sidecar=sidecar,
+                live=live,
+                client=client,
+                agent_run_id=planner_ar.id,
             )
         except PluginPlannerError as exc:
             await fail_agent_run(session, planner_ar, exc)
@@ -263,7 +233,7 @@ async def author_plugin_from_strategy(
     )
     try:
         implementer = PluginImplementer(model=implementer_model)
-        impl_result = await implementer.run_implement(plan=plan)
+        impl_result = await implementer.run_implement(plan=plan, agent_run_id=impl_ar.id)
     except PluginImplementerError as exc:
         for meta in exc.llm_calls:
             await _persist_llm_call(session, impl_ar, meta)
@@ -304,9 +274,7 @@ async def author_plugin_from_strategy(
             status=AgentRunStatus.FAILED,
             error=f"slug {output.slug!r} already taken by plugin id={existing.id}",
         )
-        raise PluginAuthorError(
-            f"slug {output.slug!r} already exists as plugin id={existing.id}"
-        )
+        raise PluginAuthorError(f"slug {output.slug!r} already exists as plugin id={existing.id}")
 
     # --- Phase 4: persist artifacts + Plugin row + Transition ----------------
     target_dir = _plugin_dir(output.slug) / "v1"
@@ -360,7 +328,9 @@ async def author_plugin_from_strategy(
     return plugin.id
 
 
-async def evaluate_plugin(session: AsyncSession, plugin_id: int) -> int:
+async def evaluate_plugin(
+    session: AsyncSession, plugin_id: int, *, agent_run_id: int | None = None
+) -> int:
     """Run PluginEvaluator for a plugin in AUTHORED state.
     Returns the verification_run_id.
 
@@ -376,21 +346,22 @@ async def evaluate_plugin(session: AsyncSession, plugin_id: int) -> int:
         raise EvaluatePluginPreconditionError(f"plugin {plugin_id} not found")
     if plugin.current_state != PluginState.AUTHORED.value:
         raise EvaluatePluginPreconditionError(
-            f"plugin {plugin.slug} is in state {plugin.current_state!r}; "
-            "evaluate requires AUTHORED"
+            f"plugin {plugin.slug} is in state {plugin.current_state!r}; evaluate requires AUTHORED"
         )
 
     evaluator = PluginEvaluator(session)
-    vr_id = await evaluator.run(plugin)
+    vr_id = await evaluator.run(plugin, agent_run_id=agent_run_id)
 
     await session.refresh(plugin)
     if plugin.current_state == PluginState.VERIFIED.value:
-        await _register_verified_plugin_in_fwbg(plugin)
+        await _register_verified_plugin_in_fwbg(plugin, agent_run_id=agent_run_id)
 
     return vr_id
 
 
-async def _register_verified_plugin_in_fwbg(plugin: Plugin) -> None:
+async def _register_verified_plugin_in_fwbg(
+    plugin: Plugin, *, agent_run_id: int | None = None
+) -> None:
     """Ship a VERIFIED plugin to fwbg's registry via POST /api/plugins.
 
     Best-effort: logs a warning on failure rather than raising, so a transient
@@ -402,8 +373,17 @@ async def _register_verified_plugin_in_fwbg(plugin: Plugin) -> None:
     except OSError as exc:
         log.warning(
             "register_plugin: cannot read plugin.py for %s at %s: %s",
-            plugin.slug, plugin_code_path, exc,
+            plugin.slug,
+            plugin_code_path,
+            exc,
         )
+        if agent_run_id is not None:
+            emit_run_event(
+                agent_run_id,
+                "plugin_registration_failed",
+                slug=plugin.slug,
+                error=str(exc),
+            )
         return
 
     spec_md = ""
@@ -422,13 +402,29 @@ async def _register_verified_plugin_in_fwbg(plugin: Plugin) -> None:
         )
         log.info(
             "register_plugin: %s registered in fwbg as agent-authored:%s",
-            plugin.slug, plugin.slug,
+            plugin.slug,
+            plugin.slug,
         )
+        if agent_run_id is not None:
+            emit_run_event(
+                agent_run_id,
+                "plugin_registered_in_fwbg",
+                fqn=f"agent-authored:{plugin.slug}",
+                slug=plugin.slug,
+            )
     except Exception as exc:
         log.warning(
             "register_plugin: failed to register %s in fwbg (%s) — best-effort",
-            plugin.slug, exc,
+            plugin.slug,
+            exc,
         )
+        if agent_run_id is not None:
+            emit_run_event(
+                agent_run_id,
+                "plugin_registration_failed",
+                slug=plugin.slug,
+                error=str(exc),
+            )
     finally:
         await client.aclose()
 
@@ -454,9 +450,7 @@ async def reiterate_with_plugin(
         await session.execute(select(Strategy).where(Strategy.id == strategy_id))
     ).scalar_one_or_none()
     if parent is None:
-        raise ReiterateWithPluginPreconditionError(
-            f"strategy {strategy_id} not found"
-        )
+        raise ReiterateWithPluginPreconditionError(f"strategy {strategy_id} not found")
 
     if parent.current_state != StrategyState.BACKTESTED.value:
         raise ReiterateWithPluginPreconditionError(
@@ -468,9 +462,7 @@ async def reiterate_with_plugin(
         await session.execute(select(Plugin).where(Plugin.slug == plugin_slug))
     ).scalar_one_or_none()
     if plugin is None:
-        raise ReiterateWithPluginPreconditionError(
-            f"plugin {plugin_slug!r} not found"
-        )
+        raise ReiterateWithPluginPreconditionError(f"plugin {plugin_slug!r} not found")
     if plugin.current_state != PluginState.VERIFIED.value:
         raise ReiterateWithPluginPreconditionError(
             f"plugin {plugin.slug} is in state {plugin.current_state!r}; "
@@ -511,9 +503,7 @@ async def reiterate_with_plugin(
     return child.id
 
 
-async def lookup_plugin_capability(
-    session: AsyncSession, plugin_id: int
-) -> str | None:
+async def lookup_plugin_capability(session: AsyncSession, plugin_id: int) -> str | None:
     """Read the originating sidecar's `capability` from the plugin_planner AR.
 
     The planner-run carries `input_artifact_path = str(sidecar_path)` and
@@ -541,6 +531,62 @@ async def lookup_plugin_capability(
     return cap if isinstance(cap, str) else None
 
 
+async def resync_verified_plugins() -> None:
+    """Re-register locally VERIFIED plugins that are absent from fwbg's catalog.
+
+    Startup best-effort check: if fwbg was offline when a plugin transitioned
+    to VERIFIED, it never got registered there. This function closes that gap.
+    Controlled by settings.plugin_resync_enabled; no-op when disabled.
+    """
+    if not settings.plugin_resync_enabled:
+        return
+
+    client = FwbgClient(base_url=settings.fwbg_api_url)
+    try:
+        try:
+            remote = await client.get_plugins()
+            registered_slugs = {
+                p["fqn"].split(":", 1)[1]
+                for p in remote
+                if isinstance(p.get("fqn"), str) and p["fqn"].startswith("agent-authored:")
+            }
+        except Exception as exc:
+            log.warning(
+                "resync_verified_plugins: could not fetch fwbg plugin list (%s) — skipping", exc
+            )
+            return
+    finally:
+        await client.aclose()
+
+    async with SessionLocal() as session:
+        verified = (
+            (
+                await session.execute(
+                    select(Plugin).where(Plugin.current_state == PluginState.VERIFIED.value)
+                )
+            )
+            .scalars()
+            .all()
+        )
+
+    missing = [p for p in verified if p.slug not in registered_slugs]
+    if not missing:
+        log.info(
+            "resync_verified_plugins: all %d VERIFIED plugin(s) already registered",
+            len(verified),
+        )
+        return
+
+    log.info(
+        "resync_verified_plugins: %d/%d VERIFIED plugin(s) missing from fwbg — re-registering: %s",
+        len(missing),
+        len(verified),
+        [p.slug for p in missing],
+    )
+    for plugin in missing:
+        await _register_verified_plugin_in_fwbg(plugin)
+
+
 __all__ = [
     "AuthorPluginPreconditionError",
     "EvaluatePluginPreconditionError",
@@ -550,4 +596,5 @@ __all__ = [
     "evaluate_plugin",
     "lookup_plugin_capability",
     "reiterate_with_plugin",
+    "resync_verified_plugins",
 ]

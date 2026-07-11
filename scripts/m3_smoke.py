@@ -45,12 +45,18 @@ async def _wait_for_agent_run(strategy_id: int, agent_name: str, deadline_s: flo
     while time.monotonic() < end:
         async with SessionLocal() as session:
             ar = (
-                await session.execute(
-                    select(AgentRun)
-                    .where(AgentRun.strategy_id == strategy_id, AgentRun.agent_name == agent_name)
-                    .order_by(AgentRun.id.desc())
+                (
+                    await session.execute(
+                        select(AgentRun)
+                        .where(
+                            AgentRun.strategy_id == strategy_id, AgentRun.agent_name == agent_name
+                        )
+                        .order_by(AgentRun.id.desc())
+                    )
                 )
-            ).scalars().first()
+                .scalars()
+                .first()
+            )
             if ar and ar.status in {"done", "failed"}:
                 return ar
         await asyncio.sleep(POLL_INTERVAL_S)
@@ -126,10 +132,7 @@ async def main() -> None:
         r.raise_for_status()
         body = r.json()
         st = body["strategy"]
-        print(
-            f"      → final state={st['current_state']} "
-            f"transitions={len(body['transitions'])}"
-        )
+        print(f"      → final state={st['current_state']} transitions={len(body['transitions'])}")
         for t in body["transitions"]:
             print(f"         {t['from_state']} → {t['to_state']} ({t['reason']!r})")
 

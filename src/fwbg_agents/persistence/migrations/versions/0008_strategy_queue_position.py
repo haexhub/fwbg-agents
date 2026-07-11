@@ -23,9 +23,7 @@ depends_on: str | Sequence[str] | None = None
 
 def upgrade() -> None:
     with op.batch_alter_table("strategy") as batch_op:
-        batch_op.add_column(
-            sa.Column("queue_position", sa.Integer(), nullable=True)
-        )
+        batch_op.add_column(sa.Column("queue_position", sa.Integer(), nullable=True))
 
 
 def downgrade() -> None:

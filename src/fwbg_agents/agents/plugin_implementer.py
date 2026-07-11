@@ -26,6 +26,7 @@ from pydantic_ai.models import Model
 from pydantic_ai.models.anthropic import AnthropicModel
 from pydantic_ai.providers.anthropic import AnthropicProvider
 
+from fwbg_agents.agents.instrumented import run_instrumented
 from fwbg_agents.agents.plugin_authoring_shared import (
     PluginAuthorResult,
     SyntaxCheck,
@@ -33,6 +34,7 @@ from fwbg_agents.agents.plugin_authoring_shared import (
 )
 from fwbg_agents.agents.plugin_planner import LlmCallMeta, PluginPlan
 from fwbg_agents.config import settings
+from fwbg_agents.run_events import emit_run_event
 from fwbg_agents.tools.llm import model_for, prompt_path_for
 
 log = logging.getLogger(__name__)
@@ -329,12 +331,12 @@ class PluginImplementer:
     ) -> None:
         """Initialize."""
         self.model = model if model is not None else model_for("plugin_implementer")
-        self.max_rounds = (
-            max_rounds if max_rounds is not None else settings.plugin_impl_max_rounds
-        )
+        self.max_rounds = max_rounds if max_rounds is not None else settings.plugin_impl_max_rounds
         self.prompt_path = prompt_path or prompt_path_for("plugin_implementer", _PROMPT_PATH)
 
-    async def run_implement(self, *, plan: PluginPlan) -> ImplementerRunResult:
+    async def run_implement(
+        self, *, plan: PluginPlan, agent_run_id: int | None = None
+    ) -> ImplementerRunResult:
         """Run the implement-gate loop and return the first result that passes all gates."""
         try:
             system_prompt = self.prompt_path.read_text(encoding="utf-8")
@@ -349,6 +351,15 @@ class PluginImplementer:
         last_code: str | None = None
         last_err: str | None = None
         llm_calls: list[LlmCallMeta] = []
+
+        def _round_failed(err: str) -> None:
+            if agent_run_id is not None:
+                emit_run_event(
+                    agent_run_id,
+                    "implementer_round_failed",
+                    round=round_idx,
+                    error=err,
+                )
 
         for round_idx in range(1, self.max_rounds + 1):
             user_prompt = _render_implementer_prompt(
@@ -366,7 +377,15 @@ class PluginImplementer:
 
             t0 = time.monotonic()
             try:
-                result = await agent.run(user_prompt)
+                if agent_run_id is not None:
+                    result = await run_instrumented(
+                        agent,
+                        user_prompt,
+                        agent_run_id=agent_run_id,
+                        round_idx=round_idx,
+                    )
+                else:
+                    result = await agent.run(user_prompt)
             except (ValidationError, UnexpectedModelBehavior) as exc:
                 latency_ms = int((time.monotonic() - t0) * 1000)
                 llm_calls.append(
@@ -379,6 +398,7 @@ class PluginImplementer:
                 )
                 last_err = f"output schema validation failed: {exc}"
                 # `last_code` stays whatever it was — the LLM didn't give us new code.
+                _round_failed(last_err)
                 continue
 
             latency_ms = int((time.monotonic() - t0) * 1000)
@@ -399,21 +419,21 @@ class PluginImplementer:
             if not syntax.ok:
                 last_code = code
                 last_err = f"SyntaxError L{syntax.line}: {syntax.msg}"
+                _round_failed(last_err)
                 continue
 
             check = contract_check(code, plan)
             if not check.ok:
                 last_code = code
                 last_err = f"ContractError: {check.msg}"
+                _round_failed(last_err)
                 continue
 
             # Also verify the LLM-emitted slug matches the plan's slug.
             if output.slug != plan.slug:
                 last_code = code
-                last_err = (
-                    f"slug mismatch: plan.slug={plan.slug!r}, "
-                    f"output.slug={output.slug!r}"
-                )
+                last_err = f"slug mismatch: plan.slug={plan.slug!r}, output.slug={output.slug!r}"
+                _round_failed(last_err)
                 continue
 
             log.info(
