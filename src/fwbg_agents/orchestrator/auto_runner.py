@@ -526,8 +526,7 @@ async def _analyze_and_apply(session: AsyncSession, sid: int) -> None:
                 return
             except Exception:
                 log.exception(
-                    "runner auto mode: abandon override failed for %s"
-                    " — falling through to abandon",
+                    "runner auto mode: abandon override failed for %s — falling through to abandon",
                     s.slug,
                 )
 
