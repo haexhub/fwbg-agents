@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.18.0](https://github.com/haexhub/fwbg-agents/compare/v0.17.1...v0.18.0) (2026-07-10)
+
+
+### Features
+
+* **orchestrator:** enforce minimum iterations before strategy abandon ([063a120](https://github.com/haexhub/fwbg-agents/commit/063a1208d05583484e5da9e89fe4114975d5db81))
+* **orchestrator:** enforce minimum iterations before strategy abandon ([3f33967](https://github.com/haexhub/fwbg-agents/commit/3f33967a1008a5b57bb85dcb2bf0c237fa80a03f))
+
+
+### Bug Fixes
+
+* **lint:** split long log strings in auto_runner to satisfy E501 ([959bd19](https://github.com/haexhub/fwbg-agents/commit/959bd193a1a60309a2e766f5660f9f40ac9e9f20))
+
 ## [0.17.1](https://github.com/haexhub/fwbg-agents/compare/v0.17.0...v0.17.1) (2026-07-10)
 
 
