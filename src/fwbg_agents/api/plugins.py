@@ -29,6 +29,7 @@ from fwbg_agents.persistence.agent_runs import (
     fail_agent_run,
     finish_agent_run,
     start_agent_run,
+    use_parent_run,
 )
 from fwbg_agents.persistence.database import SessionLocal, get_session
 from fwbg_agents.persistence.models import (
@@ -171,7 +172,8 @@ async def _run_author_background(strategy_id: int, agent_run_id: int) -> None:
         ar.status = AgentRunStatus.RUNNING.value
         await session.commit()
         try:
-            plugin_id = await author_plugin_from_strategy(session, strategy_id)
+            with use_parent_run(agent_run_id):
+                plugin_id = await author_plugin_from_strategy(session, strategy_id)
             plugin = (
                 await session.execute(select(Plugin).where(Plugin.id == plugin_id))
             ).scalar_one()
@@ -317,7 +319,8 @@ async def _run_reiterate_with_plugin_background(
         ar.status = AgentRunStatus.RUNNING.value
         await session.commit()
         try:
-            child_id = await reiterate_with_plugin(session, strategy_id, plugin_slug)
+            with use_parent_run(agent_run_id):
+                child_id = await reiterate_with_plugin(session, strategy_id, plugin_slug)
             child = (
                 await session.execute(select(Strategy).where(Strategy.id == child_id))
             ).scalar_one()
