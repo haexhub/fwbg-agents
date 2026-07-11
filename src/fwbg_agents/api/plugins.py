@@ -204,12 +204,16 @@ async def _run_evaluator_background(plugin_id: int, agent_run_id: int) -> None:
                     select(VerificationRun).where(VerificationRun.id == vr_id)
                 )
             ).scalar_one()
+            # A non-verifying evaluation is a failed run (evaluator ran but
+            # rejected the plugin), not a success — mirror the auto-runner path.
+            verified = vr.status == "passed"
             await finish_agent_run(
                 session,
                 ar,
-                status=AgentRunStatus.DONE,
+                status=AgentRunStatus.DONE if verified else AgentRunStatus.FAILED,
                 plugin_id=plugin_id,
                 output_artifact_path=vr.error_log_path,  # None on success
+                error=None if verified else "plugin did not verify",
             )
         except Exception as exc:
             log.exception("evaluate background task failed (agent_run %s)", agent_run_id)

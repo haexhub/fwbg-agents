@@ -313,12 +313,22 @@ async def _author_and_reiterate(session: AsyncSession, sid: int) -> None:
         )
         await fail_agent_run(session, eval_ar, exc)
         return
-    await finish_agent_run(session, eval_ar, status=AgentRunStatus.DONE, plugin_id=plugin_id)
-
     plugin = (
         await session.execute(select(Plugin).where(Plugin.id == plugin_id))
     ).scalar_one()
-    if plugin.current_state != PluginState.VERIFIED.value:
+    verified = plugin.current_state == PluginState.VERIFIED.value
+    # A non-verifying evaluation is a failed run, not a success: the evaluator
+    # ran but rejected the plugin. Mark it FAILED so the runs list surfaces the
+    # rejection instead of a misleading DONE (a genuine evaluator crash is
+    # already handled above via fail_agent_run).
+    await finish_agent_run(
+        session,
+        eval_ar,
+        status=AgentRunStatus.DONE if verified else AgentRunStatus.FAILED,
+        plugin_id=plugin_id,
+        error=None if verified else f"plugin did not verify (state={plugin.current_state})",
+    )
+    if not verified:
         log.warning(
             "runner auto mode: plugin %s did not verify (state=%s); "
             "strategy %s stays in BACKTESTED",

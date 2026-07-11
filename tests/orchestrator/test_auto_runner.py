@@ -332,6 +332,15 @@ async def test_author_and_reiterate_happy_path(env, monkeypatch):
         "reiterate": (sid, "pivot_zones"),
     }
 
+    # Verified plugin → the evaluator run is DONE.
+    async with Session() as s:
+        ar = (
+            await s.execute(
+                select(AgentRun).where(AgentRun.agent_name == "plugin_evaluator")
+            )
+        ).scalar_one()
+        assert ar.status == AgentRunStatus.DONE.value
+
 
 async def test_author_and_reiterate_stops_when_plugin_unverified(env, monkeypatch):
     from fwbg_agents.persistence.models import Plugin, PluginState
@@ -365,6 +374,16 @@ async def test_author_and_reiterate_stops_when_plugin_unverified(env, monkeypatc
 
     async with Session() as session:
         await auto_runner._author_and_reiterate(session, sid)  # must not raise
+
+    # Non-verifying evaluation → the evaluator run is FAILED, not DONE.
+    async with Session() as s:
+        ar = (
+            await s.execute(
+                select(AgentRun).where(AgentRun.agent_name == "plugin_evaluator")
+            )
+        ).scalar_one()
+        assert ar.status == AgentRunStatus.FAILED.value
+        assert ar.error is not None
 
 
 async def _run_analyze_with_fake_analyst(Session, monkeypatch, sid):
