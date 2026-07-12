@@ -141,8 +141,8 @@ async def _run_analyst_background(strategy_id: int) -> None:
 async def get_runner_auto() -> dict[str, Any]:
     """Current state of the Runner auto mode (persisted flags)."""
     return {
-        "enabled": auto_runner.is_enabled(),
-        "pipeline_min_proposed": auto_runner.get_pipeline_min_proposed(),
+        "enabled": await auto_runner.is_enabled(),
+        "pipeline_min_proposed": await auto_runner.get_pipeline_min_proposed(),
     }
 
 
@@ -157,12 +157,12 @@ class RunnerAutoUpdate(BaseModel):
 async def put_runner_auto(body: RunnerAutoUpdate) -> dict[str, Any]:
     """Update Runner auto mode settings. Any omitted field is left unchanged."""
     if body.enabled is not None:
-        auto_runner.set_enabled(body.enabled)
+        await auto_runner.set_enabled(body.enabled)
     if body.pipeline_min_proposed is not None:
-        auto_runner.set_pipeline_min_proposed(body.pipeline_min_proposed)
+        await auto_runner.set_pipeline_min_proposed(body.pipeline_min_proposed)
     return {
-        "enabled": auto_runner.is_enabled(),
-        "pipeline_min_proposed": auto_runner.get_pipeline_min_proposed(),
+        "enabled": await auto_runner.is_enabled(),
+        "pipeline_min_proposed": await auto_runner.get_pipeline_min_proposed(),
     }
 
 
