@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.21.0](https://github.com/haexhub/fwbg-agents/compare/v0.20.0...v0.21.0) (2026-07-12)
+
+
+### Features
+
+* **persistence:** store runner auto-mode state in state.db ([beb9c42](https://github.com/haexhub/fwbg-agents/commit/beb9c42ebca187c703ea2b2ddda5ac31fcc100c1))
+* **persistence:** store runner auto-mode state in state.db instead of JSON file ([e15450d](https://github.com/haexhub/fwbg-agents/commit/e15450d3ea3aab61a635df4280d2a93ac4ae275d))
+
 ## [0.20.0](https://github.com/haexhub/fwbg-agents/compare/v0.19.0...v0.20.0) (2026-07-12)
 
 
