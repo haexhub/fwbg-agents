@@ -1,3 +1,3 @@
 """fwbg-agents: autonomous strategy research, evaluation, and trading."""
 
-__version__ = "0.20.0"
+__version__ = "0.21.0"
