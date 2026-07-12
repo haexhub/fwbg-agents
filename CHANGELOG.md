@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.22.1](https://github.com/haexhub/fwbg-agents/compare/v0.22.0...v0.22.1) (2026-07-12)
+
+
+### Bug Fixes
+
+* **auto-repair:** bypass BACKTESTED gate and resolve dependency section ([99f21da](https://github.com/haexhub/fwbg-agents/commit/99f21da1b98cf0d2ff21b9a5beba53a297a61f5c))
+* **runner:** surface fwbg per-asset errors and auto-repair missing plugin deps ([38930de](https://github.com/haexhub/fwbg-agents/commit/38930de551d1fc56cc79e359af3ca533efc21514))
+* **runner:** surface fwbg per-asset errors and auto-repair missing plugin deps ([24811b0](https://github.com/haexhub/fwbg-agents/commit/24811b0035120c815f268107d1a3c443a66cd2de))
+
 ## [0.22.0](https://github.com/haexhub/fwbg-agents/compare/v0.21.1...v0.22.0) (2026-07-12)
 
 
