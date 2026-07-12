@@ -39,9 +39,14 @@ from fwbg_agents.agents.analyst import (
 )
 from fwbg_agents.agents.researcher import ResearcherInput
 from fwbg_agents.agents.runner import Runner
+from fwbg_agents.agents.translator import Translator
 from fwbg_agents.config import settings
 from fwbg_agents.orchestrator.lifecycle import strategy_dir, transition_strategy
-from fwbg_agents.orchestrator.lineage import generation_depth
+from fwbg_agents.orchestrator.lineage import (
+    family_strategies,
+    generation_depth,
+    has_metric_improvement,
+)
 from fwbg_agents.orchestrator.plugin_flow import (
     PluginAuthorError,
     _find_latest_sidecar,
@@ -50,7 +55,11 @@ from fwbg_agents.orchestrator.plugin_flow import (
     reiterate_with_plugin,
 )
 from fwbg_agents.orchestrator.recommendations import validate_and_apply
-from fwbg_agents.orchestrator.research_flow import reiterate, research_and_translate
+from fwbg_agents.orchestrator.research_flow import (
+    publish_strategy_to_fwbg,
+    reiterate,
+    research_and_translate,
+)
 from fwbg_agents.orchestrator.run_janitor import ORPHAN_ERROR, TRANSIENT_ERROR
 from fwbg_agents.persistence.agent_runs import (
     fail_agent_run,
@@ -366,9 +375,29 @@ async def abandon_capped_proposed(session: AsyncSession) -> int:
     )
     abandoned = 0
     for s in proposed:
-        failed = await _genuine_failed_attempts(session, "runner", s.id)
-        if failed < settings.runner_auto_max_attempts:
-            continue
+        has_strategy_json = (strategy_dir(s.slug) / "iteration_001" / "strategy.json").is_file()
+
+        if has_strategy_json:
+            failed = await _genuine_failed_attempts(session, "runner", s.id)
+            cap = settings.runner_auto_max_attempts
+            if failed < cap:
+                continue
+            reason = f"auto: exceeded backtest retry cap ({failed} attempts)"
+            summary = (
+                f"Auto-abandoned: {failed} backtest attempts failed "
+                f"(cap={cap}); never reached a state the Analyst could evaluate."
+            )
+        else:
+            failed = await _genuine_failed_attempts(session, "translator", s.id)
+            cap = settings.translator_auto_max_attempts
+            if failed < cap:
+                continue
+            reason = f"auto: exceeded translator retry cap ({failed} attempts)"
+            summary = (
+                f"Auto-abandoned: {failed} translator attempts failed "
+                f"(cap={cap}); strategy.json was never produced."
+            )
+
         pm_path = strategy_dir(s.slug) / "post_mortem.yaml"
         pm_path.parent.mkdir(parents=True, exist_ok=True)
         pm_path.write_text(
@@ -377,11 +406,7 @@ async def abandon_capped_proposed(session: AsyncSession) -> int:
                     "slug": s.slug,
                     "asset_class": s.asset_class,
                     "strategy_family": s.strategy_family,
-                    "summary": (
-                        f"Auto-abandoned: {failed} backtest attempts failed "
-                        f"(cap={settings.runner_auto_max_attempts}); never reached "
-                        "a state the Analyst could evaluate."
-                    ),
+                    "summary": summary,
                     "written_at": datetime.now(UTC).isoformat(),
                 },
                 sort_keys=False,
@@ -392,19 +417,71 @@ async def abandon_capped_proposed(session: AsyncSession) -> int:
                 session,
                 s,
                 StrategyState.ABANDONED,
-                reason=f"auto: exceeded backtest retry cap ({failed} attempts)",
+                reason=reason,
                 payload={"post_mortem_path": str(pm_path)},
                 created_by="auto_runner",
             )
             abandoned += 1
-            log.info(
-                "runner auto mode: abandoned capped strategy %s (%d failed backtests)",
-                s.id,
-                failed,
-            )
+            log.info("runner auto mode: abandoned capped strategy %s (%s)", s.id, reason)
         except Exception:
             log.exception("runner auto mode: could not abandon capped strategy %s", s.id)
     return abandoned
+
+
+async def pick_next_untranslated_proposed(session: AsyncSession) -> int | None:
+    """Oldest PROPOSED strategy that has a hypothesis.json but no strategy.json,
+    with translator retries still available and no in-flight translator run.
+
+    These are strategies where the research succeeded but the Translator crashed
+    or produced an invalid strategy.json. The LLM is non-deterministic so a
+    retry may succeed.
+    """
+    proposed = (
+        (
+            await session.execute(
+                select(Strategy)
+                .where(Strategy.current_state == StrategyState.PROPOSED.value)
+                .order_by(Strategy.created_at)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    for s in proposed:
+        if (strategy_dir(s.slug) / "iteration_001" / "strategy.json").is_file():
+            continue
+        if not (strategy_dir(s.slug) / "iteration_001" / "hypothesis.json").is_file():
+            continue
+        failed = await _genuine_failed_attempts(session, "translator", s.id)
+        if failed >= settings.translator_auto_max_attempts:
+            continue
+        in_flight = await _count_runs(
+            session,
+            "translator",
+            strategy_id=s.id,
+            statuses=_IN_FLIGHT_STATUSES,
+        )
+        if in_flight:
+            continue
+        return s.id
+    return None
+
+
+async def _retranslate(session: AsyncSession, sid: int) -> None:
+    """Retry Translator.run_fresh on a PROPOSED strategy whose previous
+    translation failed. The hypothesis.json is already on disk; a new
+    translator AgentRun is created automatically by the Translator agent."""
+    s = (await session.execute(select(Strategy).where(Strategy.id == sid))).scalar_one()
+    client = FwbgClient(base_url=settings.fwbg_api_url)
+    try:
+        translator = Translator(session, fwbg_client=client)
+        strategy_path = await translator.run_fresh(s)
+        await publish_strategy_to_fwbg(session, s, strategy_path, fwbg_client=client)
+        log.info("runner auto mode: retranslation succeeded for strategy %s", sid)
+    except Exception:
+        log.exception("runner auto mode: retranslation failed for strategy %s", sid)
+    finally:
+        await client.aclose()
 
 
 def _synthesize_abandon_override_sidecar(slug: str, analyst_reasoning: str) -> dict:
@@ -468,18 +545,42 @@ async def _analyze_and_apply(session: AsyncSession, sid: int) -> None:
             if isinstance(v, (int, float))
         }
 
-    # Hard guard: if Analyst recommends abandon before min_iterations_before_abandon,
-    # override with a synthetic tune_params iteration so the strategy family gets
-    # at least one chance to improve before being discarded.
+    # Guard: override an Abandon recommendation when the strategy has not had a
+    # fair chance yet.  Two independent conditions both trigger the same override:
+    # (A) depth < min_iterations_before_abandon — too few iterations regardless
+    #     of trend; and
+    # (B) at least one core metric (Sharpe, profit_factor) is still improving
+    #     across recent iterations — the strategy has momentum worth following.
     if isinstance(rec, Abandon):
         depth = await generation_depth(session, s)
+        override_reason: str | None = None
         if depth < settings.min_iterations_before_abandon:
+            override_reason = (
+                f"depth={depth} < min_iterations_before_abandon="
+                f"{settings.min_iterations_before_abandon}"
+            )
+        else:
+            family = await family_strategies(session, s)
+            metrics_history: list[dict] = []
+            for member in family:
+                rp = strategy_dir(member.slug) / "iteration_001" / "fwbg_results.json"
+                if rp.is_file():
+                    try:
+                        metrics_history.append(
+                            _best_symbol_metrics_from_results(json.loads(rp.read_text()))
+                        )
+                    except Exception:
+                        metrics_history.append({})
+                else:
+                    metrics_history.append({})
+            if has_metric_improvement(metrics_history):
+                override_reason = "core metrics still improving across recent iterations"
+
+        if override_reason:
             log.info(
-                "runner auto mode: overriding early abandon for strategy %s "
-                "(depth=%d < min_iterations_before_abandon=%d) — forcing tune_params",
+                "runner auto mode: overriding abandon for strategy %s (%s) — forcing tune_params",
                 s.slug,
-                depth,
-                settings.min_iterations_before_abandon,
+                override_reason,
             )
             try:
                 sidecar_data = _synthesize_abandon_override_sidecar(s.slug, rec.reasoning)
@@ -490,7 +591,7 @@ async def _analyze_and_apply(session: AsyncSession, sid: int) -> None:
                 )
                 child_id = await reiterate(session, sid)
                 log.info(
-                    "runner auto mode: early-abandon override — "
+                    "runner auto mode: abandon override — "
                     "iteration queued as strategy %d (parent %s)",
                     child_id,
                     s.slug,
@@ -498,8 +599,7 @@ async def _analyze_and_apply(session: AsyncSession, sid: int) -> None:
                 return
             except Exception:
                 log.exception(
-                    "runner auto mode: early-abandon override failed for %s"
-                    " — falling through to abandon",
+                    "runner auto mode: abandon override failed for %s — falling through to abandon",
                     s.slug,
                 )
 
@@ -601,6 +701,17 @@ async def tick() -> int | None:
             await _author_and_reiterate(session, pending)
         return pending
 
+    # Last resort: retry translation for PROPOSED strategies that have a
+    # hypothesis but no strategy.json (prior translator run failed). The LLM
+    # is non-deterministic — a retry may produce a valid result.
+    async with SessionLocal() as session:
+        pending = await pick_next_untranslated_proposed(session)
+    if pending is not None:
+        log.info("runner auto mode: retrying translator for strategy %s", pending)
+        async with SessionLocal() as session:
+            await _retranslate(session, pending)
+        return pending
+
     return None
 
 
@@ -627,14 +738,26 @@ async def _active_strategy_count(session: AsyncSession) -> int:
     add_indicator waiting on plugin author, or ChangeExit with null new_exit_strategy).
     Counting them would permanently block the pipeline-fill trigger and prevent new
     research from starting.
+
+    PROPOSED strategies without a strategy.json are also excluded: the runner
+    will never pick them up, and they are either being retried by the
+    retranslation path (tracked separately by _research_is_busy) or exhausted
+    and due for abandonment. Counting them as active would starve fresh research.
     """
-    proposed = (
-        await session.execute(
-            select(func.count())
-            .select_from(Strategy)
-            .where(Strategy.current_state == StrategyState.PROPOSED.value)
+    proposed_rows = (
+        (
+            await session.execute(
+                select(Strategy).where(Strategy.current_state == StrategyState.PROPOSED.value)
+            )
         )
-    ).scalar_one()
+        .scalars()
+        .all()
+    )
+    proposed = sum(
+        1
+        for s in proposed_rows
+        if (strategy_dir(s.slug) / "iteration_001" / "strategy.json").is_file()
+    )
 
     analyzed_ids = select(AgentRun.strategy_id).where(
         AgentRun.agent_name == "analyst",

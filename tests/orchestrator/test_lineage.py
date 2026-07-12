@@ -13,6 +13,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from fwbg_agents.orchestrator.lineage import (
     family_strategies,
     generation_depth,
+    has_metric_improvement,
     render_family_history,
 )
 from fwbg_agents.persistence.database import Base
@@ -176,3 +177,66 @@ async def test_render_family_history_first_iteration(chain):
 
     assert depth == 1
     assert history == "(first iteration — no prior family history)"
+
+
+# ---------------------------------------------------------------------------
+# has_metric_improvement
+# ---------------------------------------------------------------------------
+
+
+def test_has_metric_improvement_rising_sharpe():
+    history = [{"sharpe": 0.5}, {"sharpe": 0.8}, {"sharpe": 1.1}]
+    assert has_metric_improvement(history) is True
+
+
+def test_has_metric_improvement_rising_profit_factor():
+    history = [{"profit_factor": 1.0}, {"profit_factor": 1.2}, {"profit_factor": 1.5}]
+    assert has_metric_improvement(history) is True
+
+
+def test_has_metric_improvement_falling():
+    history = [{"sharpe": 1.5}, {"sharpe": 1.0}, {"sharpe": 0.5}]
+    assert has_metric_improvement(history) is False
+
+
+def test_has_metric_improvement_flat():
+    history = [{"sharpe": 1.0}, {"sharpe": 1.0}, {"sharpe": 1.0}]
+    assert has_metric_improvement(history) is False
+
+
+def test_has_metric_improvement_single_entry():
+    assert has_metric_improvement([{"sharpe": 2.0}]) is False
+
+
+def test_has_metric_improvement_empty():
+    assert has_metric_improvement([]) is False
+
+
+def test_has_metric_improvement_fewer_entries_than_lookback():
+    # Only 2 entries, lookback=3 — still works with what's there.
+    history = [{"sharpe": 0.3}, {"sharpe": 0.9}]
+    assert has_metric_improvement(history, lookback=3) is True
+
+
+def test_has_metric_improvement_missing_metrics():
+    # Neither key present in any entry → no numeric values → False.
+    history = [{"win_rate": 0.4}, {"win_rate": 0.6}, {"win_rate": 0.8}]
+    assert has_metric_improvement(history) is False
+
+
+def test_has_metric_improvement_partial_missing():
+    # sharpe missing in some entries; profit_factor present and rising.
+    history = [{"profit_factor": 1.0}, {"win_rate": 0.5}, {"profit_factor": 1.4}]
+    assert has_metric_improvement(history) is True
+
+
+def test_has_metric_improvement_uses_lookback_window():
+    # Oldest entries show improvement but the recent window (last 2) is flat.
+    history = [
+        {"sharpe": 0.1},
+        {"sharpe": 0.9},
+        {"sharpe": 1.0},
+        {"sharpe": 1.0},
+    ]
+    assert has_metric_improvement(history, lookback=2) is False
+    assert has_metric_improvement(history, lookback=4) is True
