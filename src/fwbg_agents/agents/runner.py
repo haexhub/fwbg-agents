@@ -103,11 +103,7 @@ _DEP_ERROR_RE = re.compile(
 def _asset_error_symbols(run_data: dict[str, Any]) -> list[str]:
     """Symbols whose per-asset backtest fwbg marked as errored."""
     assets = run_data.get("assets") or {}
-    return [
-        sym
-        for sym, a in assets.items()
-        if isinstance(a, dict) and a.get("status") == "error"
-    ]
+    return [sym for sym, a in assets.items() if isinstance(a, dict) and a.get("status") == "error"]
 
 
 def _parse_dependency_error(messages: list[str]) -> tuple[str, str] | None:
@@ -279,9 +275,7 @@ class Runner:
                             )
                         last_reason = f"attempt {attempt.label!r}: {detail}"
                     else:
-                        last_reason = (
-                            f"attempt {attempt.label!r} completed but produced no metrics"
-                        )
+                        last_reason = f"attempt {attempt.label!r} completed but produced no metrics"
                     log.info("runner: %s; falling back", last_reason)
                     continue
 

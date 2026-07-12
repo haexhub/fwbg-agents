@@ -635,6 +635,21 @@ async def _analyze_and_apply(session: AsyncSession, sid: int) -> None:
             log.exception("runner auto mode: reiterate failed for strategy %s", sid)
 
 
+def _dependent_pipeline_section(strategy_json: dict, dependent: str) -> str:
+    """The inline-pipeline section that holds `dependent`, so the missing
+    dependency is inserted into the same section (where `before` resolves).
+
+    Falls back to "indicators" — the common case and the section a legacy
+    top-level slug-list pipeline maps to."""
+    pipeline = strategy_json.get("pipeline")
+    if isinstance(pipeline, dict):
+        for section in ("indicators", "preprocessing", "feature_selection"):
+            entries = pipeline.get(section) or []
+            if any(isinstance(e, dict) and e.get("name") == dependent for e in entries):
+                return section
+    return "indicators"
+
+
 async def _repair_and_reiterate(session: AsyncSession, sid: int, err: RunnerConfigError) -> None:
     """Auto-repair a strategy whose backtest failed on a missing pipeline
     dependency by reiterating a child with the dependency inserted.
@@ -661,12 +676,18 @@ async def _repair_and_reiterate(session: AsyncSession, sid: int, err: RunnerConf
 
     iteration_dir = strategy_dir(s.slug) / "iteration_001"
     iteration_dir.mkdir(parents=True, exist_ok=True)
+    strategy_path = iteration_dir / "strategy.json"
+    try:
+        strategy_json = json.loads(strategy_path.read_text())
+    except (OSError, json.JSONDecodeError):
+        strategy_json = {}
+    section = _dependent_pipeline_section(strategy_json, err.dependent)
     sidecar = {
         "kind": "modify_plugins",
         "ops": [
             {
                 "action": "add",
-                "section": "indicators",
+                "section": section,
                 "slug": err.dependency,
                 "params": {},
                 "before": err.dependent,
@@ -682,7 +703,9 @@ async def _repair_and_reiterate(session: AsyncSession, sid: int, err: RunnerConf
     (iteration_dir / "analyst_recommendation.json").write_text(json.dumps(sidecar, indent=2))
 
     try:
-        child_id = await reiterate(session, sid)
+        # repair=True: the parent is still PROPOSED (its backtest failed), so
+        # bypass reiterate's BACKTESTED precondition for this corrective child.
+        child_id = await reiterate(session, sid, repair=True)
     except Exception:
         log.exception("runner auto mode: auto-repair reiterate failed for strategy %s", sid)
         return
@@ -767,8 +790,7 @@ async def tick() -> int | None:
                 # retries on the same broken file until the cap abandons it.
                 config_error = exc
                 log.warning(
-                    "runner auto mode: backtest for strategy %s hit a fixable "
-                    "config error: %s",
+                    "runner auto mode: backtest for strategy %s hit a fixable config error: %s",
                     sid,
                     exc,
                 )

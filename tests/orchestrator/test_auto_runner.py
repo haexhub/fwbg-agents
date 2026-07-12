@@ -418,7 +418,7 @@ async def _run_analyze_with_fake_analyst(Session, monkeypatch, sid):
 
     reiterated: list[int] = []
 
-    async def fake_reiterate(session, strategy_id):
+    async def fake_reiterate(session, strategy_id, **kwargs):
         reiterated.append(strategy_id)
         return 999
 
@@ -490,7 +490,7 @@ async def _run_analyze_with_abandon(Session, monkeypatch, sid):
 
     reiterated: list[int] = []
 
-    async def fake_reiterate(session, strategy_id):
+    async def fake_reiterate(session, strategy_id, **kwargs):
         reiterated.append(strategy_id)
         return 999
 
@@ -605,7 +605,7 @@ async def test_tick_auto_repairs_missing_dependency(env, monkeypatch):
 
     reiterated: list[int] = []
 
-    async def fake_reiterate(session, strategy_id):
+    async def fake_reiterate(session, strategy_id, **kwargs):
         reiterated.append(strategy_id)
         return 999
 
@@ -641,9 +641,7 @@ async def test_tick_auto_repairs_missing_dependency(env, monkeypatch):
     # The broken parent is superseded so the auto-runner will not re-backtest it
     # (which would spawn duplicate repair children).
     async with Session() as session:
-        parent = (
-            await session.execute(select(Strategy).where(Strategy.id == sid))
-        ).scalar_one()
+        parent = (await session.execute(select(Strategy).where(Strategy.id == sid))).scalar_one()
     assert parent.current_state == StrategyState.ABANDONED.value
 
 
@@ -657,7 +655,7 @@ async def test_auto_repair_skipped_at_max_depth(env, monkeypatch):
 
     reiterated: list[int] = []
 
-    async def fake_reiterate(session, strategy_id):
+    async def fake_reiterate(session, strategy_id, **kwargs):
         reiterated.append(strategy_id)
         return 999
 
@@ -673,7 +671,23 @@ async def test_auto_repair_skipped_at_max_depth(env, monkeypatch):
 
     assert reiterated == []  # no repair attempted
     async with Session() as session:
-        parent = (
-            await session.execute(select(Strategy).where(Strategy.id == sid))
-        ).scalar_one()
+        parent = (await session.execute(select(Strategy).where(Strategy.id == sid))).scalar_one()
     assert parent.current_state == StrategyState.PROPOSED.value  # left for the retry cap
+
+
+def test_dependent_pipeline_section_resolves_from_parent_pipeline():
+    """The missing dependency is inserted into the same section that holds the
+    dependent — resolved from the parent's own inline pipeline."""
+    strategy_json = {
+        "pipeline": {
+            "indicators": [{"name": "opening_range"}],
+            "feature_selection": [{"name": "some_selector"}],
+        }
+    }
+    assert auto_runner._dependent_pipeline_section(strategy_json, "some_selector") == (
+        "feature_selection"
+    )
+    assert auto_runner._dependent_pipeline_section(strategy_json, "opening_range") == "indicators"
+    # Unknown dependent / non-inline pipeline → safe default.
+    assert auto_runner._dependent_pipeline_section(strategy_json, "mystery") == "indicators"
+    assert auto_runner._dependent_pipeline_section({}, "regime_cluster") == "indicators"

@@ -333,12 +333,16 @@ async def reiterate(
     *,
     model: Model | None = None,
     fwbg_client: FwbgClient | None = None,
+    repair: bool = False,
 ) -> int:
     """Apply Analyst sidecar to create a child Strategy. Returns child id.
 
     Preconditions (raise `ReiteratePreconditionError`):
     - Parent must exist.
-    - Parent must be in BACKTESTED state.
+    - Parent must be in BACKTESTED state — UNLESS `repair=True`, the auto-repair
+      path for a strategy whose backtest failed on a fixable config error (it is
+      still PROPOSED, never reached BACKTESTED). The synthesized sidecar only
+      corrects the pipeline; every other precondition still applies.
     - Parent must be below `settings.reiterate_max_depth` in its chain.
     - Parent must have an `analyst_recommendation.json` sidecar at
       `data/strategies/<slug>/iteration_001/`.
@@ -349,7 +353,7 @@ async def reiterate(
     if parent is None:
         raise ReiteratePreconditionError(f"parent strategy {parent_id} not found")
 
-    if parent.current_state != StrategyState.BACKTESTED.value:
+    if not repair and parent.current_state != StrategyState.BACKTESTED.value:
         raise ReiteratePreconditionError(
             f"parent {parent.slug} is in state {parent.current_state!r}; "
             "reiterate requires BACKTESTED"
