@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.20.0](https://github.com/haexhub/fwbg-agents/compare/v0.19.0...v0.20.0) (2026-07-12)
+
+
+### Features
+
+* **auto-runner:** override abandon when core metrics still improving ([1b783e0](https://github.com/haexhub/fwbg-agents/commit/1b783e09b12a1ac2b831b0137947a7482b6f3c8e))
+* **auto-runner:** override abandon when core metrics still improving ([0e1cf64](https://github.com/haexhub/fwbg-agents/commit/0e1cf647ca819669bbec10a13692f7a8f4dc38fc))
+
+
+### Bug Fixes
+
+* **auto-runner:** retry and abandon stuck PROPOSED strategies ([e7189aa](https://github.com/haexhub/fwbg-agents/commit/e7189aa2f6309abe9769808cb96decf5471d1a2c))
+* **auto-runner:** retry and abandon stuck PROPOSED strategies ([f88c5a3](https://github.com/haexhub/fwbg-agents/commit/f88c5a363933985f103483fed151c19728cda432))
+* **test:** break long line in abandon-override test (ruff E501) ([7a7faa6](https://github.com/haexhub/fwbg-agents/commit/7a7faa659a7a87586b3d1024829eb63b9955b388))
+
 ## [0.19.0](https://github.com/haexhub/fwbg-agents/compare/v0.18.0...v0.19.0) (2026-07-11)
 
 
