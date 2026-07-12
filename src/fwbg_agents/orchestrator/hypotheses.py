@@ -17,6 +17,7 @@ from fwbg_agents.orchestrator.prior_art import PriorArtMatch
 from fwbg_agents.persistence.models import Strategy
 
 _SLUG_SUFFIX_RE = re.compile(r"__(\d{3,})$")
+_ITER_SUFFIX_RE = re.compile(r"__it(\d{3,})$")
 
 
 class HypothesisRejectedError(ValueError):
@@ -146,3 +147,29 @@ async def generate_slug(
                 max_n = n
 
     return f"{prefix}{max_n + 1:03d}"
+
+
+async def generate_child_slug(session: AsyncSession, parent_slug: str) -> str:
+    """Return `<base>__it00N` for the next iteration of `parent_slug`.
+
+    A root parent (`orb__forex__001`) yields `orb__forex__001__it002`; a child
+    parent (`orb__forex__001__it002`) yields `orb__forex__001__it003`. If the
+    candidate slug is already taken (e.g. reiterate ran twice on the same
+    parent), the number is bumped until free.
+    """
+    m = _ITER_SUFFIX_RE.search(parent_slug)
+    if m:
+        base = parent_slug[: m.start()]
+        n = int(m.group(1)) + 1
+    else:
+        base = parent_slug
+        n = 2
+
+    while True:
+        candidate = f"{base}__it{n:03d}"
+        taken = (
+            await session.execute(select(Strategy.id).where(Strategy.slug == candidate))
+        ).scalar_one_or_none()
+        if taken is None:
+            return candidate
+        n += 1

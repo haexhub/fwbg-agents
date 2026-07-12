@@ -13,6 +13,7 @@ from fwbg_agents.orchestrator.hypotheses import (
     HypothesisRejectedError,
     ResearcherHypothesis,
     Source,
+    generate_child_slug,
     generate_slug,
     validate_hypothesis,
 )
@@ -155,3 +156,31 @@ async def test_generate_slug_ignores_unrelated_slugs(db):
     # an unrelated slug shouldn't poison the counter
     await _seed_strategy(db, "some_manual_smoke_strategy", "ORB", "FOREX")
     assert await generate_slug(db, "ORB", "FOREX") == "orb__forex__001"
+
+
+@pytest.mark.asyncio
+async def test_generate_slug_ignores_child_iteration_slugs(db):
+    # child slugs (__itNNN) must not bump the root counter
+    await _seed_strategy(db, "orb__forex__001", "ORB", "FOREX")
+    await _seed_strategy(db, "orb__forex__001__it002", "ORB", "FOREX")
+    assert await generate_slug(db, "ORB", "FOREX") == "orb__forex__002"
+
+
+# --- generate_child_slug ---
+
+
+@pytest.mark.asyncio
+async def test_generate_child_slug_root_parent_gets_it002(db):
+    assert await generate_child_slug(db, "orb__forex__001") == "orb__forex__001__it002"
+
+
+@pytest.mark.asyncio
+async def test_generate_child_slug_increments_existing_suffix(db):
+    assert await generate_child_slug(db, "orb__forex__001__it002") == "orb__forex__001__it003"
+
+
+@pytest.mark.asyncio
+async def test_generate_child_slug_skips_taken_slugs(db):
+    # reiterate ran twice on the same parent → second child bumps past the first
+    await _seed_strategy(db, "orb__forex__001__it002", "ORB", "FOREX")
+    assert await generate_child_slug(db, "orb__forex__001") == "orb__forex__001__it003"
