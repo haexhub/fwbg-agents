@@ -76,12 +76,12 @@ async def env(tmp_path, monkeypatch):
     await engine.dispose()
 
 
-def test_toggle_is_persisted(env, tmp_path):
-    assert auto_runner.is_enabled() is False  # default off
-    auto_runner.set_enabled(True)
-    assert auto_runner.is_enabled() is True
-    auto_runner.set_enabled(False)
-    assert auto_runner.is_enabled() is False
+async def test_toggle_is_persisted(env):
+    assert await auto_runner.is_enabled() is False  # default off
+    await auto_runner.set_enabled(True)
+    assert await auto_runner.is_enabled() is True
+    await auto_runner.set_enabled(False)
+    assert await auto_runner.is_enabled() is False
 
 
 async def test_picks_oldest_ready_proposed(env):
@@ -148,14 +148,14 @@ async def test_retry_cap_skips_repeatedly_failing_strategy(env):
 async def test_tick_disabled_does_nothing(env):
     _, make_strategy, _ = env
     await make_strategy("orb__forex__001")
-    auto_runner.set_enabled(False)
+    await auto_runner.set_enabled(False)
     assert await auto_runner.tick() is None
 
 
 async def test_tick_runs_the_picked_strategy(env, monkeypatch):
     _, make_strategy, _ = env
     sid = await make_strategy("orb__forex__001")
-    auto_runner.set_enabled(True)
+    await auto_runner.set_enabled(True)
 
     ran: list[int] = []
 

@@ -72,6 +72,7 @@ from fwbg_agents.persistence.models import (
     AgentRunStatus,
     Plugin,
     PluginState,
+    Setting,
     Strategy,
     StrategyState,
 )
@@ -84,53 +85,49 @@ log = logging.getLogger(__name__)
 _background_tasks: set[asyncio.Task] = set()
 
 
-def _config_file():
-    """Return the path to the runner auto-mode config file."""
-    return settings.data_dir / "runner_auto.json"
+async def _get_setting(key: str, default: str) -> str:
+    async with SessionLocal() as session:
+        row = (
+            await session.execute(select(Setting).where(Setting.key == key))
+        ).scalar_one_or_none()
+        return row.value if row is not None else default
 
 
-def _read_config() -> dict:
-    """Read the runner auto-mode config dict from disk."""
-    try:
-        return json.loads(_config_file().read_text())
-    except (OSError, json.JSONDecodeError):
-        return {}
+async def _set_setting(key: str, value: str) -> None:
+    async with SessionLocal() as session:
+        row = (
+            await session.execute(select(Setting).where(Setting.key == key))
+        ).scalar_one_or_none()
+        if row is None:
+            session.add(Setting(key=key, value=value))
+        else:
+            row.value = value
+        await session.commit()
 
 
-def _write_config(cfg: dict) -> None:
-    """Write the runner auto-mode config dict to disk."""
-    path = _config_file()
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(cfg))
-
-
-def is_enabled() -> bool:
+async def is_enabled() -> bool:
     """Return True if auto-runner mode is currently enabled."""
-    return bool(_read_config().get("enabled", False))
+    return (await _get_setting("runner_auto.enabled", "false")) == "true"
 
 
-def set_enabled(enabled: bool) -> None:
-    """Enable or disable auto-runner mode and persist the change."""
-    cfg = _read_config()
-    cfg["enabled"] = bool(enabled)
-    _write_config(cfg)
+async def set_enabled(enabled: bool) -> None:
+    """Enable or disable auto-runner mode and persist the change to state.db."""
+    await _set_setting("runner_auto.enabled", "true" if enabled else "false")
     log.info("runner auto mode %s", "enabled" if enabled else "disabled")
 
 
-def get_pipeline_min_proposed() -> int:
-    """Return the effective pipeline_min_proposed threshold from disk or settings default."""
-    v = _read_config().get("pipeline_min_proposed")
-    if v is None:
+async def get_pipeline_min_proposed() -> int:
+    """Return the effective pipeline_min_proposed threshold from DB or settings default."""
+    v = await _get_setting("runner_auto.pipeline_min_proposed", "")
+    if not v:
         return settings.pipeline_min_proposed
     return max(0, min(int(v), 20))
 
 
-def set_pipeline_min_proposed(value: int) -> None:
+async def set_pipeline_min_proposed(value: int) -> None:
     """Set and persist the pipeline_min_proposed threshold (clamped to 0-20)."""
     value = max(0, min(int(value), 20))
-    cfg = _read_config()
-    cfg["pipeline_min_proposed"] = value
-    _write_config(cfg)
+    await _set_setting("runner_auto.pipeline_min_proposed", str(value))
     log.info("pipeline_min_proposed set to %d", value)
 
 
@@ -646,7 +643,7 @@ async def tick() -> int | None:
     heavy work is awaited here — the surrounding loop only polls again after
     it finished, which keeps the single-flight guarantee.
     """
-    if not is_enabled():
+    if not await is_enabled():
         return None
 
     # Housekeeping: capped PROPOSED strategies can never be auto-picked again;
@@ -720,7 +717,7 @@ async def run_loop() -> None:
     log.info(
         "runner auto-mode loop started (poll=%ss, enabled=%s)",
         settings.runner_auto_poll_seconds,
-        is_enabled(),
+        await is_enabled(),
     )
     while True:
         try:
@@ -827,19 +824,19 @@ async def pipeline_fill_loop() -> None:
     """
     log.info(
         "pipeline fill loop started (min=%d, poll=%ss)",
-        get_pipeline_min_proposed(),
+        await get_pipeline_min_proposed(),
         settings.pipeline_fill_poll_seconds,
     )
     while True:
         await asyncio.sleep(settings.pipeline_fill_poll_seconds)
-        if not is_enabled():
+        if not await is_enabled():
             continue
         try:
             async with SessionLocal() as session:
                 if await _research_is_busy(session):
                     continue
                 count = await _active_strategy_count(session)
-                min_proposed = get_pipeline_min_proposed()
+                min_proposed = await get_pipeline_min_proposed()
                 if count >= min_proposed:
                     continue
                 log.info(
