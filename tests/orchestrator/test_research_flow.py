@@ -579,9 +579,10 @@ async def test_reiterate_returns_child_id_when_preconditions_met(db, fake_fwbg):
 
     child = (await session.execute(select(Strategy).where(Strategy.id == child_id))).scalar_one()
     assert child.parent_strategy_id == parent.id
-    assert child.slug == "orb__forex__002"
+    assert child.slug == "orb__forex__001__it002"
     assert child.current_state == StrategyState.PROPOSED.value
 
-    # The child is published to fwbg as a new strategy too.
-    assert [name for name, _ in fake_fwbg.created] == ["orb__forex__002__it001"]
-    assert child.metadata_json["fwbg_strategy_name"] == "orb__forex__002__it001"
+    # The child is published to fwbg as a new strategy too. Its slug already
+    # carries the iteration suffix, so no extra __it001 is appended.
+    assert [name for name, _ in fake_fwbg.created] == ["orb__forex__001__it002"]
+    assert child.metadata_json["fwbg_strategy_name"] == "orb__forex__001__it002"
