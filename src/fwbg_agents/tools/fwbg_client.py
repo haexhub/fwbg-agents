@@ -213,6 +213,17 @@ class FwbgClient:
         """Return full run details (GET /api/runs/{run_id})."""
         return await self._get(f"/api/runs/{run_id}")
 
+    async def get_run_logs(self, run_id: str, *, limit: int = 500) -> list[dict[str, Any]]:
+        """Return a run's structured log entries (GET /api/runs/{run_id}/logs).
+
+        Each entry carries at least `level`, `message`, `symbol`, `stage`.
+        The endpoint answers with a bare JSON array; a dict wrapper is tolerated
+        for forward-compat."""
+        resp: Any = await self._get(f"/api/runs/{run_id}/logs?limit={limit}")
+        if isinstance(resp, dict):
+            resp = resp.get("logs") or resp.get("items") or []
+        return resp if isinstance(resp, list) else []
+
     async def ensure_data(
         self,
         symbol: str,

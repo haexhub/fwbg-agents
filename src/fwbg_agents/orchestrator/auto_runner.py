@@ -38,7 +38,7 @@ from fwbg_agents.agents.analyst import (
     _best_symbol_metrics_from_results,
 )
 from fwbg_agents.agents.researcher import ResearcherInput
-from fwbg_agents.agents.runner import Runner
+from fwbg_agents.agents.runner import Runner, RunnerConfigError
 from fwbg_agents.agents.translator import Translator
 from fwbg_agents.config import settings
 from fwbg_agents.orchestrator.lifecycle import strategy_dir, transition_strategy
@@ -635,6 +635,102 @@ async def _analyze_and_apply(session: AsyncSession, sid: int) -> None:
             log.exception("runner auto mode: reiterate failed for strategy %s", sid)
 
 
+async def _repair_and_reiterate(session: AsyncSession, sid: int, err: RunnerConfigError) -> None:
+    """Auto-repair a strategy whose backtest failed on a missing pipeline
+    dependency by reiterating a child with the dependency inserted.
+
+    fwbg reports `dependent` needs `dependency` upstream; we synthesize a
+    deterministic modify_plugins recommendation that inserts `dependency`
+    directly before `dependent`, reiterate a child (which the auto-runner
+    backtests next), and abandon the broken parent so it is not re-backtested
+    (which would spawn duplicate repair children). Bounded by reiterate_max_depth.
+    """
+    if not err.dependency or not err.dependent:
+        return
+    s = (await session.execute(select(Strategy).where(Strategy.id == sid))).scalar_one()
+    depth = await generation_depth(session, s)
+    if depth >= settings.reiterate_max_depth:
+        log.info(
+            "runner auto mode: strategy %s at generation depth %d (reiterate_max_depth=%d); "
+            "not auto-repairing",
+            sid,
+            depth,
+            settings.reiterate_max_depth,
+        )
+        return
+
+    iteration_dir = strategy_dir(s.slug) / "iteration_001"
+    iteration_dir.mkdir(parents=True, exist_ok=True)
+    sidecar = {
+        "kind": "modify_plugins",
+        "ops": [
+            {
+                "action": "add",
+                "section": "indicators",
+                "slug": err.dependency,
+                "params": {},
+                "before": err.dependent,
+            }
+        ],
+        "confidence": 1.0,
+        "reasoning": (
+            f"Auto-repair: fwbg reported {err.dependent!r} depends on {err.dependency!r}, "
+            f"which was missing from the pipeline. Inserting {err.dependency!r} before "
+            f"{err.dependent!r}."
+        ),
+    }
+    (iteration_dir / "analyst_recommendation.json").write_text(json.dumps(sidecar, indent=2))
+
+    try:
+        child_id = await reiterate(session, sid)
+    except Exception:
+        log.exception("runner auto mode: auto-repair reiterate failed for strategy %s", sid)
+        return
+
+    pm_path = strategy_dir(s.slug) / "post_mortem.yaml"
+    pm_path.parent.mkdir(parents=True, exist_ok=True)
+    pm_path.write_text(
+        yaml.safe_dump(
+            {
+                "slug": s.slug,
+                "asset_class": s.asset_class,
+                "strategy_family": s.strategy_family,
+                "summary": (
+                    f"Auto-repaired and superseded by child strategy {child_id}: fwbg "
+                    f"reported {err.dependent!r} depends on {err.dependency!r}, which was "
+                    f"missing from the pipeline. The child inserts it before "
+                    f"{err.dependent!r}."
+                ),
+                "repair_child_id": child_id,
+                "written_at": datetime.now(UTC).isoformat(),
+            },
+            sort_keys=False,
+        )
+    )
+    try:
+        await transition_strategy(
+            session,
+            s,
+            StrategyState.ABANDONED,
+            reason=(
+                f"auto-repair: superseded by child strategy {child_id} "
+                f"(inserted missing dependency {err.dependency!r} before {err.dependent!r})"
+            ),
+            payload={"repair_child_id": child_id, "post_mortem_path": str(pm_path)},
+            created_by="auto_runner",
+        )
+    except Exception:
+        log.exception("runner auto mode: could not abandon superseded parent %s", sid)
+
+    log.info(
+        "runner auto mode: auto-repaired strategy %s → child %s (inserted %s before %s)",
+        sid,
+        child_id,
+        err.dependency,
+        err.dependent,
+    )
+
+
 async def tick() -> int | None:
     """One auto-mode cycle. Priority: backtest a waiting PROPOSED strategy;
     if none, drain the backlog of backtested-but-unanalyzed strategies.
@@ -658,12 +754,24 @@ async def tick() -> int | None:
     if sid is not None:
         log.info("runner auto mode: starting backtest for strategy %s", sid)
         backtest_ok = False
+        config_error: RunnerConfigError | None = None
         async with SessionLocal() as session:
             s = (await session.execute(select(Strategy).where(Strategy.id == sid))).scalar_one()
             client = FwbgClient(base_url=settings.fwbg_api_url)
             try:
                 await Runner(client, session).run(s)
                 backtest_ok = True
+            except RunnerConfigError as exc:
+                # A fixable strategy-config error (e.g. a plugin missing its
+                # pipeline dependency). Auto-repair it below instead of burning
+                # retries on the same broken file until the cap abandons it.
+                config_error = exc
+                log.warning(
+                    "runner auto mode: backtest for strategy %s hit a fixable "
+                    "config error: %s",
+                    sid,
+                    exc,
+                )
             except Exception:
                 # Runner marked its AgentRun failed; the attempt counter keeps a
                 # persistently broken strategy from being retried forever.
@@ -674,6 +782,9 @@ async def tick() -> int | None:
         if backtest_ok:
             async with SessionLocal() as session:
                 await _analyze_and_apply(session, sid)
+        elif config_error is not None:
+            async with SessionLocal() as session:
+                await _repair_and_reiterate(session, sid, config_error)
         return sid
 
     # Nothing to backtest → drain one backtested-but-unanalyzed strategy so
