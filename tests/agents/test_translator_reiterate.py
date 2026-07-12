@@ -497,3 +497,42 @@ async def test_reiterate_without_target_assets_inherits_parent_universe(db_with_
         child = await Translator(session).run_reiterate(parent)
 
     assert child.suggested_universe == universe
+
+
+def test_apply_plugin_op_add_before_inserts_ahead_of_target():
+    """`before` inserts the new plugin ahead of a named entry so a dependency
+    is computed upstream of the plugin that needs it (auto-repair path)."""
+    payload = {
+        "pipeline": {
+            "indicators": [
+                {"name": "opening_range", "params": {}},
+                {"name": "regime_cluster", "params": {}},
+            ]
+        }
+    }
+    translator_module._apply_plugin_op(
+        payload,
+        {
+            "action": "add",
+            "section": "indicators",
+            "slug": "regime",
+            "params": {},
+            "before": "regime_cluster",
+        },
+    )
+    names = [e["name"] for e in payload["pipeline"]["indicators"]]
+    assert names == ["opening_range", "regime", "regime_cluster"]
+
+
+def test_apply_plugin_op_add_before_missing_target_fails():
+    payload = {"pipeline": {"indicators": [{"name": "opening_range", "params": {}}]}}
+    with pytest.raises(TranslatorError):
+        translator_module._apply_plugin_op(
+            payload,
+            {
+                "action": "add",
+                "section": "indicators",
+                "slug": "regime",
+                "before": "not_present",
+            },
+        )

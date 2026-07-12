@@ -418,7 +418,7 @@ async def _run_analyze_with_fake_analyst(Session, monkeypatch, sid):
 
     reiterated: list[int] = []
 
-    async def fake_reiterate(session, strategy_id):
+    async def fake_reiterate(session, strategy_id, **kwargs):
         reiterated.append(strategy_id)
         return 999
 
@@ -490,7 +490,7 @@ async def _run_analyze_with_abandon(Session, monkeypatch, sid):
 
     reiterated: list[int] = []
 
-    async def fake_reiterate(session, strategy_id):
+    async def fake_reiterate(session, strategy_id, **kwargs):
         reiterated.append(strategy_id)
         return 999
 
@@ -570,3 +570,124 @@ async def test_abandon_at_min_depth_with_improvement_overrides(env, monkeypatch)
 
     reiterated = await _run_analyze_with_abandon(Session, monkeypatch, child_sid)
     assert reiterated == [child_sid]  # override fired, reiterate called
+
+
+class _RepairRunner:
+    """Fake Runner that fails with a fixable missing-dependency config error."""
+
+    def __init__(self, client, session):
+        pass
+
+    async def run(self, strategy):
+        from fwbg_agents.agents.runner import RunnerConfigError
+
+        raise RunnerConfigError(
+            "fwbg backtest failed: regime_cluster depends on regime",
+            dependent="regime_cluster",
+            dependency="regime",
+        )
+
+
+class _NoopClient:
+    def __init__(self, base_url=None):
+        pass
+
+    async def aclose(self):
+        pass
+
+
+async def test_tick_auto_repairs_missing_dependency(env, monkeypatch):
+    Session, make_strategy, _ = env
+    from fwbg_agents.config import settings
+
+    sid = await make_strategy("liquiditysweep__forex__026")
+    await auto_runner.set_enabled(True)
+
+    reiterated: list[int] = []
+
+    async def fake_reiterate(session, strategy_id, **kwargs):
+        reiterated.append(strategy_id)
+        return 999
+
+    async def fake_depth(session, strategy):
+        return 0
+
+    monkeypatch.setattr(auto_runner, "Runner", _RepairRunner)
+    monkeypatch.setattr(auto_runner, "FwbgClient", _NoopClient)
+    monkeypatch.setattr(auto_runner, "reiterate", fake_reiterate)
+    monkeypatch.setattr(auto_runner, "generation_depth", fake_depth)
+
+    assert await auto_runner.tick() == sid
+    assert reiterated == [sid]
+
+    sidecar = json.loads(
+        (
+            settings.data_dir
+            / "strategies"
+            / "liquiditysweep__forex__026"
+            / "iteration_001"
+            / "analyst_recommendation.json"
+        ).read_text()
+    )
+    assert sidecar["kind"] == "modify_plugins"
+    assert sidecar["ops"][0] == {
+        "action": "add",
+        "section": "indicators",
+        "slug": "regime",
+        "params": {},
+        "before": "regime_cluster",
+    }
+
+    # The broken parent is superseded so the auto-runner will not re-backtest it
+    # (which would spawn duplicate repair children).
+    async with Session() as session:
+        parent = (await session.execute(select(Strategy).where(Strategy.id == sid))).scalar_one()
+    assert parent.current_state == StrategyState.ABANDONED.value
+
+
+async def test_auto_repair_skipped_at_max_depth(env, monkeypatch):
+    Session, make_strategy, _ = env
+    from fwbg_agents.config import settings
+
+    monkeypatch.setattr(settings, "reiterate_max_depth", 3)
+    sid = await make_strategy("liquiditysweep__forex__027")
+    await auto_runner.set_enabled(True)
+
+    reiterated: list[int] = []
+
+    async def fake_reiterate(session, strategy_id, **kwargs):
+        reiterated.append(strategy_id)
+        return 999
+
+    async def fake_depth(session, strategy):
+        return 3  # already at the cap
+
+    monkeypatch.setattr(auto_runner, "Runner", _RepairRunner)
+    monkeypatch.setattr(auto_runner, "FwbgClient", _NoopClient)
+    monkeypatch.setattr(auto_runner, "reiterate", fake_reiterate)
+    monkeypatch.setattr(auto_runner, "generation_depth", fake_depth)
+
+    await auto_runner.tick()
+
+    assert reiterated == []  # no repair attempted
+    async with Session() as session:
+        parent = (await session.execute(select(Strategy).where(Strategy.id == sid))).scalar_one()
+    assert parent.current_state == StrategyState.PROPOSED.value  # left for the retry cap
+
+
+def test_dependent_pipeline_section_resolves_from_parent_pipeline():
+    """The missing dependency is inserted into the same section that holds the
+    dependent — resolved from the parent's own inline pipeline."""
+    strategy_json = {
+        "pipeline": {
+            "indicators": [{"name": "opening_range"}],
+            "feature_selection": [{"name": "some_selector"}],
+        }
+    }
+    assert auto_runner._dependent_pipeline_section(strategy_json, "some_selector") == (
+        "feature_selection"
+    )
+    assert auto_runner._dependent_pipeline_section(strategy_json, "opening_range") == "indicators"
+    # Unknown dependent / non-inline pipeline → safe default.
+    assert auto_runner._dependent_pipeline_section(strategy_json, "mystery") == "indicators"
+    assert auto_runner._dependent_pipeline_section({}, "regime_cluster") == "indicators"

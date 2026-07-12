@@ -60,6 +60,32 @@ def _empty_run() -> dict[str, Any]:
     return {"run_id": "job_test_42", "status": "completed", "assets": {}}
 
 
+def _errored_run(*symbols: str) -> dict[str, Any]:
+    """A run fwbg marked completed, but every asset errored (no metrics)."""
+    syms = symbols or ("EURUSD",)
+    return {
+        "run_id": "job_test_42",
+        "status": "completed",
+        "assets": {
+            s: {"symbol": s, "status": "error", "total_combinations": 0, "unified_metrics": {}}
+            for s in syms
+        },
+    }
+
+
+_DEP_LOG = [
+    {
+        "level": "error",
+        "symbol": "EURUSD",
+        "stage": "processing",
+        "message": (
+            "Plugin 'regime_cluster' depends on 'regime', but 'regime' is not in the "
+            "pipeline. Either add 'regime' to the pipeline or remove 'regime_cluster'."
+        ),
+    }
+]
+
+
 class FakeFwbgClient:
     """Scriptable fake.
 
@@ -83,7 +109,9 @@ class FakeFwbgClient:
         create_strategy_error: Exception | None = None,
         start_errors: list[Exception] | None = None,
         list_runs_response: list[dict[str, Any]] | None = None,
+        logs_response: list[dict[str, Any]] | None = None,
     ):
+        self.logs_response = list(logs_response or [])
         self.create_strategy_error = create_strategy_error
         self._start_errors = list(start_errors or [])
         self.list_runs_response = list(list_runs_response or [])
@@ -131,6 +159,10 @@ class FakeFwbgClient:
         if self._run_q:
             self._last_run = self._run_q.pop(0)
         return self._last_run
+
+    async def get_run_logs(self, run_id, *, limit=500):
+        self.calls.append(("get_run_logs", (run_id,), {"limit": limit}))
+        return list(self.logs_response)
 
     async def ensure_data(self, symbol, *, timeframe=None, **kwargs):
         self.calls.append(("ensure_data", (symbol,), {"timeframe": timeframe}))
@@ -577,3 +609,58 @@ async def test_non_429_start_error_is_not_retried(runner_env):
         await _run(SessionMaker, sid, fake)
 
     assert len(fake.calls_of("start_run")) == 1
+
+
+async def test_missing_dependency_raises_config_error(runner_env):
+    """A completed run whose assets all errored on a missing pipeline
+    dependency short-circuits with RunnerConfigError carrying the parsed
+    (dependent, dependency) — broadening the universe cannot help."""
+    from fwbg_agents.agents.runner import RunnerConfigError
+    from fwbg_agents.run_events import read_run_events
+
+    SessionMaker, make_strategy, _ = runner_env
+    sid = await make_strategy()
+    fake = FakeFwbgClient(
+        run_responses=[_errored_run("EURUSD", "GBPUSD")],
+        logs_response=_DEP_LOG,
+    )
+
+    with pytest.raises(RunnerConfigError) as excinfo:
+        await _run(SessionMaker, sid, fake)
+
+    err = excinfo.value
+    assert err.dependent == "regime_cluster"
+    assert err.dependency == "regime"
+    assert "regime_cluster" in str(err)
+    # Short-circuited: only the first rung ran, not all three.
+    assert len(fake.calls_of("start_run")) == 1
+    # The AgentRun is marked failed with the real fwbg reason recorded.
+    async with SessionMaker() as session:
+        ar = (
+            await session.execute(select(AgentRun).where(AgentRun.agent_name == "runner"))
+        ).scalar_one()
+        assert ar.status == AgentRunStatus.FAILED.value
+        assert "regime" in (ar.error or "")
+    # A backtest_error timeline event was emitted with the errored assets.
+    events = read_run_events(ar.id)
+    err_events = [e for e in events if e["type"] == "backtest_error"]
+    assert err_events
+    assert set(err_events[0]["errored_assets"]) == {"EURUSD", "GBPUSD"}
+
+
+async def test_non_dependency_error_falls_through_to_exhaustion(runner_env):
+    """Assets errored, but not on a fixable dependency problem: the run still
+    falls through the rungs and ends in a generic RunnerError whose message
+    carries the real fwbg reason (not an opaque 'no metrics')."""
+    SessionMaker, make_strategy, _ = runner_env
+    sid = await make_strategy()
+    other_log = [{"level": "error", "symbol": "EURUSD", "message": "insufficient bars for warmup"}]
+    fake = FakeFwbgClient(
+        run_responses=[_errored_run("EURUSD")],
+        logs_response=other_log,
+    )
+
+    with pytest.raises(RunnerError) as excinfo:
+        await _run(SessionMaker, sid, fake)
+
+    assert "insufficient bars for warmup" in str(excinfo.value)
