@@ -42,8 +42,14 @@ _GET_RETRY_BACKOFF_SECONDS = 1.0
 
 
 def safe_fwbg_strategy_name(slug: str, iteration: int) -> str:
-    """fwbg validates names against [\\w\\-]; keep ASCII + drop punctuation."""
+    """fwbg validates names against [\\w\\-]; keep ASCII + drop punctuation.
+
+    Child slugs already end in `__itNNN` (see `generate_child_slug`); those
+    are returned as-is instead of getting a second iteration suffix.
+    """
     cleaned = re.sub(r"[^A-Za-z0-9_]", "_", slug)
+    if re.search(r"__it\d{3,}$", cleaned):
+        return cleaned
     return f"{cleaned}__it{iteration:03d}"
 
 

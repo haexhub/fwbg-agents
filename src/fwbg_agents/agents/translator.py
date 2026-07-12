@@ -28,7 +28,7 @@ from pydantic_ai.models import Model
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from fwbg_agents.agents.instrumented import run_instrumented
-from fwbg_agents.orchestrator.hypotheses import generate_slug
+from fwbg_agents.orchestrator.hypotheses import generate_child_slug
 from fwbg_agents.orchestrator.lifecycle import strategy_dir
 from fwbg_agents.orchestrator.live_catalog import LiveCatalog, fetch_live_catalog
 from fwbg_agents.orchestrator.strategy_validator import (
@@ -516,9 +516,7 @@ class Translator:
                     f"got kind={kind!r}"
                 )
 
-            child_slug = await generate_slug(
-                self.session, parent.strategy_family, parent.asset_class
-            )
+            child_slug = await generate_child_slug(self.session, parent.slug)
             child_payload["name"] = child_slug
 
             try:
@@ -676,9 +674,7 @@ class Translator:
             else:
                 child_payload.setdefault(list_field, []).append(plugin_slug)
 
-            child_slug = await generate_slug(
-                self.session, parent.strategy_family, parent.asset_class
-            )
+            child_slug = await generate_child_slug(self.session, parent.slug)
             child_payload["name"] = child_slug
 
             live = await fetch_live_catalog(self.session, self.fwbg_client)

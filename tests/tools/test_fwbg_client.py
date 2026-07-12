@@ -10,12 +10,21 @@ import json
 import httpx
 import pytest
 
-from fwbg_agents.tools.fwbg_client import FwbgClient, FwbgClientError
+from fwbg_agents.tools.fwbg_client import FwbgClient, FwbgClientError, safe_fwbg_strategy_name
 
 
 def _mock_client(handler) -> httpx.AsyncClient:
     transport = httpx.MockTransport(handler)
     return httpx.AsyncClient(transport=transport, base_url="http://fwbg-test")
+
+
+def test_safe_fwbg_strategy_name_appends_iteration_suffix():
+    assert safe_fwbg_strategy_name("orb__forex__001", 1) == "orb__forex__001__it001"
+
+
+def test_safe_fwbg_strategy_name_keeps_existing_iteration_suffix():
+    # child slugs already carry __itNNN — no second suffix
+    assert safe_fwbg_strategy_name("orb__forex__001__it002", 1) == "orb__forex__001__it002"
 
 
 async def test_start_run_posts_strategy_name_and_returns_job():
