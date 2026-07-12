@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.22.0](https://github.com/haexhub/fwbg-agents/compare/v0.21.1...v0.22.0) (2026-07-12)
+
+
+### Features
+
+* **reiterate:** name child strategies &lt;parent-slug&gt;__it00N ([f4936eb](https://github.com/haexhub/fwbg-agents/commit/f4936eba6880ff791a9acdbadef477eedd83bd78))
+* **reiterate:** name child strategies &lt;parent-slug&gt;__it00N ([4580206](https://github.com/haexhub/fwbg-agents/commit/458020607090cc944c06669e7c32c464e52e5dce))
+
 ## [0.21.1](https://github.com/haexhub/fwbg-agents/compare/v0.21.0...v0.21.1) (2026-07-12)
 
 
