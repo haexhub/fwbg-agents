@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.21.1](https://github.com/haexhub/fwbg-agents/compare/v0.21.0...v0.21.1) (2026-07-12)
+
+
+### Bug Fixes
+
+* **persistence:** re-attach UTC tzinfo on datetime read ([#165](https://github.com/haexhub/fwbg-agents/issues/165)) ([50e511a](https://github.com/haexhub/fwbg-agents/commit/50e511a3c06d78ef2e3d0096646382f78bbb4c31))
+
 ## [0.21.0](https://github.com/haexhub/fwbg-agents/compare/v0.20.0...v0.21.0) (2026-07-12)
 
 
