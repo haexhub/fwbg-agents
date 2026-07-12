@@ -11,7 +11,7 @@ Design constraints (from project docs + feedback memory):
 from __future__ import annotations
 
 import enum
-from datetime import datetime
+from datetime import UTC, datetime
 
 from sqlalchemy import (
     JSON,
@@ -22,10 +22,39 @@ from sqlalchemy import (
     Numeric,
     String,
     Text,
+    TypeDecorator,
 )
 from sqlalchemy.orm import Mapped, mapped_column
 
 from fwbg_agents.persistence.database import Base
+
+
+class UtcDateTime(TypeDecorator):
+    """Timezone-aware UTC datetime that round-trips through SQLite.
+
+    SQLite has no native tz-aware type: a ``DateTime(timezone=True)`` value is
+    stored naive (offset dropped) and read back naive. Downstream ``.isoformat()``
+    then emits a string without a ``+00:00`` offset, which JS ``new Date()`` parses
+    as *local* time — shifting relative timestamps in the dashboard by the viewer's
+    UTC offset. This decorator stores values as UTC and re-attaches UTC tzinfo on
+    read so callers always get aware UTC datetimes.
+    """
+
+    impl = DateTime
+    cache_ok = True
+
+    def process_bind_param(self, value: datetime | None, dialect) -> datetime | None:
+        if value is not None and value.tzinfo is not None:
+            return value.astimezone(UTC)
+        return value
+
+    def process_result_value(self, value: datetime | None, dialect) -> datetime | None:
+        if value is None:
+            return None
+        if value.tzinfo is None:
+            return value.replace(tzinfo=UTC)
+        return value.astimezone(UTC)
+
 
 # ---------------------------------------------------------------------------
 # Enums
@@ -116,7 +145,7 @@ class CalibrationRun(Base):
     __tablename__ = "calibration_run"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    ran_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, index=True)
+    ran_at: Mapped[datetime] = mapped_column(UtcDateTime(), nullable=False, index=True)
     runs_scanned: Mapped[int] = mapped_column(Integer, nullable=False)
     runs_with_elite: Mapped[int] = mapped_column(Integer, nullable=False)
     asset_classes_processed: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
@@ -159,8 +188,8 @@ class Strategy(Base):
         Boolean, nullable=False, server_default="0", default=False
     )
     queue_position: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
-    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(UtcDateTime(), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(UtcDateTime(), nullable=False)
 
 
 class StrategyTag(Base):
@@ -190,8 +219,8 @@ class Plugin(Base):
     spec_path: Mapped[str | None] = mapped_column(String(512), nullable=True)
     contract_path: Mapped[str | None] = mapped_column(String(512), nullable=True)
     post_mortem_path: Mapped[str | None] = mapped_column(String(512), nullable=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
-    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(UtcDateTime(), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(UtcDateTime(), nullable=False)
 
 
 class Transition(Base):
@@ -207,9 +236,7 @@ class Transition(Base):
     reason: Mapped[str] = mapped_column(Text, nullable=False, default="")
     payload: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
     created_by: Mapped[str] = mapped_column(String(64), nullable=False, default="system")
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), nullable=False, index=True
-    )
+    created_at: Mapped[datetime] = mapped_column(UtcDateTime(), nullable=False, index=True)
 
 
 class AgentRun(Base):
@@ -239,9 +266,9 @@ class AgentRun(Base):
     input_artifact_path: Mapped[str | None] = mapped_column(String(512), nullable=True)
     output_artifact_path: Mapped[str | None] = mapped_column(String(512), nullable=True)
     error: Mapped[str | None] = mapped_column(Text, nullable=True)
-    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
-    ended_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    started_at: Mapped[datetime] = mapped_column(UtcDateTime(), nullable=False)
+    ended_at: Mapped[datetime | None] = mapped_column(UtcDateTime(), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(UtcDateTime(), nullable=False)
 
 
 class VerificationRun(Base):
@@ -264,11 +291,9 @@ class VerificationRun(Base):
     scenarios_run: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     scenarios_passed: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     error_log_path: Mapped[str | None] = mapped_column(String(512), nullable=True)
-    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
-    ended_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), nullable=False, index=True
-    )
+    started_at: Mapped[datetime] = mapped_column(UtcDateTime(), nullable=False)
+    ended_at: Mapped[datetime | None] = mapped_column(UtcDateTime(), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(UtcDateTime(), nullable=False, index=True)
 
 
 class LlmCall(Base):
@@ -289,7 +314,7 @@ class LlmCall(Base):
     output_tokens: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     cost_usd: Mapped[float | None] = mapped_column(Numeric(10, 6), nullable=True)
     latency_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(UtcDateTime(), nullable=False)
 
 
 class Setting(Base):
