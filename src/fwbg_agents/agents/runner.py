@@ -39,6 +39,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import re
 import time
 from typing import Any, Protocol
 
@@ -73,6 +74,47 @@ class RunnerError(RuntimeError):
     """Raised when every universe attempt fails (fwbg errors / no results)."""
 
 
+class RunnerConfigError(RunnerError):
+    """fwbg completed the run but every asset errored on a fixable
+    strategy-config problem (e.g. a plugin missing its pipeline dependency).
+
+    Broadening the universe cannot fix such an error — the same pipeline fails
+    on every symbol — so the Runner short-circuits and raises this instead of
+    exhausting all rungs. It carries the parsed dependency (`dependent` needs
+    `dependency` upstream) so the orchestrator can auto-repair by reiteration.
+    """
+
+    def __init__(
+        self, message: str, *, dependent: str | None = None, dependency: str | None = None
+    ):
+        super().__init__(message)
+        self.dependent = dependent
+        self.dependency = dependency
+
+
+# fwbg's pipeline builder rejects a plugin whose declared dependency is absent
+# with a stable message; we parse it to drive the deterministic auto-repair.
+_DEP_ERROR_RE = re.compile(
+    r"Plugin '(?P<dependent>[^']+)' depends on '(?P<dependency>[^']+)', "
+    r"but '(?P=dependency)' is not in the pipeline"
+)
+
+
+def _asset_error_symbols(run_data: dict[str, Any]) -> list[str]:
+    """Symbols whose per-asset backtest fwbg marked as errored."""
+    assets = run_data.get("assets") or {}
+    return [sym for sym, a in assets.items() if isinstance(a, dict) and a.get("status") == "error"]
+
+
+def _parse_dependency_error(messages: list[str]) -> tuple[str, str] | None:
+    """Return (dependent, dependency) from the first missing-dependency error."""
+    for m in messages:
+        match = _DEP_ERROR_RE.search(m)
+        if match:
+            return match.group("dependent"), match.group("dependency")
+    return None
+
+
 class _FwbgClientProto(Protocol):
     async def create_strategy(self, name: str, data: dict[str, Any]) -> dict[str, Any]: ...
     async def start_run(
@@ -86,6 +128,7 @@ class _FwbgClientProto(Protocol):
     async def list_runs(self) -> list[dict[str, Any]]: ...
     async def get_progress(self, run_id: str) -> dict[str, Any]: ...
     async def get_run(self, run_id: str) -> dict[str, Any]: ...
+    async def get_run_logs(self, run_id: str, *, limit: int = ...) -> list[dict[str, Any]]: ...
     async def ensure_data(
         self,
         symbol: str,
@@ -207,7 +250,32 @@ class Runner:
 
                 metrics = _best_symbol_metrics(run_data)
                 if not metrics:
-                    last_reason = f"attempt {attempt.label!r} completed but produced no metrics"
+                    errored = _asset_error_symbols(run_data)
+                    if errored:
+                        # fwbg completed the run but every asset errored — pull
+                        # the real reason from the run logs instead of reporting
+                        # an opaque "no metrics".
+                        messages = await self._fetch_error_messages(job_id)
+                        detail = "; ".join(messages) or "assets errored (no log detail)"
+                        emit_run_event(
+                            agent_run_id=ar.id,
+                            type="backtest_error",
+                            fwbg_run_id=job_id,
+                            errored_assets=errored,
+                            detail=detail,
+                        )
+                        dep = _parse_dependency_error(messages)
+                        if dep is not None:
+                            # A missing pipeline dependency fails identically on
+                            # every symbol — broadening the universe is futile.
+                            raise RunnerConfigError(
+                                f"fwbg backtest for {strategy.slug!r} failed: {detail}",
+                                dependent=dep[0],
+                                dependency=dep[1],
+                            )
+                        last_reason = f"attempt {attempt.label!r}: {detail}"
+                    else:
+                        last_reason = f"attempt {attempt.label!r} completed but produced no metrics"
                     log.info("runner: %s; falling back", last_reason)
                     continue
 
@@ -263,6 +331,22 @@ class Runner:
                 self.session, ar, exc, transient=isinstance(exc, httpx.TransportError)
             )
             raise
+
+    async def _fetch_error_messages(self, job_id: str) -> list[str]:
+        """Distinct error-level messages from a run's fwbg logs (best-effort)."""
+        try:
+            logs = await self.fwbg.get_run_logs(job_id)
+        except (httpx.TransportError, FwbgClientError) as exc:
+            log.info("runner: could not fetch logs for %s: %s", job_id, exc)
+            return []
+        seen: list[str] = []
+        for entry in logs:
+            if not isinstance(entry, dict) or entry.get("level") != "error":
+                continue
+            msg = entry.get("message")
+            if isinstance(msg, str) and msg and msg not in seen:
+                seen.append(msg)
+        return seen
 
     async def _resolve_assets(
         self, attempt: UniverseAttempt, tf_by_symbol: dict[str, str]

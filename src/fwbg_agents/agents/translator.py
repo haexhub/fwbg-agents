@@ -116,7 +116,20 @@ def _apply_plugin_op(payload: dict, op: dict) -> None:
                 raise TranslatorError(
                     f"modify_plugins: {slug!r} already present in pipeline.{section}"
                 )
-            entries.append({"name": slug, "params": params})
+            new_entry = {"name": slug, "params": params}
+            # Optional `before`: insert ahead of a named entry so a dependency
+            # is computed upstream of the plugin that needs it (auto-repair).
+            before = op.get("before")
+            if isinstance(before, str) and before:
+                bi = _idx(before)
+                if bi is None:
+                    raise TranslatorError(
+                        f"modify_plugins: 'before' target {before!r} not found in "
+                        f"pipeline.{section}"
+                    )
+                entries.insert(bi, new_entry)
+            else:
+                entries.append(new_entry)
         elif action == "remove":
             i = _idx(slug)
             if i is None:

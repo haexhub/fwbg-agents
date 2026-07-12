@@ -521,6 +521,31 @@ async def test_reiterate_rejects_when_parent_not_backtested(db):
 
 
 @pytest.mark.asyncio
+async def test_reiterate_repair_bypasses_backtested_gate(db):
+    """The auto-repair path reiterates a strategy whose backtest FAILED (still
+    PROPOSED). repair=True must skip the BACKTESTED gate — otherwise the repair
+    silently no-ops. It still enforces every other precondition (here: the
+    missing sidecar), proving only the state check was bypassed."""
+    session, _ = db
+    now = datetime.now(UTC)
+    parent = Strategy(
+        slug="orb__forex__001",
+        current_state=StrategyState.PROPOSED.value,  # backtest failed, never BACKTESTED
+        iteration_count=1,
+        asset_class="FOREX",
+        strategy_family="ORB",
+        created_at=now,
+        updated_at=now,
+    )
+    session.add(parent)
+    await session.commit()
+    await session.refresh(parent)
+
+    with pytest.raises(ReiteratePreconditionError, match="analyst_recommendation"):
+        await reiterate(session, parent.id, model=_dispatch_model(), repair=True)
+
+
+@pytest.mark.asyncio
 async def test_reiterate_rejects_when_sidecar_missing(db):
     session, _ = db
     now = datetime.now(UTC)
