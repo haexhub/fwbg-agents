@@ -290,3 +290,16 @@ class LlmCall(Base):
     cost_usd: Mapped[float | None] = mapped_column(Numeric(10, 6), nullable=True)
     latency_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class Setting(Base):
+    """Persistent key-value store for application settings.
+
+    Survives restarts as part of state.db. Keys are namespaced by convention
+    (e.g. "runner_auto.enabled") — no enforcement at the DB level.
+    """
+
+    __tablename__ = "setting"
+
+    key: Mapped[str] = mapped_column(String(128), primary_key=True)
+    value: Mapped[str] = mapped_column(Text, nullable=False)
