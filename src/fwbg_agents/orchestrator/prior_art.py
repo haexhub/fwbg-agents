@@ -11,12 +11,14 @@ adding once the tag layer has been validated against real abandoned strategies.
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from fwbg_agents.orchestrator.lifecycle import strategy_dir
 from fwbg_agents.persistence.models import Strategy, StrategyTag
 
 JACCARD_THRESHOLD = 0.2
@@ -35,6 +37,9 @@ class PriorArtMatch(BaseModel):
     jaccard: float
     post_mortem_path: str | None = None
     post_mortem_summary: str | None = None
+    # One-line edge anchor from the match's hypothesis (Plan 009 WP5), so the
+    # Researcher can differentiate against the actual mechanism, not just tags.
+    edge_mechanism: str | None = None
 
 
 def _jaccard(a: set[str], b: set[str]) -> float:
@@ -45,6 +50,17 @@ def _jaccard(a: set[str], b: set[str]) -> float:
     if not union:
         return 0.0
     return len(a & b) / len(union)
+
+
+def _load_edge_mechanism(slug: str) -> str | None:
+    """Read the strategy's edge_mechanism from its iteration_001/hypothesis.json."""
+    path = strategy_dir(slug) / "iteration_001" / "hypothesis.json"
+    if not path.is_file():
+        return None
+    try:
+        return json.loads(path.read_text()).get("edge_mechanism") or None
+    except (OSError, json.JSONDecodeError):
+        return None
 
 
 def _load_summary(path_str: str | None) -> str | None:
@@ -128,6 +144,7 @@ async def lookup_prior_art(
                 jaccard=jaccard,
                 post_mortem_path=s.post_mortem_path,
                 post_mortem_summary=_load_summary(s.post_mortem_path),
+                edge_mechanism=_load_edge_mechanism(s.slug),
             )
         )
 

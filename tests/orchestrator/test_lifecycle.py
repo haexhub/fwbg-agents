@@ -465,6 +465,55 @@ def test_check_criteria_against_metrics_required_all(tmp_path, monkeypatch):
     assert any("sharpe" in f for f in failed)
 
 
+def test_check_criteria_section_evaluates_named_section(tmp_path, monkeypatch):
+    """Plan 009 WP4: the promote gate evaluates its own criteria sections."""
+    from fwbg_agents.config import settings
+    from fwbg_agents.orchestrator.lifecycle import check_criteria_section
+
+    monkeypatch.setattr(settings, "data_dir", tmp_path / "data")
+    settings.criteria_dir.mkdir(parents=True)
+    (settings.criteria_dir / "FOREX.yaml").write_text(
+        yaml.safe_dump(
+            {
+                "promote_holdout": {
+                    "required_all": [{"annual_return": "> 0"}, {"sharpe": ">= 1.0"}]
+                },
+            }
+        )
+    )
+    ok, failed = check_criteria_section(
+        asset_class="FOREX",
+        metrics={"annual_return": 12.0, "sharpe": 1.4},
+        section="promote_holdout",
+    )
+    assert ok and failed == []
+
+    ok, failed = check_criteria_section(
+        asset_class="FOREX",
+        metrics={"annual_return": -3.0, "sharpe": 1.4},
+        section="promote_holdout",
+    )
+    assert not ok
+    assert any("annual_return" in f for f in failed)
+
+
+def test_check_criteria_section_fail_closed_on_missing_section(tmp_path, monkeypatch):
+    from fwbg_agents.config import settings
+    from fwbg_agents.orchestrator.lifecycle import check_criteria_section
+
+    monkeypatch.setattr(settings, "data_dir", tmp_path / "data")
+    settings.criteria_dir.mkdir(parents=True)
+    (settings.criteria_dir / "FOREX.yaml").write_text(yaml.safe_dump({"backtest_to_paper": {}}))
+    # section absent → fail-closed
+    ok, failed = check_criteria_section(
+        asset_class="FOREX", metrics={"sharpe": 2.0}, section="promote_cost_stress"
+    )
+    assert not ok and failed
+    # yaml absent entirely → fail-closed with calibrate hint
+    ok, failed = check_criteria_section(asset_class="CRYPTO", metrics={}, section="promote_holdout")
+    assert not ok and any("calibrate" in f for f in failed)
+
+
 def test_missing_criteria_yaml_blocks_promotion(tmp_path, monkeypatch):
     """No criteria YAML for the asset class → the backtested → paper gate is
     CLOSED. A money-adjacent promotion must not pass unconditionally on a fresh

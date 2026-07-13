@@ -35,7 +35,7 @@ from fwbg_agents.agents.analyst import (
     ChangeExit,
     ModifyPlugins,
     TuneParams,
-    _best_symbol_metrics_from_results,
+    _median_metrics_across_assets,
 )
 from fwbg_agents.agents.researcher import ResearcherInput
 from fwbg_agents.agents.runner import Runner, RunnerConfigError
@@ -536,11 +536,7 @@ async def _analyze_and_apply(session: AsyncSession, sid: int) -> None:
     metrics: dict[str, float] = {}
     if results_path.is_file():
         results = json.loads(results_path.read_text())
-        metrics = {
-            k: float(v)
-            for k, v in _best_symbol_metrics_from_results(results).items()
-            if isinstance(v, (int, float))
-        }
+        metrics = _median_metrics_across_assets(results)
 
     # Guard: override an Abandon recommendation when the strategy has not had a
     # fair chance yet.  Two independent conditions both trigger the same override:
@@ -564,7 +560,7 @@ async def _analyze_and_apply(session: AsyncSession, sid: int) -> None:
                 if rp.is_file():
                     try:
                         metrics_history.append(
-                            _best_symbol_metrics_from_results(json.loads(rp.read_text()))
+                            _median_metrics_across_assets(json.loads(rp.read_text()))
                         )
                     except Exception:
                         metrics_history.append({})
@@ -600,8 +596,11 @@ async def _analyze_and_apply(session: AsyncSession, sid: int) -> None:
                     s.slug,
                 )
 
+    # A promote runs the holdout + cost-stress gate, which needs a live client
+    # (the analyst client above is already closed).
+    gate_client = FwbgClient(base_url=settings.fwbg_api_url)
     try:
-        await validate_and_apply(session, s, rec, metrics=metrics)
+        await validate_and_apply(session, s, rec, metrics=metrics, fwbg_client=gate_client)
     except Exception as exc:
         log.warning(
             "runner auto mode: analyst recommendation rejected for strategy %s: %s",
@@ -609,6 +608,8 @@ async def _analyze_and_apply(session: AsyncSession, sid: int) -> None:
             exc,
         )
         return
+    finally:
+        await gate_client.aclose()
 
     # TuneParams / ChangeExit / ModifyPlugins → create a child PROPOSED
     # strategy so the auto-runner picks it up on the next free slot.

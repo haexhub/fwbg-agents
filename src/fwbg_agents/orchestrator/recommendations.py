@@ -35,15 +35,25 @@ from fwbg_agents.agents.analyst import (
     Promote,
     TuneParams,
 )
+from fwbg_agents.config import settings
+from fwbg_agents.orchestrator.lessons import regenerate_lessons_digest
 from fwbg_agents.orchestrator.lifecycle import (
     strategy_dir,
     transition_strategy,
 )
+from fwbg_agents.orchestrator.lineage import generation_depth
+from fwbg_agents.orchestrator.promote_gate import run_promote_gate
 from fwbg_agents.persistence.models import (
     Strategy,
     StrategyState,
     Transition,
 )
+
+
+class RecommendationRejectedError(ValueError):
+    """Raised when an iteration recommendation violates a hard universe rule
+    (Plan 009 WP3). Callers treat it like any other rejected recommendation."""
+
 
 log = logging.getLogger(__name__)
 
@@ -53,22 +63,112 @@ def _rec_to_dict(rec: AnalystRecommendation) -> dict[str, Any]:
     return rec.model_dump(mode="json")  # type: ignore[union-attr]
 
 
+def _backtested_universe(strategy: Strategy) -> tuple[list[str], set[str]]:
+    """(all backtested symbols, errored symbols) from the last fwbg_results.json.
+
+    An errored symbol is one fwbg produced no usable metrics for — it may be
+    dropped even during the phase-1 funnel.
+    """
+    path = strategy_dir(strategy.slug) / "iteration_001" / "fwbg_results.json"
+    if not path.is_file():
+        return [], set()
+    try:
+        assets = (json.loads(path.read_text()).get("assets") or {}) or {}
+    except (OSError, json.JSONDecodeError):
+        return [], set()
+    all_syms = list(assets.keys())
+    errored = {
+        sym
+        for sym, data in assets.items()
+        if data.get("status") == "error" or not (data.get("unified_metrics") or {})
+    }
+    return all_syms, errored
+
+
+async def _enforce_universe_rules(
+    session: AsyncSession, strategy: Strategy, rec: AnalystRecommendation
+) -> None:
+    """Deterministic phase-funnel guards for `target_assets` (Plan 009 WP3).
+
+    Raises `RecommendationRejectedError` when the requested narrowing is not
+    allowed. An empty `target_assets` (keep the parent universe) always passes.
+    """
+    targets = list(getattr(rec, "target_assets", []) or [])
+    if not targets:
+        return
+
+    universe, errored = _backtested_universe(strategy)
+    target_set = set(targets)
+
+    # Rule 3: may only narrow within the universe that was actually backtested.
+    if universe and not target_set.issubset(set(universe)):
+        raise RecommendationRejectedError(
+            f"target_assets {sorted(target_set - set(universe))} are not in the "
+            f"backtested universe {sorted(universe)}"
+        )
+
+    # Rule 1: no narrowing before the phase boundary — except dropping assets
+    # fwbg could not evaluate (errored).
+    depth = await generation_depth(session, strategy)
+    if depth < settings.universe_narrowing_min_iteration:
+        dropped = set(universe) - target_set
+        non_errored_dropped = dropped - errored
+        if non_errored_dropped:
+            raise RecommendationRejectedError(
+                f"universe narrowing is not allowed before iteration "
+                f"{settings.universe_narrowing_min_iteration} (current generation "
+                f"{depth}); assets {sorted(non_errored_dropped)} did not error and "
+                "must be kept while the whole universe is still being optimized"
+            )
+
+    # Rule 2: never narrow below the floor, unless the edge is asset-specific.
+    asset_specific = bool((strategy.metadata_json or {}).get("asset_specific"))
+    if not asset_specific and len(target_set) < settings.universe_min_size:
+        raise RecommendationRejectedError(
+            f"target_assets narrows to {len(target_set)} asset(s), below "
+            f"universe_min_size={settings.universe_min_size} (mark the hypothesis "
+            "asset_specific if the edge is bound to one instrument)"
+        )
+
+
 async def validate_and_apply(
     session: AsyncSession,
     strategy: Strategy,
     rec: AnalystRecommendation,
     *,
     metrics: dict[str, float],
+    fwbg_client: Any = None,
 ) -> Transition | None:
     """Apply a recommendation against hard rules.
 
     Returns the new transition row when a state change happened, or None when
     the recommendation only resulted in a sidecar artifact (tune_params,
-    change_exit). Raises `InvalidTransitionError` if a promote recommendation
-    fails the criteria gate.
+    change_exit) or a promote that did not clear the gate. Raises
+    `InvalidTransitionError` if a promote recommendation fails the criteria gate.
+
+    A `promote` additionally runs the holdout + cost-stress promote gate (Plan
+    009 WP4) when `fwbg_client` is supplied; a failed gate keeps the strategy
+    BACKTESTED (the median criteria gate in `transition_strategy` still applies
+    on top).
     """
     if isinstance(rec, Promote):
         log.info("validate_and_apply: promote %s", strategy.slug)
+        if fwbg_client is not None:
+            gate = await run_promote_gate(session, strategy, fwbg_client=fwbg_client)
+            if not gate.passed:
+                log.info(
+                    "validate_and_apply: promote gate failed for %s "
+                    "(fail_count=%d) — staying BACKTESTED",
+                    strategy.slug,
+                    gate.fail_count,
+                )
+                return None
+        else:
+            log.warning(
+                "validate_and_apply: promote for %s without fwbg_client — "
+                "skipping holdout/cost-stress gate",
+                strategy.slug,
+            )
         return await transition_strategy(
             session,
             strategy,
@@ -101,7 +201,7 @@ async def validate_and_apply(
                 sort_keys=False,
             )
         )
-        return await transition_strategy(
+        transition = await transition_strategy(
             session,
             strategy,
             StrategyState.ABANDONED,
@@ -112,9 +212,19 @@ async def validate_and_apply(
             },
             created_by="analyst",
         )
+        # Refresh the global lessons digest so the next Researcher sees this
+        # failure (Plan 009 WP5). Non-fatal — an abandon must still complete.
+        try:
+            regenerate_lessons_digest()
+        except Exception:
+            log.warning("failed to regenerate lessons digest after abandon", exc_info=True)
+        return transition
 
     # TuneParams / ChangeExit / ModifyPlugins — record-only. M4 Translator re-iterates.
     if isinstance(rec, (TuneParams, ChangeExit, ModifyPlugins)):
+        # Phase-funnel guards: reject an illegal universe narrowing before it is
+        # recorded for the Translator (Plan 009 WP3).
+        await _enforce_universe_rules(session, strategy, rec)
         iteration_dir = strategy_dir(strategy.slug) / "iteration_001"
         iteration_dir.mkdir(parents=True, exist_ok=True)
         sidecar = iteration_dir / "analyst_recommendation.json"

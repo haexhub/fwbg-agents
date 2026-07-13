@@ -45,7 +45,8 @@ def _hyp_args(**over):
     base = dict(
         title="Mean-reversion on FOREX majors during London open",
         asset_class="FOREX",
-        strategy_family="RSI_meanrev",
+        strategy_family="mean_reversion",
+        edge_mechanism="RSI extremes after London-open overreactions mean-revert",
         hypothesis=(
             "During the London session, EUR/USD mean-reverts after 1-bar momentum "
             "spikes filtered by RSI extremes."
@@ -62,6 +63,9 @@ def _hyp_args(**over):
                 "title": "Mean reversion in FX",
                 "why_relevant": "documents the London-open effect on EUR/USD",
             },
+        ],
+        suggested_universe=[
+            {"scope": "asset_class", "value": "FOREX", "rationale": "majors"},
         ],
         differentiates_from=[],
     )
@@ -138,7 +142,7 @@ async def test_happy_path_no_prior_art(db):
     )
 
     assert isinstance(result, ResearcherHypothesis)
-    assert result.strategy_family == "RSI_meanrev"
+    assert result.strategy_family == "mean_reversion"
 
     runs = (await db.execute(select(AgentRun))).scalars().all()
     assert len(runs) == 1

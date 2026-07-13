@@ -137,6 +137,39 @@ def _per_asset_summary(slug: str) -> str | None:
     return "; ".join(parts) if parts else None
 
 
+def _per_asset_sharpe(slug: str) -> dict[str, float]:
+    """symbol → sharpe from a member's iteration_001/fwbg_results.json."""
+    results_path = strategy_dir(slug) / "iteration_001" / "fwbg_results.json"
+    if not results_path.is_file():
+        return {}
+    try:
+        results = json.loads(results_path.read_text())
+    except (OSError, json.JSONDecodeError):
+        return {}
+    out: dict[str, float] = {}
+    for sym, data in (results.get("assets") or {}).items():
+        sh = (data.get("unified_metrics") or {}).get("sharpe")
+        if isinstance(sh, (int, float)):
+            out[sym] = float(sh)
+    return out
+
+
+def _per_asset_series(members: list[Strategy]) -> list[str]:
+    """Per-asset Sharpe trend across the chain, oldest → newest.
+
+    Renders e.g. `EURUSD: sharpe 0.30 → 0.42 → 0.19` so the Analyst can spot
+    assets that consistently underperform (Plan 009 WP3 narrowing evidence).
+    A missing value in a generation renders as `n/a`.
+    """
+    per_member = [_per_asset_sharpe(m.slug) for m in members]
+    symbols = sorted({sym for m in per_member for sym in m})
+    lines: list[str] = []
+    for sym in symbols:
+        series = " → ".join(f"{m[sym]:.2f}" if sym in m else "n/a" for m in per_member)
+        lines.append(f"  - {sym}: sharpe {series}")
+    return lines
+
+
 def _rec_summary(rec: dict[str, Any]) -> str:
     """One-line summary of a recommendation dict (sidecar or transition payload)."""
     kind = rec.get("kind", "unknown")
@@ -229,4 +262,9 @@ async def render_family_history(session: AsyncSession, strategy: Strategy) -> tu
     depth = depths.get(strategy.id) or await generation_depth(session, strategy)
     if len(members) <= 1:
         return depth, "(first iteration — no prior family history)"
+
+    series = _per_asset_series(members)
+    if series:
+        lines.append("- per-asset Sharpe across the chain (oldest → newest):")
+        lines.extend(series)
     return depth, "\n".join(lines)

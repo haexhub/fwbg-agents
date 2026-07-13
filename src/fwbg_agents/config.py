@@ -130,7 +130,7 @@ class Settings(BaseSettings):
         ),
     )
     reiterate_max_depth: int = Field(
-        default=5,
+        default=12,
         ge=1,
         le=20,
         description=(
@@ -138,6 +138,33 @@ class Settings(BaseSettings):
             "strategy at this depth is analyzed, reiterate refuses to create "
             "another child — the Analyst is told it is on its final iteration "
             "and should promote or abandon."
+        ),
+    )
+    universe_narrowing_min_iteration: int = Field(
+        default=5,
+        ge=1,
+        description=(
+            "Phase-funnel boundary: iterations below this generation depth must "
+            "optimize the whole universe (no `target_assets` narrowing). From "
+            "this depth on, evidence-based narrowing is allowed."
+        ),
+    )
+    universe_min_size: int = Field(
+        default=3,
+        ge=1,
+        description=(
+            "Floor for evidence-based universe narrowing — a non-asset-specific "
+            "strategy may never be narrowed below this many assets."
+        ),
+    )
+    holdout_months: int = Field(
+        default=24,
+        ge=1,
+        description=(
+            "Months of most-recent data reserved as an out-of-sample holdout. "
+            "Iteration backtests end at today - holdout_months (no iteration ever "
+            "sees this window); the promote gate then runs a holdout backtest on "
+            "[today - holdout_months, today] before a strategy may advance to paper."
         ),
     )
     min_iterations_before_abandon: int = Field(
