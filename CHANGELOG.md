@@ -1,5 +1,35 @@
 # Changelog
 
+## [0.23.1](https://github.com/haexhub/fwbg-agents/compare/v0.23.0...v0.23.1) (2026-07-13)
+
+
+### Bug Fixes
+
+* **docker:** revert runtime to python3.12, stop dependabot from re-bumping it ([0400dfd](https://github.com/haexhub/fwbg-agents/commit/0400dfdbaf70d2e8cc0f69fd9fb052529d90e3e5))
+
+## [0.23.0](https://github.com/haexhub/fwbg-agents/compare/v0.22.1...v0.23.0) (2026-07-13)
+
+
+### Features
+
+* **funnel:** phase-funnel universe narrowing + first-iteration breadth (Plan 009 WP3) ([153ddd6](https://github.com/haexhub/fwbg-agents/commit/153ddd66056d66db40b2bb23723f2ab2f4ad86f1))
+* **loop:** trade diagnostics + median promotion gate (Plan 009 WP1+WP2) ([42f4cf4](https://github.com/haexhub/fwbg-agents/commit/42f4cf4d534c428e7459df959f1442be41fe36db))
+* **promote-gate:** holdout + cost-stress gate before paper (Plan 009 WP4) ([61ee1eb](https://github.com/haexhub/fwbg-agents/commit/61ee1eb167d584655f4ef5e1fe149be95684fa30))
+* **spec:** StrategySpec + controlled family vocab + lessons digest (Plan 009 WP5) ([75b6998](https://github.com/haexhub/fwbg-agents/commit/75b6998513a818ae0c7075431128413249446416))
+
+
+### Bug Fixes
+
+* **auto-runner:** use median metrics in abandon-override check ([c6a6eda](https://github.com/haexhub/fwbg-agents/commit/c6a6edae9a94496693de109245cb486908f9665a))
+* **code-review:** address CodeRabbit findings on PR [#178](https://github.com/haexhub/fwbg-agents/issues/178) ([7c101ba](https://github.com/haexhub/fwbg-agents/commit/7c101ba1665e0de318a7df09e5e14b825a3ccaa9))
+* **code-review:** address remaining CodeRabbit nitpicks on PR [#178](https://github.com/haexhub/fwbg-agents/issues/178) ([00713ab](https://github.com/haexhub/fwbg-agents/commit/00713abead0ed270a5abcc9a1de4af6d72c2dff1))
+* **promote-gate:** mypy errors in criteria kwargs and asset_class ([00960dd](https://github.com/haexhub/fwbg-agents/commit/00960dd9aacb52867d6038b0953b893f8c84c9aa))
+
+
+### Documentation
+
+* **plan-009:** WP1–WP5 done, WP6 deferred after spike ([a1995ba](https://github.com/haexhub/fwbg-agents/commit/a1995baf0879424642af8acfb4ff68ce64d7e4a9))
+
 ## [0.22.1](https://github.com/haexhub/fwbg-agents/compare/v0.22.0...v0.22.1) (2026-07-12)
 
 
