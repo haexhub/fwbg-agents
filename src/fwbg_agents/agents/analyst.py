@@ -27,7 +27,6 @@ from __future__ import annotations
 
 import json
 import logging
-import statistics
 import time
 from datetime import UTC, datetime
 from pathlib import Path
@@ -43,6 +42,9 @@ from fwbg_agents.config import settings
 from fwbg_agents.orchestrator.lifecycle import check_backtest_criteria, strategy_dir
 from fwbg_agents.orchestrator.lineage import render_family_history
 from fwbg_agents.orchestrator.live_catalog import LiveCatalog, fetch_live_catalog
+from fwbg_agents.orchestrator.metrics import (
+    median_metrics_across_assets as _median_metrics_across_assets,
+)
 from fwbg_agents.orchestrator.plugin_catalog import PluginCatalog
 from fwbg_agents.persistence.agent_runs import (
     fail_agent_run,
@@ -314,23 +316,6 @@ def _best_symbol_metrics_from_results(run: dict) -> dict:
         if isinstance(sh, (int, float)) and sh > best[0]:
             best = (float(sh), m)
     return best[1]
-
-
-def _median_metrics_across_assets(run: dict) -> dict:
-    """Per-metric median across every asset that produced unified_metrics.
-
-    The promotion gate judges a strategy over its whole universe rather than
-    its single best symbol (which invites selection bias — a strong result on
-    one asset carried the whole gate). For a single-asset universe the median
-    equals that asset's metrics, so single-asset strategies are unaffected.
-    """
-    per_metric: dict[str, list[float]] = {}
-    for sym in (run.get("assets") or {}).values():
-        m = sym.get("unified_metrics") or {}
-        for k, v in m.items():
-            if isinstance(v, (int, float)):
-                per_metric.setdefault(k, []).append(float(v))
-    return {k: float(statistics.median(vs)) for k, vs in per_metric.items() if vs}
 
 
 def _per_asset_metrics_from_results(run: dict) -> dict[str, dict]:

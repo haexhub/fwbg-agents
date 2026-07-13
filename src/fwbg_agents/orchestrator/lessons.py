@@ -41,6 +41,8 @@ def regenerate_lessons_digest() -> Path:
                 data = yaml.safe_load(pm.read_text()) or {}
             except (OSError, yaml.YAMLError):
                 continue
+            if not isinstance(data, dict):
+                continue
             family = str(data.get("strategy_family") or "unknown")
             slug = str(data.get("slug") or pm.parent.name)
             written = str(data.get("written_at") or "")

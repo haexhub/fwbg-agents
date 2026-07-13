@@ -24,19 +24,6 @@ STRATEGY_SPEC_FILENAME = "strategy_spec.md"
 
 # Controlled vocabulary. Extend deliberately — every new value weakens the
 # same-family dedup bypass, so prefer `other` over a one-off string.
-StrategyFamilyLit = Literal[
-    "ORB",
-    "mean_reversion",
-    "momentum",
-    "breakout",
-    "carry",
-    "seasonality",
-    "liquidity_sweep",
-    "volatility",
-    "pairs",
-    "other",
-]
-
 STRATEGY_FAMILIES: tuple[str, ...] = (
     "ORB",
     "mean_reversion",
@@ -49,6 +36,8 @@ STRATEGY_FAMILIES: tuple[str, ...] = (
     "pairs",
     "other",
 )
+
+StrategyFamilyLit = Literal[STRATEGY_FAMILIES]  # type: ignore[valid-type]
 
 
 class StrategySpec(BaseModel):

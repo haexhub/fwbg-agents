@@ -105,7 +105,7 @@ def _load_symbol_trades(run_dir: Path, symbol: str) -> tuple[list[dict], dict | 
     trades: list[dict] = []
     for fold in (data.get("walk_forward") or {}).get("fold_details") or []:
         for t in fold.get("test_trades_detail") or []:
-            if isinstance(t, dict) and "pnl_raw" in t:
+            if isinstance(t, dict) and isinstance(t.get("pnl_raw"), (int, float)):
                 trades.append(t)
     analytics = (
         data.get("trade_analytics") if isinstance(data.get("trade_analytics"), dict) else None

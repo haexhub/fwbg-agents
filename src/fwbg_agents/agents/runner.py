@@ -41,7 +41,6 @@ import calendar
 import json
 import logging
 import re
-import statistics
 import time
 from datetime import date
 from pathlib import Path
@@ -53,6 +52,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from fwbg_agents.config import settings
 from fwbg_agents.orchestrator.lifecycle import strategy_dir, transition_strategy
+from fwbg_agents.orchestrator.metrics import (
+    median_metrics_across_assets as _median_metrics_across_assets,
+)
 from fwbg_agents.orchestrator.trade_diagnostics import compute_trade_diagnostics
 from fwbg_agents.orchestrator.universe import (
     UniverseAttempt,
@@ -159,23 +161,6 @@ class RunnerResult(BaseModel):
 
 
 _TERMINAL_FWBG_STATUSES = frozenset({"completed", "failed", "error", "cancelled"})
-
-
-def _median_metrics_across_assets(run: dict[str, Any]) -> dict[str, float]:
-    """Per-metric median across every asset that produced unified_metrics.
-
-    The strategy is judged over its whole universe, not its single best symbol
-    (which invites selection bias). For a single-asset universe the median
-    equals that asset's metrics, so single-asset strategies are unaffected.
-    Returns an empty dict when no asset produced metrics.
-    """
-    per_metric: dict[str, list[float]] = {}
-    for sym in (run.get("assets") or {}).values():
-        m = sym.get("unified_metrics") or {}
-        for k, v in m.items():
-            if isinstance(v, (int, float)):
-                per_metric.setdefault(k, []).append(float(v))
-    return {k: float(statistics.median(vs)) for k, vs in per_metric.items() if vs}
 
 
 def _months_ago_iso(months: int) -> str:
