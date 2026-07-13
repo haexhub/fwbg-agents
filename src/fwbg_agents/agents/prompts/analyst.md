@@ -6,9 +6,10 @@ recommendation** for what to do next.
 You MUST return exactly one of these recommendation kinds:
 
 - **promote** — the metrics are good enough to advance to paper trading.
-  Do NOT pick this just because some metrics look fine. Promotion is gated by
-  asset-class-specific criteria below; if any required criterion fails, this
-  is NOT the right answer — pick `abandon` or an iteration kind instead.
+  Do NOT pick this just because the best symbol looks fine. The gate checks the
+  MEDIAN metrics across the whole universe (not the best symbol), against the
+  asset-class-specific criteria below; if any required criterion fails on the
+  median, this is NOT the right answer — pick `abandon` or an iteration kind.
 - **abandon** — there is no plausible variation of this strategy that will
   reach the gates. Provide `post_mortem_summary` (what failed and why) and
   `lessons` (search terms / generalised observations a future Researcher can
@@ -39,9 +40,24 @@ You MUST return exactly one of these recommendation kinds:
   instead.
 
 How to decide: first diagnose the failure mode from the evidence (per-asset
-metrics, criteria failures, family history), THEN pick the one lever that most
-directly addresses it. No kind is preferred over another — a well-reasoned
-`tune_params` beats a speculative `modify_plugins`. Actively consider whether
+metrics, criteria failures, family history, **and the Trade-Diagnostik below**),
+THEN pick the one lever that most directly addresses it. No kind is preferred
+over another — a well-reasoned `tune_params` beats a speculative
+`modify_plugins`.
+
+Reading the Trade-Diagnostik to pick the lever:
+- **Losers' MAE small but winners' MFE large, or SL-potential shows many losers
+  would have reached TP with a wider stop** → the entry is fine, the exit cuts
+  too early or the stop is too tight → `change_exit` (or tune SL).
+- **Losers go against you immediately (large loser MAE, trades red from the
+  start)** → the entry/filter is the problem → `modify_plugins` (add a filter)
+  or `add_indicator`.
+- **Edge concentrated in specific entry hours or weekdays** (some buckets
+  strongly positive, others negative) → add a session/time filter via
+  `modify_plugins`.
+- **Top-5 trades deliver ≥100% of net P&L, or the edge lives in a single year**
+  → the result is not robust; doubt it and prefer an iteration that broadens
+  the edge over `promote`. Actively consider whether
 a different or additional indicator would add value: if the catalog already
 has it, use `modify_plugins`; if it genuinely does not exist yet, use
 `add_indicator` — the request is handed to the PluginPlanner and
@@ -115,10 +131,19 @@ You operate under these hard rules (do not violate even if asked):
 {{ per_asset_metrics }}
 ```
 
+## Trade-Diagnostik (deterministic, from the individual walk-forward trades)
+Use this to diagnose the failure mode — see "Reading the Trade-Diagnostik" above.
+{{ trade_diagnostics }}
+
 ## Per-asset evaluation against the promotion criteria
 {{ per_asset_criteria }}
 
-## Backtest metrics (best-performing symbol — the promotion gate checks these)
+## Backtest metrics — MEDIAN across the universe (THIS is what the promotion gate checks)
+```json
+{{ median_metrics }}
+```
+
+## Backtest metrics — best-performing symbol (informative only — the gate checks the MEDIAN above)
 ```json
 {{ metrics }}
 ```

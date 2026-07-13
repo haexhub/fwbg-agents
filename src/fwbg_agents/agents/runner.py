@@ -40,7 +40,9 @@ import asyncio
 import json
 import logging
 import re
+import statistics
 import time
+from pathlib import Path
 from typing import Any, Protocol
 
 import httpx
@@ -49,6 +51,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from fwbg_agents.config import settings
 from fwbg_agents.orchestrator.lifecycle import strategy_dir, transition_strategy
+from fwbg_agents.orchestrator.trade_diagnostics import compute_trade_diagnostics
 from fwbg_agents.orchestrator.universe import (
     UniverseAttempt,
     plan_universe_attempts,
@@ -153,24 +156,36 @@ class RunnerResult(BaseModel):
 _TERMINAL_FWBG_STATUSES = frozenset({"completed", "failed", "error", "cancelled"})
 
 
-def _best_symbol_metrics(run: dict[str, Any]) -> dict[str, float]:
-    """Pick the symbol with the highest sharpe; return its unified_metrics."""
-    assets = run.get("assets") or {}
-    if not assets:
-        return {}
-    best: tuple[float, dict[str, float]] = (float("-inf"), {})
-    for sym in assets.values():
+def _median_metrics_across_assets(run: dict[str, Any]) -> dict[str, float]:
+    """Per-metric median across every asset that produced unified_metrics.
+
+    The strategy is judged over its whole universe, not its single best symbol
+    (which invites selection bias). For a single-asset universe the median
+    equals that asset's metrics, so single-asset strategies are unaffected.
+    Returns an empty dict when no asset produced metrics.
+    """
+    per_metric: dict[str, list[float]] = {}
+    for sym in (run.get("assets") or {}).values():
         m = sym.get("unified_metrics") or {}
-        sh = m.get("sharpe")
-        if sh is None:
-            continue
-        try:
-            shv = float(sh)
-        except (TypeError, ValueError):
-            continue
-        if shv > best[0]:
-            best = (shv, m)
-    return {k: float(v) for k, v in best[1].items() if isinstance(v, (int, float))}
+        for k, v in m.items():
+            if isinstance(v, (int, float)):
+                per_metric.setdefault(k, []).append(float(v))
+    return {k: float(statistics.median(vs)) for k, vs in per_metric.items() if vs}
+
+
+def _write_trade_diagnostics(iteration_dir: Path, job_id: str, run_data: dict[str, Any]) -> None:
+    """Write a ``trade_diagnostics.md`` sidecar for the Analyst. Non-fatal.
+
+    A backtest without diagnostics is still a valid backtest — any failure here
+    (missing fwbg run dir, unreadable folds) is logged and swallowed.
+    """
+    try:
+        symbols = list((run_data.get("assets") or {}).keys())
+        run_dir = settings.fwbg_test_results_dir / job_id
+        diagnostics = compute_trade_diagnostics(run_dir, symbols)
+        (iteration_dir / "trade_diagnostics.md").write_text(diagnostics.render_markdown())
+    except Exception:  # noqa: BLE001 — diagnostics must never fail a valid backtest
+        log.warning("runner: trade diagnostics failed for %s; continuing", job_id, exc_info=True)
 
 
 class Runner:
@@ -248,7 +263,7 @@ class Runner:
                     log.info("runner: %s; falling back", last_reason)
                     continue
 
-                metrics = _best_symbol_metrics(run_data)
+                metrics = _median_metrics_across_assets(run_data)
                 if not metrics:
                     errored = _asset_error_symbols(run_data)
                     if errored:
@@ -282,6 +297,7 @@ class Runner:
                 # Success — persist and transition.
                 results_path = iteration_dir / "fwbg_results.json"
                 results_path.write_text(json.dumps(run_data, indent=2, sort_keys=True))
+                _write_trade_diagnostics(iteration_dir, job_id, run_data)
                 universe = {
                     "label": attempt.label,
                     "assets": assets,

@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import json
 import logging
+import statistics
 import time
 from datetime import UTC, datetime
 from pathlib import Path
@@ -315,6 +316,23 @@ def _best_symbol_metrics_from_results(run: dict) -> dict:
     return best[1]
 
 
+def _median_metrics_across_assets(run: dict) -> dict:
+    """Per-metric median across every asset that produced unified_metrics.
+
+    The promotion gate judges a strategy over its whole universe rather than
+    its single best symbol (which invites selection bias — a strong result on
+    one asset carried the whole gate). For a single-asset universe the median
+    equals that asset's metrics, so single-asset strategies are unaffected.
+    """
+    per_metric: dict[str, list[float]] = {}
+    for sym in (run.get("assets") or {}).values():
+        m = sym.get("unified_metrics") or {}
+        for k, v in m.items():
+            if isinstance(v, (int, float)):
+                per_metric.setdefault(k, []).append(float(v))
+    return {k: float(statistics.median(vs)) for k, vs in per_metric.items() if vs}
+
+
 def _per_asset_metrics_from_results(run: dict) -> dict[str, dict]:
     """symbol → unified_metrics for every backtested asset."""
     return {
@@ -344,10 +362,12 @@ def _render_prompt(
     max_iterations: int,
     strategy_json: dict,
     metrics: dict,
+    median_metrics: dict,
     per_asset_metrics: dict[str, dict],
     per_asset_criteria: str,
     family_history: str,
     criteria_yaml: str,
+    trade_diagnostics: str,
     catalog_snapshot: str,
 ) -> str:
     """Tiny mustache-style replacer — we don't need Jinja for a handful of variables."""
@@ -359,10 +379,12 @@ def _render_prompt(
     out = out.replace("{{ max_iterations }}", str(max_iterations))
     out = out.replace("{{ strategy_json }}", json.dumps(strategy_json, indent=2))
     out = out.replace("{{ metrics }}", json.dumps(metrics, indent=2))
+    out = out.replace("{{ median_metrics }}", json.dumps(median_metrics, indent=2))
     out = out.replace("{{ per_asset_metrics }}", json.dumps(per_asset_metrics, indent=2))
     out = out.replace("{{ per_asset_criteria }}", per_asset_criteria)
     out = out.replace("{{ family_history }}", family_history)
     out = out.replace("{{ criteria_yaml }}", criteria_yaml or "(no criteria YAML present)")
+    out = out.replace("{{ trade_diagnostics }}", trade_diagnostics)
     out = out.replace("{{ catalog_snapshot }}", catalog_snapshot)
     return out
 
@@ -446,11 +468,19 @@ class Analyst:
             strategy_json = json.loads(strategy_path.read_text()) if strategy_path.is_file() else {}
             results = json.loads(results_path.read_text())
             metrics = _best_symbol_metrics_from_results(results)
+            median_metrics = _median_metrics_across_assets(results)
             per_asset = _per_asset_metrics_from_results(results)
             per_asset_criteria = _render_per_asset_criteria(strategy.asset_class, per_asset)
 
             criteria_path = settings.criteria_dir / f"{strategy.asset_class}.yaml"
             criteria_yaml = criteria_path.read_text() if criteria_path.is_file() else ""
+
+            diagnostics_path = iteration_dir / "trade_diagnostics.md"
+            trade_diagnostics = (
+                diagnostics_path.read_text()
+                if diagnostics_path.is_file()
+                else "(no trade diagnostics available)"
+            )
 
             live = await fetch_live_catalog(self.session, self.fwbg_client)
             catalog_snapshot = _render_catalog_details(live)
@@ -465,10 +495,12 @@ class Analyst:
                 max_iterations=settings.reiterate_max_depth,
                 strategy_json=strategy_json,
                 metrics=metrics,
+                median_metrics=median_metrics,
                 per_asset_metrics=per_asset,
                 per_asset_criteria=per_asset_criteria,
                 family_history=family_history,
                 criteria_yaml=criteria_yaml,
+                trade_diagnostics=trade_diagnostics,
                 catalog_snapshot=catalog_snapshot,
             )
 

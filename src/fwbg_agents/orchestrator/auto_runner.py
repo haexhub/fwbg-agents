@@ -36,6 +36,7 @@ from fwbg_agents.agents.analyst import (
     ModifyPlugins,
     TuneParams,
     _best_symbol_metrics_from_results,
+    _median_metrics_across_assets,
 )
 from fwbg_agents.agents.researcher import ResearcherInput
 from fwbg_agents.agents.runner import Runner, RunnerConfigError
@@ -538,7 +539,7 @@ async def _analyze_and_apply(session: AsyncSession, sid: int) -> None:
         results = json.loads(results_path.read_text())
         metrics = {
             k: float(v)
-            for k, v in _best_symbol_metrics_from_results(results).items()
+            for k, v in _median_metrics_across_assets(results).items()
             if isinstance(v, (int, float))
         }
 

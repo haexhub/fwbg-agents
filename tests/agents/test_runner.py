@@ -24,7 +24,11 @@ import pytest_asyncio
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
-from fwbg_agents.agents.runner import Runner, RunnerError
+from fwbg_agents.agents.runner import (
+    Runner,
+    RunnerError,
+    _median_metrics_across_assets,
+)
 from fwbg_agents.persistence.database import Base
 from fwbg_agents.persistence.models import (
     AgentRun,
@@ -664,3 +668,17 @@ async def test_non_dependency_error_falls_through_to_exhaustion(runner_env):
         await _run(SessionMaker, sid, fake)
 
     assert "insufficient bars for warmup" in str(excinfo.value)
+
+
+def test_median_metrics_across_assets():
+    """The runner stores the per-metric median across the universe, not the
+    metrics of the single best symbol."""
+    run = {
+        "assets": {
+            "EURUSD": {"unified_metrics": {"sharpe": 2.0, "trades": 400}},
+            "GBPUSD": {"unified_metrics": {"sharpe": 1.0, "trades": 200}},
+            "USDJPY": {"unified_metrics": {"sharpe": 0.0, "trades": 600}},
+        }
+    }
+    assert _median_metrics_across_assets(run) == {"sharpe": 1.0, "trades": 400.0}
+    assert _median_metrics_across_assets({"assets": {}}) == {}

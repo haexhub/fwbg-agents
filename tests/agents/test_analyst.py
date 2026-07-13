@@ -20,6 +20,7 @@ from pathlib import Path
 
 import pytest
 import pytest_asyncio
+import yaml
 from pydantic_ai.messages import ModelResponse, ToolCallPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from sqlalchemy import select
@@ -32,6 +33,8 @@ from fwbg_agents.agents.analyst import (
     ChangeExit,
     Promote,
     TuneParams,
+    _best_symbol_metrics_from_results,
+    _median_metrics_across_assets,
     _render_catalog_snapshot,
 )
 from fwbg_agents.orchestrator.plugin_catalog import (
@@ -367,3 +370,164 @@ async def test_analyst_missing_results_marks_agent_run_failed(db_and_backtested)
         ar = (await v.execute(select(AgentRun))).scalars().all()
         assert len(ar) == 1
         assert ar[0].status == AgentRunStatus.FAILED.value
+
+
+# --- WP2: median-across-universe gate --------------------------------------
+
+
+def test_median_metrics_across_assets_takes_per_metric_median():
+    run = {
+        "assets": {
+            "EURUSD": {"unified_metrics": {"sharpe": 2.0, "trades": 400}},
+            "GBPUSD": {"unified_metrics": {"sharpe": 1.0, "trades": 200}},
+            "USDJPY": {"unified_metrics": {"sharpe": 0.0, "trades": 600}},
+        }
+    }
+    med = _median_metrics_across_assets(run)
+    assert med == {"sharpe": 1.0, "trades": 400.0}
+
+
+def test_median_metrics_single_asset_equals_that_asset():
+    """A single-asset universe is unaffected — the median is that asset."""
+    run = {"assets": {"EURUSD": {"unified_metrics": {"sharpe": 1.8, "trades": 400}}}}
+    assert _median_metrics_across_assets(run) == {"sharpe": 1.8, "trades": 400.0}
+
+
+def test_median_metrics_ignores_assets_without_metrics():
+    assert _median_metrics_across_assets({"assets": {}}) == {}
+    assert _median_metrics_across_assets({}) == {}
+    run = {"assets": {"EURUSD": {"status": "error", "unified_metrics": {}}}}
+    assert _median_metrics_across_assets(run) == {}
+
+
+def _seed_forex_criteria(tmp_path, monkeypatch):
+    from fwbg_agents.config import settings
+
+    monkeypatch.setattr(settings, "data_dir", tmp_path / "data")
+    settings.criteria_dir.mkdir(parents=True)
+    (settings.criteria_dir / "FOREX.yaml").write_text(
+        yaml.safe_dump(
+            {
+                "backtest_to_paper": {"required_all": [{"sharpe": ">= 1.5"}]},
+                "paper_to_live": {},
+            }
+        )
+    )
+
+
+def test_median_gate_rejects_lone_star(tmp_path, monkeypatch):
+    """One stellar asset must not carry the gate — the median decides."""
+    from fwbg_agents.orchestrator.lifecycle import check_backtest_criteria
+
+    _seed_forex_criteria(tmp_path, monkeypatch)
+    run = {
+        "assets": {
+            "EURUSD": {"unified_metrics": {"sharpe": 3.0}},
+            "GBPUSD": {"unified_metrics": {"sharpe": 0.5}},
+            "USDJPY": {"unified_metrics": {"sharpe": 0.4}},
+            "AUDUSD": {"unified_metrics": {"sharpe": 0.6}},
+            "USDCHF": {"unified_metrics": {"sharpe": 0.3}},
+        }
+    }
+    # Best symbol (3.0) would have passed the old gate.
+    best = _best_symbol_metrics_from_results(run)
+    assert best["sharpe"] == 3.0
+    ok_best, _ = check_backtest_criteria(asset_class="FOREX", metrics=best)
+    assert ok_best
+    # The median (0.5) fails — the strategy is not broadly profitable.
+    med = _median_metrics_across_assets(run)
+    assert med["sharpe"] == 0.5
+    ok_med, failed = check_backtest_criteria(asset_class="FOREX", metrics=med)
+    assert not ok_med
+    assert any("sharpe" in f for f in failed)
+
+
+def test_median_gate_passes_homogeneous_and_single(tmp_path, monkeypatch):
+    from fwbg_agents.orchestrator.lifecycle import check_backtest_criteria
+
+    _seed_forex_criteria(tmp_path, monkeypatch)
+    homogeneous = {
+        "assets": {
+            "EURUSD": {"unified_metrics": {"sharpe": 1.6}},
+            "GBPUSD": {"unified_metrics": {"sharpe": 1.7}},
+            "USDJPY": {"unified_metrics": {"sharpe": 2.0}},
+        }
+    }
+    ok, failed = check_backtest_criteria(
+        asset_class="FOREX", metrics=_median_metrics_across_assets(homogeneous)
+    )
+    assert ok and failed == []
+
+    single = {"assets": {"EURUSD": {"unified_metrics": {"sharpe": 1.8}}}}
+    ok, failed = check_backtest_criteria(
+        asset_class="FOREX", metrics=_median_metrics_across_assets(single)
+    )
+    assert ok and failed == []
+
+
+async def test_analyst_prompt_surfaces_median_metrics(db_and_backtested):
+    """The rendered prompt must present the median section (the gated one)."""
+    SessionMaker, strategy_id, _ = db_and_backtested
+    captured: dict[str, str] = {}
+
+    def handler(messages, _info: AgentInfo) -> ModelResponse:
+        texts: list[str] = []
+        for m in messages:
+            for p in getattr(m, "parts", []):
+                c = getattr(p, "content", None)
+                if isinstance(c, str):
+                    texts.append(c)
+        captured["prompt"] = "\n".join(texts)
+        return ModelResponse(
+            parts=[
+                ToolCallPart(
+                    "final_result_Promote",
+                    {"kind": "promote", "confidence": 0.5, "reasoning": "x"},
+                )
+            ]
+        )
+
+    async with SessionMaker() as session:
+        s = (await session.execute(select(Strategy).where(Strategy.id == strategy_id))).scalar_one()
+        await Analyst(session, model=FunctionModel(handler)).analyze(s)
+
+    assert "MEDIAN across the universe" in captured["prompt"]
+    # Single-asset fixture → median equals that asset's sharpe (1.8).
+    assert '"sharpe": 1.8' in captured["prompt"]
+
+
+async def test_analyst_prompt_includes_trade_diagnostics_sidecar(db_and_backtested):
+    """A trade_diagnostics.md sidecar is injected into the prompt verbatim."""
+    from fwbg_agents.config import settings
+
+    SessionMaker, strategy_id, _ = db_and_backtested
+    sidecar = (
+        settings.data_dir / "strategies" / "demo_v1" / "iteration_001" / "trade_diagnostics.md"
+    )
+    sidecar.write_text("### All assets — 42 trades\n- payoff ratio: 0.31")
+
+    captured: dict[str, str] = {}
+
+    def handler(messages, _info: AgentInfo) -> ModelResponse:
+        texts: list[str] = []
+        for m in messages:
+            for p in getattr(m, "parts", []):
+                c = getattr(p, "content", None)
+                if isinstance(c, str):
+                    texts.append(c)
+        captured["prompt"] = "\n".join(texts)
+        return ModelResponse(
+            parts=[
+                ToolCallPart(
+                    "final_result_Promote",
+                    {"kind": "promote", "confidence": 0.5, "reasoning": "x"},
+                )
+            ]
+        )
+
+    async with SessionMaker() as session:
+        s = (await session.execute(select(Strategy).where(Strategy.id == strategy_id))).scalar_one()
+        await Analyst(session, model=FunctionModel(handler)).analyze(s)
+
+    assert "## Trade-Diagnostik" in captured["prompt"]
+    assert "payoff ratio: 0.31" in captured["prompt"]
