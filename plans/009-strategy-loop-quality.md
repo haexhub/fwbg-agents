@@ -13,7 +13,18 @@
 
 ## Status
 
-- **Status**: IN PROGRESS — WP1 + WP2 + WP3 + WP4 + WP5 DONE. Offen: WP6.
+- **Status**: WP1–WP5 DONE; WP6 DEFERRED. (Kernziele umgesetzt.)
+  - **WP6 DEFERRED** (P3, explorativ). Spike 6.1 durchgeführt: eine „nur
+    Entry-Signal + Zeit-Exit"-Strategie ist in fwbg abbildbar (Exit `fixed` +
+    weite TP/SL + `timeout_bars=n`, regelbasiertes Modell ⇒ ohne ML-Training),
+    ABER der Vorfilter spart nur die Analyst-Iterationen — Translator + 1
+    (billiger) Backtest bleiben nötig (Variante A). Variante B (lokales
+    OHLCV-Skript) spart mehr, birgt aber Divergenz zwischen lokal reproduziertem
+    Signal und fwbgs echtem Backtest → Gefahr, brauchbare Strategien fälschlich
+    zu abandonen. Entscheidung (mit User 2026-07-13): zurückstellen — der
+    Grenznutzen ist nach WP1–WP5 klein (Median-Gate/Diagnostik/Holdout/Funnel
+    stoppen tote Ideen bereits früh). Falls später doch: Variante A. Erst mit
+    echten Runs prüfen, ob WP1–WP5 die Profitabilität schon adressieren.
   - **WP5 DONE**: `speckit/strategy_spec.py` (`StrategyFamilyLit` kontrolliertes
     Vokabular + `StrategySpec` mit `edge_mechanism` als Dedup-Anker + Renderer).
     `ResearcherHypothesis`: `strategy_family` jetzt Enum (war Freitext), neues
