@@ -13,7 +13,20 @@
 
 ## Status
 
-- **Status**: IN PROGRESS — WP1 + WP2 + WP3 + WP4 DONE. Offen: WP5, WP6.
+- **Status**: IN PROGRESS — WP1 + WP2 + WP3 + WP4 + WP5 DONE. Offen: WP6.
+  - **WP5 DONE**: `speckit/strategy_spec.py` (`StrategyFamilyLit` kontrolliertes
+    Vokabular + `StrategySpec` mit `edge_mechanism` als Dedup-Anker + Renderer).
+    `ResearcherHypothesis`: `strategy_family` jetzt Enum (war Freitext), neues
+    Pflichtfeld `edge_mechanism` + optionale Dims (entry_logic/exit_mechanism/
+    regime_assumption/filters); `strategy_spec_from_hypothesis`. research_flow
+    schreibt `strategy_spec.md` (NICHT `spec.md` — das schreibt bereits der
+    Translator als human-readable Summary; Abweichung vom Plan zur Kollisions-
+    vermeidung). Prior-Art v2: `PriorArtMatch.edge_mechanism` aus der
+    hypothesis.json des Treffers. Lessons-Digest: `orchestrator/lessons.py`
+    regeneriert `data/lessons.md` (nach jedem Abandon, gruppiert nach Family,
+    neueste zuerst); Researcher-Prompt bekommt `{{ lessons_digest }}`-Slot.
+    researcher.md: Enum-Vokabular + edge_mechanism + Dims dokumentiert.
+    Bestands-Strategien: kein Migrationszwang (prior_art String-Vergleich bleibt).
   - **WP3 DONE**: `config` reiterate_max_depth 5→12, `universe_narrowing_min_iteration=5`,
     `universe_min_size=3`. `ResearcherHypothesis` + `asset_specific`/`asset_specific_rationale`;
     `validate_hypothesis` erzwingt ≥3 Assets in Erstiteration (asset_class-Scope zählt als breit)

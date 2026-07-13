@@ -28,6 +28,7 @@ def _hyp(**over):
         title="t",
         asset_class="FOREX",
         strategy_family="ORB",
+        edge_mechanism="London-open liquidity imbalance drives a short momentum burst",
         hypothesis="h",
         expected_edge_explanation="e",
         key_indicators=["opening_range"],

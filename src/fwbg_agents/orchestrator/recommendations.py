@@ -36,6 +36,7 @@ from fwbg_agents.agents.analyst import (
     TuneParams,
 )
 from fwbg_agents.config import settings
+from fwbg_agents.orchestrator.lessons import regenerate_lessons_digest
 from fwbg_agents.orchestrator.lifecycle import (
     strategy_dir,
     transition_strategy,
@@ -200,7 +201,7 @@ async def validate_and_apply(
                 sort_keys=False,
             )
         )
-        return await transition_strategy(
+        transition = await transition_strategy(
             session,
             strategy,
             StrategyState.ABANDONED,
@@ -211,6 +212,13 @@ async def validate_and_apply(
             },
             created_by="analyst",
         )
+        # Refresh the global lessons digest so the next Researcher sees this
+        # failure (Plan 009 WP5). Non-fatal — an abandon must still complete.
+        try:
+            regenerate_lessons_digest()
+        except Exception:
+            log.warning("failed to regenerate lessons digest after abandon", exc_info=True)
+        return transition
 
     # TuneParams / ChangeExit / ModifyPlugins — record-only. M4 Translator re-iterates.
     if isinstance(rec, (TuneParams, ChangeExit, ModifyPlugins)):

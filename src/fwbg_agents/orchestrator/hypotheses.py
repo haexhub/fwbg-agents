@@ -15,6 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from fwbg_agents.orchestrator.prior_art import PriorArtMatch
 from fwbg_agents.persistence.models import Strategy
+from fwbg_agents.speckit.strategy_spec import StrategyFamilyLit, StrategySpec
 
 _SLUG_SUFFIX_RE = re.compile(r"__(\d{3,})$")
 _ITER_SUFFIX_RE = re.compile(r"__it(\d{3,})$")
@@ -62,9 +63,19 @@ class ResearcherHypothesis(BaseModel):
 
     title: str
     asset_class: str | None = None
-    strategy_family: str
+    strategy_family: StrategyFamilyLit
+    edge_mechanism: str = Field(
+        min_length=10,
+        max_length=240,
+        description="ONE sentence: the mechanism that creates the edge. The "
+        "dedup anchor — two strategies with the same edge_mechanism are the same idea.",
+    )
     hypothesis: str
     expected_edge_explanation: str
+    entry_logic: str = ""
+    exit_mechanism: str = ""
+    regime_assumption: str = ""
+    filters: list[str] = Field(default_factory=list)
     key_indicators: list[str] = Field(min_length=1)
     tags: list[str] = Field(min_length=1)
     sources: list[Source] = Field(min_length=1)
@@ -73,6 +84,27 @@ class ResearcherHypothesis(BaseModel):
     differentiates_from: list[str] = Field(default_factory=list)
     asset_specific: bool = False
     asset_specific_rationale: str = ""
+
+
+def strategy_spec_from_hypothesis(hypothesis: ResearcherHypothesis) -> StrategySpec:
+    """Derive a StrategySpec from a validated hypothesis (Plan 009 WP5).
+
+    Timeframe + universe come from `suggested_universe`; the differentiation
+    dimensions come from the (optional) structured hypothesis fields.
+    """
+    timeframe = next((u.timeframe for u in hypothesis.suggested_universe if u.timeframe), "")
+    universe = [u.value for u in hypothesis.suggested_universe]
+    return StrategySpec(
+        strategy_family=hypothesis.strategy_family,
+        edge_mechanism=hypothesis.edge_mechanism,
+        entry_logic=hypothesis.entry_logic,
+        exit_mechanism=hypothesis.exit_mechanism,
+        regime_assumption=hypothesis.regime_assumption,
+        filters=list(hypothesis.filters),
+        timeframe=timeframe,
+        universe=universe,
+        asset_specific=hypothesis.asset_specific,
+    )
 
 
 def validate_hypothesis(

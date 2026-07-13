@@ -98,13 +98,27 @@ higher timeframe buys far more history and thus more robust validation, so
 prefer the HIGHEST timeframe on which the edge is still expressible. The
 full available history is downloaded automatically for backtests.
 
+# Lessons from previously abandoned strategies (do NOT re-propose these)
+
+{{ lessons_digest }}
+
 # Output
 
 Return EXACTLY ONE `ResearcherHypothesis` with:
 
 - `title`: short headline
 - `asset_class`: the scoped asset class if provided, otherwise `null`
-- `strategy_family`: a short label like `ORB`, `RSI_meanrev`, `breakout`
+- `strategy_family`: CONTROLLED VOCABULARY — pick exactly one of `ORB`,
+  `mean_reversion`, `momentum`, `breakout`, `carry`, `seasonality`,
+  `liquidity_sweep`, `volatility`, `pairs`, `other`. Do NOT invent a new label
+  (it would defeat the anti-redundancy same-family check); use `other` only when
+  none fit.
+- `edge_mechanism`: ONE sentence stating the mechanism that creates the edge.
+  This is the dedup anchor — make it specific (two strategies with the same
+  edge_mechanism are the same idea). If prior-art matches list an
+  `edge_mechanism`, yours must be meaningfully different.
+- `entry_logic`, `exit_mechanism`, `regime_assumption` (optional strings),
+  `filters` (optional list) — the differentiation dimensions in structured form.
 - `hypothesis`: 2-4 sentences naming the edge
 - `expected_edge_explanation`: why the edge exists, mechanistically
 - `key_indicators`: list of indicator names the Translator can map to fwbg plugins
