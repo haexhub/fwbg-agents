@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.23.1](https://github.com/haexhub/fwbg-agents/compare/v0.23.0...v0.23.1) (2026-07-13)
+
+
+### Bug Fixes
+
+* **docker:** revert runtime to python3.12, stop dependabot from re-bumping it ([0400dfd](https://github.com/haexhub/fwbg-agents/commit/0400dfdbaf70d2e8cc0f69fd9fb052529d90e3e5))
+
 ## [0.23.0](https://github.com/haexhub/fwbg-agents/compare/v0.22.1...v0.23.0) (2026-07-13)
 
 
