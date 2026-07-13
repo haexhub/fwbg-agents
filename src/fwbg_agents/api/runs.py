@@ -102,11 +102,7 @@ async def _run_analyst_background(strategy_id: int) -> None:
                 import json as _json
 
                 results = _json.loads(results_path.read_text())
-                metrics = {
-                    k: float(v)
-                    for k, v in _median_metrics_across_assets(results).items()
-                    if isinstance(v, (int, float))
-                }
+                metrics = _median_metrics_across_assets(results)
             try:
                 await validate_and_apply(session, s, rec, metrics=metrics, fwbg_client=client)
             except Exception as exc:

@@ -258,7 +258,7 @@ class Runner:
                     asset_classes,
                 )
                 try:
-                    job_id, run_data = await self._execute_backtest(
+                    job_id, run_data = await self.execute_backtest(
                         fwbg_name,
                         assets=assets,
                         asset_classes=asset_classes,
@@ -492,7 +492,7 @@ class Runner:
             log.info("runner: started fwbg job %s", job_id)
             return job_id
 
-    async def _execute_backtest(
+    async def execute_backtest(
         self,
         fwbg_name: str,
         *,

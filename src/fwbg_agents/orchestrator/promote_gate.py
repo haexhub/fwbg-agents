@@ -118,7 +118,7 @@ async def run_promote_gate(
         for label, section, kwargs in specs:
             emit_run_event(ar.id, "promote_gate_submitted", label=label)
             try:
-                job_id, run_data = await runner._execute_backtest(
+                job_id, run_data = await runner.execute_backtest(
                     fwbg_name,
                     assets=assets,
                     asset_classes=None,

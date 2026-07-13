@@ -536,11 +536,7 @@ async def _analyze_and_apply(session: AsyncSession, sid: int) -> None:
     metrics: dict[str, float] = {}
     if results_path.is_file():
         results = json.loads(results_path.read_text())
-        metrics = {
-            k: float(v)
-            for k, v in _median_metrics_across_assets(results).items()
-            if isinstance(v, (int, float))
-        }
+        metrics = _median_metrics_across_assets(results)
 
     # Guard: override an Abandon recommendation when the strategy has not had a
     # fair chance yet.  Two independent conditions both trigger the same override:
