@@ -35,7 +35,6 @@ from fwbg_agents.agents.analyst import (
     ChangeExit,
     ModifyPlugins,
     TuneParams,
-    _best_symbol_metrics_from_results,
     _median_metrics_across_assets,
 )
 from fwbg_agents.agents.researcher import ResearcherInput
@@ -565,7 +564,7 @@ async def _analyze_and_apply(session: AsyncSession, sid: int) -> None:
                 if rp.is_file():
                     try:
                         metrics_history.append(
-                            _best_symbol_metrics_from_results(json.loads(rp.read_text()))
+                            _median_metrics_across_assets(json.loads(rp.read_text()))
                         )
                     except Exception:
                         metrics_history.append({})
