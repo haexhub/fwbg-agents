@@ -13,7 +13,17 @@
 
 ## Status
 
-- **Status**: IN PROGRESS — WP1 + WP2 + WP4 DONE. Offen: WP3, WP5, WP6.
+- **Status**: IN PROGRESS — WP1 + WP2 + WP3 + WP4 DONE. Offen: WP5, WP6.
+  - **WP3 DONE**: `config` reiterate_max_depth 5→12, `universe_narrowing_min_iteration=5`,
+    `universe_min_size=3`. `ResearcherHypothesis` + `asset_specific`/`asset_specific_rationale`;
+    `validate_hypothesis` erzwingt ≥3 Assets in Erstiteration (asset_class-Scope zählt als breit)
+    außer asset_specific (dann Rationale-Pflicht); researcher.md Regel 4 erweitert. asset_specific
+    wird in `strategy.metadata_json` persistiert. `lineage.render_family_history` rendert zusätzlich
+    Per-Asset-Sharpe-Serie über die Kette. Analyst-Prompt: Phasen-Funnel-Regeln (Slots
+    `universe_narrowing_min_iteration`/`universe_min_size`). Deterministische Hard-Rules in
+    `recommendations._enforce_universe_rules`: (1) keine Verengung vor Phasengrenze außer errored,
+    (2) nie unter universe_min_size außer asset_specific, (3) target_assets ⊆ Backtest-Universum
+    → `RecommendationRejectedError`.
   - **WP4 DONE** (cross-repo). fwbg (Branch `feat/009-strategy-loop-quality`,
     Commit 461b46c): `StrategyConfig` + CLI + `POST /api/runs/start` bekommen
     `start_date`/`end_date`/`cost_multiplier`; `process.py` slict die Daten aufs

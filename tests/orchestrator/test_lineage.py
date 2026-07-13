@@ -156,6 +156,19 @@ async def test_render_family_history(chain, tmp_path):
     assert "lesson: GBPUSD never carried the edge" in history
 
 
+async def test_render_family_history_includes_per_asset_series(chain):
+    """WP3: the history shows each asset's Sharpe trend across the chain so the
+    Analyst can spot consistently-lagging assets to narrow away."""
+    Session, _root_id, child_id = chain
+    async with Session() as s:
+        child = (await s.execute(select(Strategy).where(Strategy.id == child_id))).scalar_one()
+        _depth, history = await render_family_history(s, child)
+
+    assert "per-asset Sharpe across the chain" in history
+    assert "EURUSD: sharpe 0.40 → 1.10" in history
+    assert "GBPUSD: sharpe -0.20 → -0.20" in history
+
+
 async def test_render_family_history_first_iteration(chain):
     Session, _root_id, _child_id = chain
     async with Session() as s:

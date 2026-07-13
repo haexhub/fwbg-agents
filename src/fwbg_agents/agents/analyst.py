@@ -360,6 +360,8 @@ def _render_prompt(
     strategy: Strategy,
     iteration: int,
     max_iterations: int,
+    universe_narrowing_min_iteration: int,
+    universe_min_size: int,
     strategy_json: dict,
     metrics: dict,
     median_metrics: dict,
@@ -378,6 +380,10 @@ def _render_prompt(
     out = out.replace("{{ strategy.strategy_family }}", strategy.strategy_family or "unknown")
     out = out.replace("{{ iteration }}", str(iteration))
     out = out.replace("{{ max_iterations }}", str(max_iterations))
+    out = out.replace(
+        "{{ universe_narrowing_min_iteration }}", str(universe_narrowing_min_iteration)
+    )
+    out = out.replace("{{ universe_min_size }}", str(universe_min_size))
     out = out.replace("{{ strategy_json }}", json.dumps(strategy_json, indent=2))
     out = out.replace("{{ metrics }}", json.dumps(metrics, indent=2))
     out = out.replace("{{ median_metrics }}", json.dumps(median_metrics, indent=2))
@@ -502,6 +508,8 @@ class Analyst:
                 strategy=strategy,
                 iteration=depth,
                 max_iterations=settings.reiterate_max_depth,
+                universe_narrowing_min_iteration=settings.universe_narrowing_min_iteration,
+                universe_min_size=settings.universe_min_size,
                 strategy_json=strategy_json,
                 metrics=metrics,
                 median_metrics=median_metrics,

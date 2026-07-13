@@ -281,6 +281,7 @@ async def _research_and_translate(
         strategy_family=hypothesis.strategy_family,
         suggested_universe=[u.model_dump() for u in hypothesis.suggested_universe],
         model_knowledge_only=hypothesis.model_knowledge_only,
+        metadata_json={"asset_specific": hypothesis.asset_specific},
         created_at=now,
         updated_at=now,
     )

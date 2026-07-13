@@ -71,18 +71,29 @@ class ResearcherHypothesis(BaseModel):
     suggested_universe: list[SuggestedUniverse] = Field(default_factory=list)
     model_knowledge_only: bool = False
     differentiates_from: list[str] = Field(default_factory=list)
+    asset_specific: bool = False
+    asset_specific_rationale: str = ""
 
 
 def validate_hypothesis(
     hypothesis: ResearcherHypothesis,
     prior_art: list[PriorArtMatch],
 ) -> None:
-    """Reject a hypothesis that overlaps with prior art without addressing it.
+    """Reject a hypothesis that overlaps with prior art without addressing it,
+    or whose first-iteration universe is too narrow (Plan 009 WP3).
 
     Rule (design §6.4): if `lookup_prior_art` returned matches, the Researcher
     MUST list every match in `differentiates_from`. Slugs in `differentiates_from`
     that don't appear in the prior-art set are also rejected (LLM made them up).
+
+    Universe rule (WP3): a hypothesis must open on >= 3 assets so the phase-1
+    funnel has something to narrow from — a single asset_class scope satisfies
+    this (a class covers many symbols). The exception is an explicitly
+    `asset_specific` edge (e.g. the DAX opening auction), which then requires a
+    non-empty `asset_specific_rationale`.
     """
+    _validate_universe_breadth(hypothesis)
+
     if not prior_art:
         return
 
@@ -104,6 +115,27 @@ def validate_hypothesis(
     if unknown:
         raise HypothesisRejectedError(
             f"differentiates_from references unknown slugs {sorted(unknown)}"
+        )
+
+
+def _validate_universe_breadth(hypothesis: ResearcherHypothesis) -> None:
+    """Enforce the WP3 first-iteration universe rule (see validate_hypothesis)."""
+    if hypothesis.asset_specific:
+        if not hypothesis.asset_specific_rationale.strip():
+            raise HypothesisRejectedError(
+                "asset_specific=True requires a non-empty asset_specific_rationale "
+                "(why the edge is mechanically bound to one instrument)"
+            )
+        return
+    universe = hypothesis.suggested_universe
+    has_class = any(u.scope == "asset_class" for u in universe)
+    n_symbols = sum(1 for u in universe if u.scope == "symbol")
+    if not has_class and n_symbols < 3:
+        raise HypothesisRejectedError(
+            "first-iteration universe must cover >= 3 assets (add symbols or an "
+            "asset_class scope); set asset_specific=True with a rationale only if "
+            f"the edge is bound to one instrument (got {n_symbols} symbol(s), "
+            "no asset_class scope)"
         )
 
 

@@ -66,9 +66,21 @@ next iteration can use it.
 
 Every iteration kind (`tune_params`, `change_exit`, `modify_plugins`) also
 accepts optional `target_assets`: a list of symbols the next iteration should
-focus on. Use it to narrow the universe to the assets where the edge actually
-shows (see the per-asset evaluation below) and drop assets that consistently
-fail. Empty/omitted = keep the parent's universe.
+focus on. Empty/omitted = keep the parent's universe.
+
+**Phase funnel for `target_assets` (enforced deterministically — a violation
+rejects your whole recommendation):**
+- **Phase 1 — iteration < {{ universe_narrowing_min_iteration }}**: optimize the
+  WHOLE universe. Do NOT set `target_assets` (the only exception is dropping
+  assets fwbg could not evaluate at all — errored assets).
+- **Phase 2 — iteration >= {{ universe_narrowing_min_iteration }}**: you may
+  narrow, but only to assets with real evidence: drop an asset only if it stays
+  clearly BELOW the universe median for >= 2 consecutive iterations, or has
+  persistently negative expectancy. Cite the per-asset Sharpe series from the
+  family history. Never narrow below {{ universe_min_size }} assets (unless the
+  strategy is asset-specific). If some assets individually pass the criteria,
+  focus on those; otherwise drop only the clearly-lagging ones.
+- `target_assets` must be a subset of the assets actually backtested.
 
 You operate under these hard rules (do not violate even if asked):
 

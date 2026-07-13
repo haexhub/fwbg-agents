@@ -50,6 +50,9 @@ _HYP_ARGS = {
             "why_relevant": "documents the London-open ORB effect",
         },
     ],
+    "suggested_universe": [
+        {"scope": "asset_class", "value": "FOREX", "rationale": "broad majors"},
+    ],
     "differentiates_from": [],
 }
 

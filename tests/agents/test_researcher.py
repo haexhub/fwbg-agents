@@ -63,6 +63,9 @@ def _hyp_args(**over):
                 "why_relevant": "documents the London-open effect on EUR/USD",
             },
         ],
+        suggested_universe=[
+            {"scope": "asset_class", "value": "FOREX", "rationale": "majors"},
+        ],
         differentiates_from=[],
     )
     base.update(over)

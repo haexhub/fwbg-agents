@@ -27,7 +27,10 @@ from fwbg_agents.agents.analyst import (
     TuneParams,
 )
 from fwbg_agents.orchestrator.lifecycle import InvalidTransitionError
-from fwbg_agents.orchestrator.recommendations import validate_and_apply
+from fwbg_agents.orchestrator.recommendations import (
+    RecommendationRejectedError,
+    validate_and_apply,
+)
 from fwbg_agents.persistence.database import Base
 from fwbg_agents.persistence.models import (
     Strategy,
@@ -263,6 +266,10 @@ async def test_modify_plugins_records_sidecar_no_transition(db_and_backtested):
     SessionMaker, sid, tmp_path, _criteria = db_and_backtested
     async with SessionMaker() as session:
         s = (await session.execute(select(Strategy).where(Strategy.id == sid))).scalar_one()
+        # Single-asset target is only legal for an asset-specific strategy
+        # (WP3 phase-funnel floor otherwise requires >= universe_min_size).
+        s.metadata_json = {"asset_specific": True}
+        await session.commit()
         rec = ModifyPlugins(
             confidence=0.6,
             reasoning="atr filter should cut chop",
@@ -289,3 +296,104 @@ async def test_modify_plugins_records_sidecar_no_transition(db_and_backtested):
         s = (await v.execute(select(Strategy).where(Strategy.id == sid))).scalar_one()
         assert s.current_state == StrategyState.BACKTESTED.value
         assert (await v.execute(select(Transition))).scalars().all() == []
+
+
+# --- WP3: phase-funnel hard rules on target_assets ---------------------------
+
+
+def _write_universe(tmp_path, assets: dict[str, dict]):
+    """assets: symbol -> unified_metrics dict ({} = errored)."""
+    it_dir = tmp_path / "data" / "strategies" / "demo_v1" / "iteration_001"
+    it_dir.mkdir(parents=True, exist_ok=True)
+    (it_dir / "fwbg_results.json").write_text(
+        json.dumps({"assets": {s: {"unified_metrics": m} for s, m in assets.items()}})
+    )
+
+
+def _modify(target):
+    return ModifyPlugins(
+        confidence=0.6,
+        reasoning="x",
+        ops=[PluginOp(action="add", section="indicators", slug="atr")],
+        target_assets=target,
+    )
+
+
+async def test_phase1_blocks_narrowing_of_healthy_assets(db_and_backtested):
+    SessionMaker, sid, tmp_path, _ = db_and_backtested
+    _write_universe(
+        tmp_path, {"EURUSD": {"sharpe": 1.0}, "GBPUSD": {"sharpe": 0.9}, "USDJPY": {"sharpe": 0.8}}
+    )
+    async with SessionMaker() as session:
+        s = (await session.execute(select(Strategy).where(Strategy.id == sid))).scalar_one()
+        with pytest.raises(RecommendationRejectedError, match="not allowed before iteration"):
+            await validate_and_apply(
+                session, s, _modify(["EURUSD", "GBPUSD"]), metrics=_BAD_METRICS
+            )
+
+
+async def test_phase1_allows_dropping_only_errored_assets(db_and_backtested):
+    SessionMaker, sid, tmp_path, _ = db_and_backtested
+    _write_universe(
+        tmp_path,
+        {
+            "EURUSD": {"sharpe": 1.0},
+            "GBPUSD": {"sharpe": 0.9},
+            "USDJPY": {"sharpe": 0.8},
+            "AUDUSD": {},  # errored — no metrics
+        },
+    )
+    async with SessionMaker() as session:
+        s = (await session.execute(select(Strategy).where(Strategy.id == sid))).scalar_one()
+        # dropping only the errored AUDUSD is allowed even in phase 1
+        tr = await validate_and_apply(
+            session, s, _modify(["EURUSD", "GBPUSD", "USDJPY"]), metrics=_BAD_METRICS
+        )
+        assert tr is None  # record-only, no rejection
+
+
+async def test_target_assets_must_be_subset_of_backtested_universe(db_and_backtested):
+    SessionMaker, sid, tmp_path, _ = db_and_backtested
+    _write_universe(tmp_path, {"EURUSD": {"sharpe": 1.0}, "GBPUSD": {"sharpe": 0.9}})
+    async with SessionMaker() as session:
+        s = (await session.execute(select(Strategy).where(Strategy.id == sid))).scalar_one()
+        with pytest.raises(RecommendationRejectedError, match="not in the backtested universe"):
+            await validate_and_apply(
+                session, s, _modify(["EURUSD", "XAUUSD"]), metrics=_BAD_METRICS
+            )
+
+
+async def test_phase2_narrowing_below_floor_rejected(db_and_backtested, monkeypatch):
+    from fwbg_agents.config import settings
+
+    monkeypatch.setattr(settings, "universe_narrowing_min_iteration", 1)  # depth 1 → phase 2
+    SessionMaker, sid, tmp_path, _ = db_and_backtested
+    _write_universe(
+        tmp_path, {"EURUSD": {"sharpe": 1.0}, "GBPUSD": {"sharpe": 0.9}, "USDJPY": {"sharpe": 0.8}}
+    )
+    async with SessionMaker() as session:
+        s = (await session.execute(select(Strategy).where(Strategy.id == sid))).scalar_one()
+        with pytest.raises(RecommendationRejectedError, match="below"):
+            await validate_and_apply(session, s, _modify(["EURUSD"]), metrics=_BAD_METRICS)
+
+
+async def test_phase2_valid_narrowing_recorded(db_and_backtested, monkeypatch):
+    from fwbg_agents.config import settings
+
+    monkeypatch.setattr(settings, "universe_narrowing_min_iteration", 1)
+    SessionMaker, sid, tmp_path, _ = db_and_backtested
+    _write_universe(
+        tmp_path,
+        {
+            "EURUSD": {"sharpe": 1.5},
+            "GBPUSD": {"sharpe": 1.4},
+            "USDJPY": {"sharpe": 1.3},
+            "AUDUSD": {"sharpe": 0.1},
+        },
+    )
+    async with SessionMaker() as session:
+        s = (await session.execute(select(Strategy).where(Strategy.id == sid))).scalar_one()
+        tr = await validate_and_apply(
+            session, s, _modify(["EURUSD", "GBPUSD", "USDJPY"]), metrics=_BAD_METRICS
+        )
+        assert tr is None  # valid narrowing recorded, no rejection
