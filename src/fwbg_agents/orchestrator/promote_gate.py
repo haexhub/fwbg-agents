@@ -24,6 +24,7 @@ from __future__ import annotations
 import json
 import logging
 from datetime import date
+from typing import Any
 
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -109,7 +110,7 @@ async def run_promote_gate(
         today = date.today().isoformat()
         holdout_start = _months_ago_iso(settings.holdout_months)
 
-        specs = [
+        specs: list[tuple[str, str, dict[str, Any]]] = [
             ("holdout", "promote_holdout", {"start_date": holdout_start, "end_date": today}),
             ("cost_stress", "promote_cost_stress", {"cost_multiplier": COST_STRESS_MULTIPLIER}),
         ]
@@ -134,7 +135,9 @@ async def run_promote_gate(
                 continue
             metrics = _median_metrics_across_assets(run_data)
             ok, failures = check_criteria_section(
-                asset_class=strategy.asset_class, metrics=metrics, section=section
+                asset_class=strategy.asset_class,  # type: ignore[arg-type]  # set for any BACKTESTED strategy
+                metrics=metrics,
+                section=section,
             )
             runs.append(
                 GateRun(
