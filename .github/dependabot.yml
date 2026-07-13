@@ -61,6 +61,13 @@ updates:
     labels:
       - "dependencies"
       - "docker"
+    ignore:
+      # Runtime stage's python must match the builder stage's minor
+      # (3.12, hardcoded in the builder FROM line) or the venv at
+      # .venv/lib/python3.12/site-packages can't be imported. A minor bump
+      # here needs a manual Dockerfile change in both stages, never automerged.
+      - dependency-name: "python"
+        update-types: ["version-update:semver-major", "version-update:semver-minor"]
 
   - package-ecosystem: "github-actions"
     directory: "/"
