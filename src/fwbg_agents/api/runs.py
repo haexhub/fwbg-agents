@@ -28,7 +28,7 @@ from fwbg_agents.agents.analyst import (
     ChangeExit,
     ModifyPlugins,
     TuneParams,
-    _best_symbol_metrics_from_results,
+    _median_metrics_across_assets,
 )
 from fwbg_agents.agents.runner import Runner
 from fwbg_agents.config import settings
@@ -102,13 +102,9 @@ async def _run_analyst_background(strategy_id: int) -> None:
                 import json as _json
 
                 results = _json.loads(results_path.read_text())
-                metrics = {
-                    k: float(v)
-                    for k, v in _best_symbol_metrics_from_results(results).items()
-                    if isinstance(v, (int, float))
-                }
+                metrics = _median_metrics_across_assets(results)
             try:
-                await validate_and_apply(session, s, rec, metrics=metrics)
+                await validate_and_apply(session, s, rec, metrics=metrics, fwbg_client=client)
             except Exception as exc:
                 log.warning("analyst recommendation rejected: %s", exc)
                 return

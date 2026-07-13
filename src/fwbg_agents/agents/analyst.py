@@ -42,6 +42,9 @@ from fwbg_agents.config import settings
 from fwbg_agents.orchestrator.lifecycle import check_backtest_criteria, strategy_dir
 from fwbg_agents.orchestrator.lineage import render_family_history
 from fwbg_agents.orchestrator.live_catalog import LiveCatalog, fetch_live_catalog
+from fwbg_agents.orchestrator.metrics import (
+    median_metrics_across_assets as _median_metrics_across_assets,
+)
 from fwbg_agents.orchestrator.plugin_catalog import PluginCatalog
 from fwbg_agents.persistence.agent_runs import (
     fail_agent_run,
@@ -342,12 +345,17 @@ def _render_prompt(
     strategy: Strategy,
     iteration: int,
     max_iterations: int,
+    universe_narrowing_min_iteration: int,
+    universe_min_size: int,
     strategy_json: dict,
     metrics: dict,
+    median_metrics: dict,
     per_asset_metrics: dict[str, dict],
     per_asset_criteria: str,
     family_history: str,
     criteria_yaml: str,
+    trade_diagnostics: str,
+    promote_gate: str,
     catalog_snapshot: str,
 ) -> str:
     """Tiny mustache-style replacer — we don't need Jinja for a handful of variables."""
@@ -357,12 +365,19 @@ def _render_prompt(
     out = out.replace("{{ strategy.strategy_family }}", strategy.strategy_family or "unknown")
     out = out.replace("{{ iteration }}", str(iteration))
     out = out.replace("{{ max_iterations }}", str(max_iterations))
+    out = out.replace(
+        "{{ universe_narrowing_min_iteration }}", str(universe_narrowing_min_iteration)
+    )
+    out = out.replace("{{ universe_min_size }}", str(universe_min_size))
     out = out.replace("{{ strategy_json }}", json.dumps(strategy_json, indent=2))
     out = out.replace("{{ metrics }}", json.dumps(metrics, indent=2))
+    out = out.replace("{{ median_metrics }}", json.dumps(median_metrics, indent=2))
     out = out.replace("{{ per_asset_metrics }}", json.dumps(per_asset_metrics, indent=2))
     out = out.replace("{{ per_asset_criteria }}", per_asset_criteria)
     out = out.replace("{{ family_history }}", family_history)
     out = out.replace("{{ criteria_yaml }}", criteria_yaml or "(no criteria YAML present)")
+    out = out.replace("{{ trade_diagnostics }}", trade_diagnostics)
+    out = out.replace("{{ promote_gate }}", promote_gate)
     out = out.replace("{{ catalog_snapshot }}", catalog_snapshot)
     return out
 
@@ -446,11 +461,26 @@ class Analyst:
             strategy_json = json.loads(strategy_path.read_text()) if strategy_path.is_file() else {}
             results = json.loads(results_path.read_text())
             metrics = _best_symbol_metrics_from_results(results)
+            median_metrics = _median_metrics_across_assets(results)
             per_asset = _per_asset_metrics_from_results(results)
             per_asset_criteria = _render_per_asset_criteria(strategy.asset_class, per_asset)
 
             criteria_path = settings.criteria_dir / f"{strategy.asset_class}.yaml"
             criteria_yaml = criteria_path.read_text() if criteria_path.is_file() else ""
+
+            diagnostics_path = iteration_dir / "trade_diagnostics.md"
+            trade_diagnostics = (
+                diagnostics_path.read_text()
+                if diagnostics_path.is_file()
+                else "(no trade diagnostics available)"
+            )
+
+            gate_path = strategy_dir(strategy.slug) / "promote_gate_results.json"
+            promote_gate = (
+                gate_path.read_text()
+                if gate_path.is_file()
+                else "(promote gate not yet run — no prior failure)"
+            )
 
             live = await fetch_live_catalog(self.session, self.fwbg_client)
             catalog_snapshot = _render_catalog_details(live)
@@ -463,12 +493,17 @@ class Analyst:
                 strategy=strategy,
                 iteration=depth,
                 max_iterations=settings.reiterate_max_depth,
+                universe_narrowing_min_iteration=settings.universe_narrowing_min_iteration,
+                universe_min_size=settings.universe_min_size,
                 strategy_json=strategy_json,
                 metrics=metrics,
+                median_metrics=median_metrics,
                 per_asset_metrics=per_asset,
                 per_asset_criteria=per_asset_criteria,
                 family_history=family_history,
                 criteria_yaml=criteria_yaml,
+                trade_diagnostics=trade_diagnostics,
+                promote_gate=promote_gate,
                 catalog_snapshot=catalog_snapshot,
             )
 

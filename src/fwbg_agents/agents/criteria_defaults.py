@@ -54,6 +54,23 @@ def _criteria(max_drawdown: float) -> dict[str, Any]:
                 {"max_drawdown": f"<= {max_drawdown}"},
             ],
         },
+        # Plan 009 WP4 — promote gate. Deliberately MILDER than backtest_to_paper:
+        # both run on shorter windows (holdout tail / cost-stressed) where the
+        # strict main thresholds would over-reject. required_all only.
+        "promote_holdout": {
+            "required_all": [
+                {"annual_return": "> 0"},
+                {"sharpe": ">= 1.0"},
+                {"profit_factor": ">= 1.3"},
+                {"trades": ">= 60"},
+            ],
+        },
+        "promote_cost_stress": {
+            "required_all": [
+                {"annual_return": "> 0"},
+                {"profit_factor": ">= 1.2"},
+            ],
+        },
         "paper_to_live": _PAPER_TO_LIVE,
     }
 

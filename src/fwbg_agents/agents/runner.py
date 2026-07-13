@@ -37,10 +37,13 @@ aggregation can come later when actual multi-symbol strategies show up.
 from __future__ import annotations
 
 import asyncio
+import calendar
 import json
 import logging
 import re
 import time
+from datetime import date
+from pathlib import Path
 from typing import Any, Protocol
 
 import httpx
@@ -49,6 +52,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from fwbg_agents.config import settings
 from fwbg_agents.orchestrator.lifecycle import strategy_dir, transition_strategy
+from fwbg_agents.orchestrator.metrics import (
+    median_metrics_across_assets as _median_metrics_across_assets,
+)
+from fwbg_agents.orchestrator.trade_diagnostics import compute_trade_diagnostics
 from fwbg_agents.orchestrator.universe import (
     UniverseAttempt,
     plan_universe_attempts,
@@ -124,6 +131,9 @@ class _FwbgClientProto(Protocol):
         asset_classes: list[str] | None = ...,
         assets: list[str] | None = ...,
         description: str | None = ...,
+        start_date: str | None = ...,
+        end_date: str | None = ...,
+        cost_multiplier: float | None = ...,
     ) -> dict[str, Any]: ...
     async def list_runs(self) -> list[dict[str, Any]]: ...
     async def get_progress(self, run_id: str) -> dict[str, Any]: ...
@@ -153,24 +163,35 @@ class RunnerResult(BaseModel):
 _TERMINAL_FWBG_STATUSES = frozenset({"completed", "failed", "error", "cancelled"})
 
 
-def _best_symbol_metrics(run: dict[str, Any]) -> dict[str, float]:
-    """Pick the symbol with the highest sharpe; return its unified_metrics."""
-    assets = run.get("assets") or {}
-    if not assets:
-        return {}
-    best: tuple[float, dict[str, float]] = (float("-inf"), {})
-    for sym in assets.values():
-        m = sym.get("unified_metrics") or {}
-        sh = m.get("sharpe")
-        if sh is None:
-            continue
-        try:
-            shv = float(sh)
-        except (TypeError, ValueError):
-            continue
-        if shv > best[0]:
-            best = (shv, m)
-    return {k: float(v) for k, v in best[1].items() if isinstance(v, (int, float))}
+def _months_ago_iso(months: int) -> str:
+    """ISO date (YYYY-MM-DD) `months` calendar months before today.
+
+    Used to end iteration backtests before the reserved holdout window so no
+    iteration ever trains/tests on the most recent `holdout_months` of data.
+    """
+    today = date.today()
+    year, month = today.year, today.month - months
+    while month <= 0:
+        month += 12
+        year -= 1
+    day = min(today.day, calendar.monthrange(year, month)[1])
+    return date(year, month, day).isoformat()
+
+
+def _write_trade_diagnostics(iteration_dir: Path, job_id: str, run_data: dict[str, Any]) -> None:
+    """Write a ``trade_diagnostics.md`` sidecar for the Analyst. Non-fatal.
+
+    A backtest without diagnostics is still a valid backtest — any failure here
+    (missing fwbg run dir, unreadable folds) is logged and swallowed.
+    """
+    try:
+        symbols = list((run_data.get("assets") or {}).keys())
+        run_dir = settings.fwbg_test_results_dir / job_id
+        diagnostics = compute_trade_diagnostics(run_dir, symbols)
+        (iteration_dir / "trade_diagnostics.md").write_text(diagnostics.render_markdown())
+    except Exception:
+        # Diagnostics must never fail an otherwise-valid backtest.
+        log.warning("runner: trade diagnostics failed for %s; continuing", job_id, exc_info=True)
 
 
 class Runner:
@@ -237,18 +258,21 @@ class Runner:
                     asset_classes,
                 )
                 try:
-                    job_id, run_data = await self._execute_backtest(
+                    job_id, run_data = await self.execute_backtest(
                         fwbg_name,
                         assets=assets,
                         asset_classes=asset_classes,
                         agent_run_id=ar.id,
+                        # Reserve the most recent `holdout_months` as an unseen
+                        # holdout — the promote gate validates on it later.
+                        end_date=_months_ago_iso(settings.holdout_months),
                     )
                 except RunnerError as exc:
                     last_reason = f"attempt {attempt.label!r}: {exc}"
                     log.info("runner: %s; falling back", last_reason)
                     continue
 
-                metrics = _best_symbol_metrics(run_data)
+                metrics = _median_metrics_across_assets(run_data)
                 if not metrics:
                     errored = _asset_error_symbols(run_data)
                     if errored:
@@ -282,6 +306,7 @@ class Runner:
                 # Success — persist and transition.
                 results_path = iteration_dir / "fwbg_results.json"
                 results_path.write_text(json.dumps(run_data, indent=2, sort_keys=True))
+                _write_trade_diagnostics(iteration_dir, job_id, run_data)
                 universe = {
                     "label": attempt.label,
                     "assets": assets,
@@ -409,6 +434,9 @@ class Runner:
         *,
         assets: list[str] | None,
         asset_classes: list[str] | None,
+        start_date: str | None = None,
+        end_date: str | None = None,
+        cost_multiplier: float | None = None,
     ) -> str:
         """Get a job_id for this strategy: adopt an already-active fwbg run
         of the same strategy, or start a new one — waiting while fwbg's
@@ -442,7 +470,12 @@ class Runner:
 
             try:
                 start = await self.fwbg.start_run(
-                    fwbg_name, assets=assets, asset_classes=asset_classes
+                    fwbg_name,
+                    assets=assets,
+                    asset_classes=asset_classes,
+                    start_date=start_date,
+                    end_date=end_date,
+                    cost_multiplier=cost_multiplier,
                 )
             except FwbgClientError as exc:
                 if exc.status != 429:
@@ -459,17 +492,27 @@ class Runner:
             log.info("runner: started fwbg job %s", job_id)
             return job_id
 
-    async def _execute_backtest(
+    async def execute_backtest(
         self,
         fwbg_name: str,
         *,
         assets: list[str] | None,
         asset_classes: list[str] | None,
         agent_run_id: int,
+        start_date: str | None = None,
+        end_date: str | None = None,
+        cost_multiplier: float | None = None,
     ) -> tuple[str, dict[str, Any]]:
         """Start one fwbg run and poll it to completion. Raises RunnerError on
         a failed/errored run or a polling timeout."""
-        job_id = await self._acquire_run(fwbg_name, assets=assets, asset_classes=asset_classes)
+        job_id = await self._acquire_run(
+            fwbg_name,
+            assets=assets,
+            asset_classes=asset_classes,
+            start_date=start_date,
+            end_date=end_date,
+            cost_multiplier=cost_multiplier,
+        )
         # Anchor event for the dashboard's link to /runs/<fwbg_run_id>.
         emit_run_event(
             agent_run_id,

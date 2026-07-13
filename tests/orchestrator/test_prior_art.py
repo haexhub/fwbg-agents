@@ -181,3 +181,22 @@ async def test_empty_string_asset_class_normalised_to_none(db):
     matches_none = await lookup_prior_art(db, "ORB", None, ["intraday"])
     matches_empty = await lookup_prior_art(db, "ORB", "", ["intraday"])
     assert {m.slug for m in matches_none} == {m.slug for m in matches_empty}
+
+
+@pytest.mark.asyncio
+async def test_match_surfaces_edge_mechanism_from_hypothesis(db, tmp_path, monkeypatch):
+    """Plan 009 WP5: a match carries the hit's one-line edge anchor."""
+    import json
+
+    from fwbg_agents.config import settings
+    from fwbg_agents.orchestrator.lifecycle import strategy_dir
+
+    monkeypatch.setattr(settings, "data_dir", tmp_path / "data")
+    await _seed(db, "orb_a", "ORB", "FOREX", ["intraday", "momentum"])
+    it_dir = strategy_dir("orb_a") / "iteration_001"
+    it_dir.mkdir(parents=True, exist_ok=True)
+    (it_dir / "hypothesis.json").write_text(
+        json.dumps({"edge_mechanism": "London-open liquidity imbalance drives a momentum burst"})
+    )
+    matches = await lookup_prior_art(db, "ORB", "FOREX", ["intraday", "momentum"])
+    assert matches[0].edge_mechanism == "London-open liquidity imbalance drives a momentum burst"

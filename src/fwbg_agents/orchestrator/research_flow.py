@@ -35,6 +35,7 @@ from fwbg_agents.config import settings
 from fwbg_agents.orchestrator.hypotheses import (
     ResearcherHypothesis,
     generate_slug,
+    strategy_spec_from_hypothesis,
 )
 from fwbg_agents.orchestrator.lifecycle import strategy_dir
 from fwbg_agents.orchestrator.lineage import generation_depth
@@ -46,6 +47,7 @@ from fwbg_agents.persistence.models import (
     StrategyTag,
     Transition,
 )
+from fwbg_agents.speckit.strategy_spec import STRATEGY_SPEC_FILENAME, render_strategy_spec_md
 from fwbg_agents.tools.api_errors import describe_api_error
 from fwbg_agents.tools.fwbg_client import (
     FwbgClient,
@@ -281,6 +283,7 @@ async def _research_and_translate(
         strategy_family=hypothesis.strategy_family,
         suggested_universe=[u.model_dump() for u in hypothesis.suggested_universe],
         model_knowledge_only=hypothesis.model_knowledge_only,
+        metadata_json={"asset_specific": hypothesis.asset_specific},
         created_at=now,
         updated_at=now,
     )
@@ -295,6 +298,9 @@ async def _research_and_translate(
     hypothesis_path = iteration_dir / "hypothesis.json"
     hypothesis_path.write_text(hypothesis.model_dump_json(indent=2))
     (iteration_dir / "research_notes.md").write_text(_render_research_notes(hypothesis))
+    (iteration_dir / STRATEGY_SPEC_FILENAME).write_text(
+        render_strategy_spec_md(strategy_spec_from_hypothesis(hypothesis))
+    )
 
     strategy.hypothesis_path = str(hypothesis_path)
     strategy.updated_at = datetime.now(UTC)

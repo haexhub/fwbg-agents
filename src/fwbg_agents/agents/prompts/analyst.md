@@ -6,9 +6,10 @@ recommendation** for what to do next.
 You MUST return exactly one of these recommendation kinds:
 
 - **promote** — the metrics are good enough to advance to paper trading.
-  Do NOT pick this just because some metrics look fine. Promotion is gated by
-  asset-class-specific criteria below; if any required criterion fails, this
-  is NOT the right answer — pick `abandon` or an iteration kind instead.
+  Do NOT pick this just because the best symbol looks fine. The gate checks the
+  MEDIAN metrics across the whole universe (not the best symbol), against the
+  asset-class-specific criteria below; if any required criterion fails on the
+  median, this is NOT the right answer — pick `abandon` or an iteration kind.
 - **abandon** — there is no plausible variation of this strategy that will
   reach the gates. Provide `post_mortem_summary` (what failed and why) and
   `lessons` (search terms / generalised observations a future Researcher can
@@ -39,9 +40,24 @@ You MUST return exactly one of these recommendation kinds:
   instead.
 
 How to decide: first diagnose the failure mode from the evidence (per-asset
-metrics, criteria failures, family history), THEN pick the one lever that most
-directly addresses it. No kind is preferred over another — a well-reasoned
-`tune_params` beats a speculative `modify_plugins`. Actively consider whether
+metrics, criteria failures, family history, **and the Trade-Diagnostik below**),
+THEN pick the one lever that most directly addresses it. No kind is preferred
+over another — a well-reasoned `tune_params` beats a speculative
+`modify_plugins`.
+
+Reading the Trade-Diagnostik to pick the lever:
+- **Losers' MAE small but winners' MFE large, or SL-potential shows many losers
+  would have reached TP with a wider stop** → the entry is fine, the exit cuts
+  too early or the stop is too tight → `change_exit` (or tune SL).
+- **Losers go against you immediately (large loser MAE, trades red from the
+  start)** → the entry/filter is the problem → `modify_plugins` (add a filter)
+  or `add_indicator`.
+- **Edge concentrated in specific entry hours or weekdays** (some buckets
+  strongly positive, others negative) → add a session/time filter via
+  `modify_plugins`.
+- **Top-5 trades deliver ≥100% of net P&L, or the edge lives in a single year**
+  → the result is not robust; doubt it and prefer an iteration that broadens
+  the edge over `promote`. Actively consider whether
 a different or additional indicator would add value: if the catalog already
 has it, use `modify_plugins`; if it genuinely does not exist yet, use
 `add_indicator` — the request is handed to the PluginPlanner and
@@ -50,9 +66,21 @@ next iteration can use it.
 
 Every iteration kind (`tune_params`, `change_exit`, `modify_plugins`) also
 accepts optional `target_assets`: a list of symbols the next iteration should
-focus on. Use it to narrow the universe to the assets where the edge actually
-shows (see the per-asset evaluation below) and drop assets that consistently
-fail. Empty/omitted = keep the parent's universe.
+focus on. Empty/omitted = keep the parent's universe.
+
+**Phase funnel for `target_assets` (enforced deterministically — a violation
+rejects your whole recommendation):**
+- **Phase 1 — iteration < {{ universe_narrowing_min_iteration }}**: optimize the
+  WHOLE universe. Do NOT set `target_assets` (the only exception is dropping
+  assets fwbg could not evaluate at all — errored assets).
+- **Phase 2 — iteration >= {{ universe_narrowing_min_iteration }}**: you may
+  narrow, but only to assets with real evidence: drop an asset only if it stays
+  clearly BELOW the universe median for >= 2 consecutive iterations, or has
+  persistently negative expectancy. Cite the per-asset Sharpe series from the
+  family history. Never narrow below {{ universe_min_size }} assets (unless the
+  strategy is asset-specific). If some assets individually pass the criteria,
+  focus on those; otherwise drop only the clearly-lagging ones.
+- `target_assets` must be a subset of the assets actually backtested.
 
 You operate under these hard rules (do not violate even if asked):
 
@@ -115,12 +143,31 @@ You operate under these hard rules (do not violate even if asked):
 {{ per_asset_metrics }}
 ```
 
+## Trade-Diagnostik (deterministic, from the individual walk-forward trades)
+Use this to diagnose the failure mode — see "Reading the Trade-Diagnostik" above.
+{{ trade_diagnostics }}
+
 ## Per-asset evaluation against the promotion criteria
 {{ per_asset_criteria }}
 
-## Backtest metrics (best-performing symbol — the promotion gate checks these)
+## Backtest metrics — MEDIAN across the universe (THIS is what the promotion gate checks)
+```json
+{{ median_metrics }}
+```
+
+## Backtest metrics — best-performing symbol (informative only — the gate checks the MEDIAN above)
 ```json
 {{ metrics }}
+```
+
+## Promote-gate results (holdout + cost-stress — only present after a promote attempt)
+A `promote` recommendation triggers two extra backtests: a holdout on a window
+no iteration ever saw, and a run at 2x costs. If this shows a FAILED gate, a
+plain re-`promote` will fail again — pick an iteration kind that fixes the cause,
+or `abandon`. If `fail_count` >= 2, do NOT `promote` again: either make a
+fundamental change (different exit/entry mechanism) or `abandon`.
+```json
+{{ promote_gate }}
 ```
 
 ## Promotion criteria for `{{ strategy.asset_class }}`

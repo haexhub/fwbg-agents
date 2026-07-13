@@ -216,6 +216,42 @@ def check_backtest_criteria(
     return not failures, failures
 
 
+def check_criteria_section(
+    *, asset_class: str, metrics: Mapping[str, float], section: str
+) -> tuple[bool, list[str]]:
+    """Evaluate `metrics` against `criteria/<asset_class>.yaml -> <section>.required_all`.
+
+    Used by the promote gate (Plan 009 WP4) for its `promote_holdout` /
+    `promote_cost_stress` sections. Fail-closed: a missing YAML or missing
+    section returns `(False, [...])` so a money-adjacent gate never passes on
+    an unconfigured install.
+    """
+    path = _criteria_path(asset_class)
+    if not path.is_file():
+        return False, [f"no criteria defined for asset class {asset_class!r}; run POST /calibrate"]
+    try:
+        data = yaml.safe_load(path.read_text()) or {}
+    except yaml.YAMLError as exc:
+        return False, [f"criteria YAML for {asset_class} is invalid: {exc}"]
+
+    rules = (data.get(section) or {}).get("required_all")
+    if not rules:
+        return False, [f"no {section!r} criteria defined for {asset_class!r}"]
+
+    failures: list[str] = []
+    for rule in rules:
+        for metric, expr in rule.items():
+            if metric.startswith("_"):
+                continue
+            fval = _metric_float(metrics.get(metric))
+            if fval is None:
+                failures.append(f"missing/invalid metric: {metric}")
+                continue
+            if not _eval_comparator(str(expr), fval):
+                failures.append(f"{metric}={metrics.get(metric)} fails {expr}")
+    return not failures, failures
+
+
 # ---------------------------------------------------------------------------
 # Strategy guards
 # ---------------------------------------------------------------------------

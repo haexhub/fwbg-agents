@@ -154,6 +154,7 @@ async def db_with_strategy(tmp_path, monkeypatch):
         title="ORB on FOREX majors",
         asset_class="FOREX",
         strategy_family="ORB",
+        edge_mechanism="Early-London range breakouts ride session-open liquidity momentum",
         hypothesis="OR breakouts on EURUSD M15 have a session-driven edge.",
         expected_edge_explanation="Liquidity formation in early London creates persistence.",
         key_indicators=["opening_range", "atr"],

@@ -34,6 +34,7 @@ from fwbg_agents.orchestrator.hypotheses import (
     ResearcherHypothesis,
     validate_hypothesis,
 )
+from fwbg_agents.orchestrator.lessons import lessons_digest
 from fwbg_agents.orchestrator.prior_art import PriorArtMatch, lookup_prior_art
 from fwbg_agents.persistence.agent_runs import (
     fail_agent_run,
@@ -94,6 +95,7 @@ def _render_prompt(
             indent=2,
         ),
     )
+    out = out.replace("{{ lessons_digest }}", lessons_digest())
     return out
 
 

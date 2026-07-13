@@ -25,6 +25,7 @@ _HYP_ARGS = {
     "title": "ORB on FOREX majors",
     "asset_class": "FOREX",
     "strategy_family": "ORB",
+    "edge_mechanism": "London-open range breakouts ride early-session liquidity momentum",
     "hypothesis": "Opening range breakouts on EURUSD M15 produce a momentum edge.",
     "expected_edge_explanation": "Early London liquidity creates session persistence.",
     "key_indicators": ["opening_range", "atr"],
@@ -35,6 +36,9 @@ _HYP_ARGS = {
             "title": "ORB note",
             "why_relevant": "documents the London-open ORB effect",
         }
+    ],
+    "suggested_universe": [
+        {"scope": "asset_class", "value": "FOREX", "rationale": "majors"},
     ],
     "differentiates_from": [],
 }

@@ -13,6 +13,7 @@ from fwbg_agents.orchestrator.hypotheses import (
     HypothesisRejectedError,
     ResearcherHypothesis,
     Source,
+    SuggestedUniverse,
     generate_child_slug,
     generate_slug,
     validate_hypothesis,
@@ -27,11 +28,15 @@ def _hyp(**over):
         title="t",
         asset_class="FOREX",
         strategy_family="ORB",
+        edge_mechanism="London-open liquidity imbalance drives a short momentum burst",
         hypothesis="h",
         expected_edge_explanation="e",
         key_indicators=["opening_range"],
         tags=["momentum"],
         sources=[Source(url="https://x", title="x", why_relevant="x")],
+        suggested_universe=[
+            SuggestedUniverse(scope="asset_class", value="FOREX", rationale="broad")
+        ],
         differentiates_from=[],
     )
     base.update(over)
@@ -77,6 +82,52 @@ def test_validate_rejects_when_partial_differentiates_from():
     matches = [_match("prev_orb_001"), _match("prev_orb_002")]
     with pytest.raises(HypothesisRejectedError):
         validate_hypothesis(_hyp(differentiates_from=["prev_orb_001"]), matches)
+
+
+# --- WP3: first-iteration universe breadth ---
+
+
+def _sym(v):
+    return SuggestedUniverse(scope="symbol", value=v, rationale="x")
+
+
+def test_validate_rejects_single_symbol_universe_when_not_asset_specific():
+    with pytest.raises(HypothesisRejectedError, match=">= 3 assets"):
+        validate_hypothesis(_hyp(suggested_universe=[_sym("EURUSD")]), [])
+
+
+def test_validate_passes_three_symbol_universe():
+    validate_hypothesis(
+        _hyp(suggested_universe=[_sym("EURUSD"), _sym("GBPUSD"), _sym("USDJPY")]), []
+    )
+
+
+def test_validate_passes_single_asset_class_scope():
+    # A class scope covers many symbols → satisfies the breadth rule.
+    validate_hypothesis(
+        _hyp(
+            suggested_universe=[
+                SuggestedUniverse(scope="asset_class", value="FOREX", rationale="x")
+            ]
+        ),
+        [],
+    )
+
+
+def test_validate_asset_specific_requires_rationale():
+    with pytest.raises(HypothesisRejectedError, match="asset_specific_rationale"):
+        validate_hypothesis(_hyp(suggested_universe=[_sym("GER40")], asset_specific=True), [])
+
+
+def test_validate_asset_specific_single_symbol_ok_with_rationale():
+    validate_hypothesis(
+        _hyp(
+            suggested_universe=[_sym("GER40")],
+            asset_specific=True,
+            asset_specific_rationale="DAX opening-auction microstructure only exists on GER40",
+        ),
+        [],
+    )
 
 
 # --- ResearcherHypothesis schema ---
