@@ -115,8 +115,15 @@ class FwbgClient:
         asset_classes: list[str] | None = None,
         assets: list[str] | None = None,
         description: str | None = None,
+        start_date: str | None = None,
+        end_date: str | None = None,
+        cost_multiplier: float | None = None,
     ) -> dict[str, Any]:
-        """Start a fwbg backtest run for a strategy (POST /api/runs/start)."""
+        """Start a fwbg backtest run for a strategy (POST /api/runs/start).
+
+        ``start_date``/``end_date`` (ISO) restrict the backtest window (holdout
+        gating); ``cost_multiplier`` scales spread/slippage (cost-stress gating).
+        """
         body: dict[str, Any] = {"strategy_name": strategy_name}
         if asset_classes is not None:
             body["asset_classes"] = asset_classes
@@ -124,6 +131,12 @@ class FwbgClient:
             body["assets"] = assets
         if description is not None:
             body["description"] = description
+        if start_date is not None:
+            body["start_date"] = start_date
+        if end_date is not None:
+            body["end_date"] = end_date
+        if cost_multiplier is not None:
+            body["cost_multiplier"] = cost_multiplier
         return await self._post("/api/runs/start", body)
 
     async def get_plugins(self) -> list[dict[str, Any]]:

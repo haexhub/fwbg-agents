@@ -108,7 +108,7 @@ async def _run_analyst_background(strategy_id: int) -> None:
                     if isinstance(v, (int, float))
                 }
             try:
-                await validate_and_apply(session, s, rec, metrics=metrics)
+                await validate_and_apply(session, s, rec, metrics=metrics, fwbg_client=client)
             except Exception as exc:
                 log.warning("analyst recommendation rejected: %s", exc)
                 return

@@ -28,6 +28,7 @@ from fwbg_agents.agents.runner import (
     Runner,
     RunnerError,
     _median_metrics_across_assets,
+    _months_ago_iso,
 )
 from fwbg_agents.persistence.database import Base
 from fwbg_agents.persistence.models import (
@@ -139,7 +140,11 @@ class FakeFwbgClient:
 
     async def start_run(self, strategy_name, *, assets=None, asset_classes=None, **kwargs):
         self.calls.append(
-            ("start_run", (strategy_name,), {"assets": assets, "asset_classes": asset_classes})
+            (
+                "start_run",
+                (strategy_name,),
+                {"assets": assets, "asset_classes": asset_classes, **kwargs},
+            )
         )
         if self._start_errors:
             raise self._start_errors.pop(0)
@@ -682,3 +687,29 @@ def test_median_metrics_across_assets():
     }
     assert _median_metrics_across_assets(run) == {"sharpe": 1.0, "trades": 400.0}
     assert _median_metrics_across_assets({"assets": {}}) == {}
+
+
+def test_months_ago_iso_subtracts_calendar_months():
+    from datetime import date
+
+    iso = _months_ago_iso(24)
+    d = date.fromisoformat(iso)
+    today = date.today()
+    # 24 months back = 2 calendar years earlier (same-ish day).
+    assert d.year == today.year - 2
+    assert d.month == today.month
+
+
+async def test_runner_reserves_holdout_window(runner_env):
+    """Iteration backtests must end at today - holdout_months so no iteration
+    ever sees the reserved holdout tail."""
+    from datetime import date
+
+    SessionMaker, make_strategy, _ = runner_env
+    sid = await make_strategy()
+    fake = FakeFwbgClient()
+    await _run(SessionMaker, sid, fake)
+
+    end_date = fake.calls_of("start_run")[0][2]["end_date"]
+    assert end_date is not None
+    assert date.fromisoformat(end_date) < date.today()

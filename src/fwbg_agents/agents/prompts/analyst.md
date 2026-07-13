@@ -148,6 +148,16 @@ Use this to diagnose the failure mode — see "Reading the Trade-Diagnostik" abo
 {{ metrics }}
 ```
 
+## Promote-gate results (holdout + cost-stress — only present after a promote attempt)
+A `promote` recommendation triggers two extra backtests: a holdout on a window
+no iteration ever saw, and a run at 2x costs. If this shows a FAILED gate, a
+plain re-`promote` will fail again — pick an iteration kind that fixes the cause,
+or `abandon`. If `fail_count` >= 2, do NOT `promote` again: either make a
+fundamental change (different exit/entry mechanism) or `abandon`.
+```json
+{{ promote_gate }}
+```
+
 ## Promotion criteria for `{{ strategy.asset_class }}`
 ```yaml
 {{ criteria_yaml }}

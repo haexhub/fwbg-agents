@@ -140,6 +140,16 @@ class Settings(BaseSettings):
             "and should promote or abandon."
         ),
     )
+    holdout_months: int = Field(
+        default=24,
+        ge=1,
+        description=(
+            "Months of most-recent data reserved as an out-of-sample holdout. "
+            "Iteration backtests end at today - holdout_months (no iteration ever "
+            "sees this window); the promote gate then runs a holdout backtest on "
+            "[today - holdout_months, today] before a strategy may advance to paper."
+        ),
+    )
     min_iterations_before_abandon: int = Field(
         default=3,
         ge=1,

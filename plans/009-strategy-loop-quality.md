@@ -13,7 +13,22 @@
 
 ## Status
 
-- **Status**: IN PROGRESS — WP1 + WP2 DONE. Offen: WP4, WP3, WP5, WP6.
+- **Status**: IN PROGRESS — WP1 + WP2 + WP4 DONE. Offen: WP3, WP5, WP6.
+  - **WP4 DONE** (cross-repo). fwbg (Branch `feat/009-strategy-loop-quality`,
+    Commit 461b46c): `StrategyConfig` + CLI + `POST /api/runs/start` bekommen
+    `start_date`/`end_date`/`cost_multiplier`; `process.py` slict die Daten aufs
+    Fenster (Fold-Logik positional → unverändert), `context.py` skaliert Spread
+    um `cost_multiplier`. Spike 4.1 ergab: beide nur kleine Patches, KEIN STOP.
+    Mit echtem Run verifiziert (2025-Fenster 60000→24900 Bars). fwbg-agents:
+    `config.holdout_months=24`; Runner-Iterations-Backtests enden bei
+    `today - holdout_months` (`_months_ago_iso`); `FwbgClient.start_run` +
+    Runner-`_execute_backtest` threaden die Parameter durch; neues
+    `orchestrator/promote_gate.py` fährt sequentiell Holdout- + Kosten-Stress-Run,
+    prüft gegen neue Criteria-Sektionen `promote_holdout`/`promote_cost_stress`
+    (`lifecycle.check_criteria_section`), schreibt `promote_gate_results.json`
+    (kumulatives `fail_count`) + `promote_gate_*`-Events. `validate_and_apply`
+    (promote) ruft das Gate; Fail → bleibt BACKTESTED. Analyst-Prompt bekommt
+    `{{ promote_gate }}`-Slot (2. Fail → abandon/fundamentale Änderung).
   - **WP1 DONE**: neues `orchestrator/trade_diagnostics.py` (liest per-Trade aus
     `fold_results.json` `fold_details[].test_trades_detail` + surft fwbgs
     `trade_analytics` durch — KEINE fwbg-Änderung nötig, da alles auf Platte);

@@ -368,6 +368,7 @@ def _render_prompt(
     family_history: str,
     criteria_yaml: str,
     trade_diagnostics: str,
+    promote_gate: str,
     catalog_snapshot: str,
 ) -> str:
     """Tiny mustache-style replacer — we don't need Jinja for a handful of variables."""
@@ -385,6 +386,7 @@ def _render_prompt(
     out = out.replace("{{ family_history }}", family_history)
     out = out.replace("{{ criteria_yaml }}", criteria_yaml or "(no criteria YAML present)")
     out = out.replace("{{ trade_diagnostics }}", trade_diagnostics)
+    out = out.replace("{{ promote_gate }}", promote_gate)
     out = out.replace("{{ catalog_snapshot }}", catalog_snapshot)
     return out
 
@@ -482,6 +484,13 @@ class Analyst:
                 else "(no trade diagnostics available)"
             )
 
+            gate_path = strategy_dir(strategy.slug) / "promote_gate_results.json"
+            promote_gate = (
+                gate_path.read_text()
+                if gate_path.is_file()
+                else "(promote gate not yet run — no prior failure)"
+            )
+
             live = await fetch_live_catalog(self.session, self.fwbg_client)
             catalog_snapshot = _render_catalog_details(live)
 
@@ -501,6 +510,7 @@ class Analyst:
                 family_history=family_history,
                 criteria_yaml=criteria_yaml,
                 trade_diagnostics=trade_diagnostics,
+                promote_gate=promote_gate,
                 catalog_snapshot=catalog_snapshot,
             )
 

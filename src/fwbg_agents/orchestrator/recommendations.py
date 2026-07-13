@@ -39,6 +39,7 @@ from fwbg_agents.orchestrator.lifecycle import (
     strategy_dir,
     transition_strategy,
 )
+from fwbg_agents.orchestrator.promote_gate import run_promote_gate
 from fwbg_agents.persistence.models import (
     Strategy,
     StrategyState,
@@ -59,16 +60,38 @@ async def validate_and_apply(
     rec: AnalystRecommendation,
     *,
     metrics: dict[str, float],
+    fwbg_client: Any = None,
 ) -> Transition | None:
     """Apply a recommendation against hard rules.
 
     Returns the new transition row when a state change happened, or None when
     the recommendation only resulted in a sidecar artifact (tune_params,
-    change_exit). Raises `InvalidTransitionError` if a promote recommendation
-    fails the criteria gate.
+    change_exit) or a promote that did not clear the gate. Raises
+    `InvalidTransitionError` if a promote recommendation fails the criteria gate.
+
+    A `promote` additionally runs the holdout + cost-stress promote gate (Plan
+    009 WP4) when `fwbg_client` is supplied; a failed gate keeps the strategy
+    BACKTESTED (the median criteria gate in `transition_strategy` still applies
+    on top).
     """
     if isinstance(rec, Promote):
         log.info("validate_and_apply: promote %s", strategy.slug)
+        if fwbg_client is not None:
+            gate = await run_promote_gate(session, strategy, fwbg_client=fwbg_client)
+            if not gate.passed:
+                log.info(
+                    "validate_and_apply: promote gate failed for %s "
+                    "(fail_count=%d) — staying BACKTESTED",
+                    strategy.slug,
+                    gate.fail_count,
+                )
+                return None
+        else:
+            log.warning(
+                "validate_and_apply: promote for %s without fwbg_client — "
+                "skipping holdout/cost-stress gate",
+                strategy.slug,
+            )
         return await transition_strategy(
             session,
             strategy,

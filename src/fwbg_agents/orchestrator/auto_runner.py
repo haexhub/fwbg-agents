@@ -601,8 +601,11 @@ async def _analyze_and_apply(session: AsyncSession, sid: int) -> None:
                     s.slug,
                 )
 
+    # A promote runs the holdout + cost-stress gate, which needs a live client
+    # (the analyst client above is already closed).
+    gate_client = FwbgClient(base_url=settings.fwbg_api_url)
     try:
-        await validate_and_apply(session, s, rec, metrics=metrics)
+        await validate_and_apply(session, s, rec, metrics=metrics, fwbg_client=gate_client)
     except Exception as exc:
         log.warning(
             "runner auto mode: analyst recommendation rejected for strategy %s: %s",
@@ -610,6 +613,8 @@ async def _analyze_and_apply(session: AsyncSession, sid: int) -> None:
             exc,
         )
         return
+    finally:
+        await gate_client.aclose()
 
     # TuneParams / ChangeExit / ModifyPlugins → create a child PROPOSED
     # strategy so the auto-runner picks it up on the next free slot.
