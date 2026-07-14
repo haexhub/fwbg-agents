@@ -937,6 +937,7 @@ async def _fill_pipeline_background(agent_run_id: int) -> None:
                 ResearcherInput(),
                 search_client=search_client,
                 fanout_n=settings.researcher_fanout_n,
+                candidates_n=settings.researcher_candidates_n,
                 fwbg_client=fwbg,
             )
             await finish_agent_run(session, ar, status=AgentRunStatus.DONE, strategy_id=strategy_id)

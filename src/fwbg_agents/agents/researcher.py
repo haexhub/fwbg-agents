@@ -29,6 +29,7 @@ from pydantic_ai.models import Model
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from fwbg_agents.agents.instrumented import run_instrumented
+from fwbg_agents.orchestrator.exploration_balance import exploration_balance_digest
 from fwbg_agents.orchestrator.hypotheses import (
     HypothesisRejectedError,
     ResearcherHypothesis,
@@ -82,6 +83,7 @@ def _render_prompt(
     *,
     input: ResearcherInput,
     available_plugins: dict | None = None,
+    exploration_balance: str = "",
 ) -> str:
     """Render the researcher prompt template with input values and plugin catalog."""
     out = template
@@ -96,6 +98,7 @@ def _render_prompt(
         ),
     )
     out = out.replace("{{ lessons_digest }}", lessons_digest())
+    out = out.replace("{{ exploration_balance }}", exploration_balance)
     return out
 
 
@@ -127,8 +130,12 @@ class Researcher:
 
         try:
             template = self.prompt_path.read_text()
+            exploration_balance = await exploration_balance_digest(self.session)
             system_prompt = _render_prompt(
-                template, input=input, available_plugins=self.available_plugins
+                template,
+                input=input,
+                available_plugins=self.available_plugins,
+                exploration_balance=exploration_balance,
             )
 
             agent: Agent[None, ResearcherHypothesis] = Agent(

@@ -13,6 +13,7 @@ from pydantic_ai.models.function import AgentInfo, FunctionModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
+from fwbg_agents.agents.critic import CriticCandidate, CriticReport
 from fwbg_agents.agents.researcher import ResearcherError, ResearcherInput
 from fwbg_agents.orchestrator import research_flow
 from fwbg_agents.orchestrator.hypotheses import ResearcherHypothesis
@@ -33,6 +34,7 @@ from fwbg_agents.persistence.models import (
     StrategyTag,
     Transition,
 )
+from fwbg_agents.run_events import run_dir
 from fwbg_agents.tools.fwbg_client import FwbgClientError
 
 _HYP_ARGS = {
@@ -501,6 +503,225 @@ async def test_fanout_all_candidates_fail_raises_with_combined_reasons(db, monke
     message = str(exc_info.value)
     for idx in range(3):
         assert f"candidate {idx} rejected" in message
+
+
+# --- candidates_n > 1: Critic-picked winner (Plan 010 WP3) ------------------
+
+
+def _make_multi_hypothesis_researcher_factory(titles: list[str]):
+    """Class to monkeypatch onto `research_flow.Researcher`: each call
+    returns the next title in `titles` (in call order), so a test can tell
+    candidates apart and assert on which one the Critic picked."""
+    counter = itertools.count()
+
+    class _MultiResearcher:
+        def __init__(self, session, *, model=None, search_client=None, available_plugins=None):
+            self.session = session
+
+        async def run(self, input):
+            idx = next(counter)
+            now = datetime.now(UTC)
+            ar = AgentRun(
+                agent_name="researcher",
+                status=AgentRunStatus.RUNNING.value,
+                started_at=now,
+                created_at=now,
+            )
+            self.session.add(ar)
+            await self.session.commit()
+            await self.session.refresh(ar)
+            ar.status = AgentRunStatus.DONE.value
+            ar.ended_at = datetime.now(UTC)
+            await self.session.commit()
+            return ResearcherHypothesis(**{**_HYP_ARGS, "title": titles[idx]})
+
+    return _MultiResearcher
+
+
+def _make_fake_critic_factory(*, winner_index: int | None, n_candidates: int):
+    """Class to monkeypatch onto `research_flow.Critic`: returns a canned
+    CriticReport picking `winner_index` (all others `reject`), or an
+    all-reject report when `winner_index` is None."""
+
+    class _FakeCritic:
+        def __init__(self, session, *, model=None, prompt_path=None):
+            self.session = session
+
+        async def judge(self, hypotheses):
+            assert len(hypotheses) == n_candidates
+            now = datetime.now(UTC)
+            ar = AgentRun(
+                agent_name="critic",
+                status=AgentRunStatus.RUNNING.value,
+                started_at=now,
+                created_at=now,
+            )
+            self.session.add(ar)
+            await self.session.commit()
+            await self.session.refresh(ar)
+
+            report = CriticReport(
+                candidates=[
+                    CriticCandidate(
+                        score=0.9 if i == winner_index else 0.2,
+                        kill_risks=["simulated risk"],
+                        verdict="pass" if i == winner_index else "reject",
+                    )
+                    for i in range(len(hypotheses))
+                ],
+                winner_index=winner_index,
+            )
+            ar.status = AgentRunStatus.DONE.value
+            ar.ended_at = datetime.now(UTC)
+            await self.session.commit()
+            return report, ar.id
+
+    return _FakeCritic
+
+
+@pytest.mark.asyncio
+async def test_candidates_n_1_never_invokes_critic(db, monkeypatch):
+    """Regression guard: candidates_n=1 must skip the Critic entirely — no
+    critic AgentRun row, no critic_report.json sidecar."""
+
+    def _boom(*args, **kwargs):
+        raise AssertionError("Critic must not be constructed when candidates_n=1")
+
+    session, _ = db
+    monkeypatch.setattr(research_flow, "Critic", _boom)
+
+    strategy_id = await research_and_translate(
+        session,
+        ResearcherInput(asset_class="FOREX"),
+        model=_dispatch_model(),
+        fanout_n=1,
+        candidates_n=1,
+    )
+
+    s = (await session.execute(select(Strategy).where(Strategy.id == strategy_id))).scalar_one()
+    assert not (strategy_dir(s.slug) / "critic_report.json").is_file()
+    runs = (await session.execute(select(AgentRun))).scalars().all()
+    assert "critic" not in {r.agent_name for r in runs}
+
+
+@pytest.mark.asyncio
+async def test_candidates_mode_translates_critic_winner_and_persists_losers(db, monkeypatch):
+    session, _ = db
+    titles = ["candidate A", "candidate B", "candidate C"]
+    monkeypatch.setattr(
+        research_flow, "Researcher", _make_multi_hypothesis_researcher_factory(titles)
+    )
+    monkeypatch.setattr(
+        research_flow, "Critic", _make_fake_critic_factory(winner_index=1, n_candidates=3)
+    )
+
+    strategy_id = await research_and_translate(
+        session,
+        ResearcherInput(asset_class="FOREX"),
+        model=_dispatch_model(),
+        fanout_n=1,
+        candidates_n=3,
+    )
+
+    s = (await session.execute(select(Strategy).where(Strategy.id == strategy_id))).scalar_one()
+    it_dir = strategy_dir(s.slug) / "iteration_001"
+    hyp = json.loads((it_dir / "hypothesis.json").read_text())
+    assert hyp["title"] == "candidate B"  # winner_index=1
+
+    # Critic report sidecar in the strategy dir (slug wasn't known until now).
+    critic_report_path = strategy_dir(s.slug) / "critic_report.json"
+    assert critic_report_path.is_file()
+    report = json.loads(critic_report_path.read_text())
+    assert report["winner_index"] == 1
+    assert len(report["candidates"]) == 3
+
+    # Losing hypotheses persisted under the Critic's own agent-run dir.
+    critic_ar = next(
+        r
+        for r in (await session.execute(select(AgentRun))).scalars().all()
+        if r.agent_name == "critic"
+    )
+    losers = json.loads((run_dir(critic_ar.id) / "losing_hypotheses.json").read_text())
+    assert sorted(h["title"] for h in losers) == ["candidate A", "candidate C"]
+
+
+@pytest.mark.asyncio
+async def test_candidates_mode_all_rejected_raises_fanout_exhausted(db, monkeypatch):
+    session, _ = db
+    titles = ["candidate A", "candidate B"]
+    monkeypatch.setattr(
+        research_flow, "Researcher", _make_multi_hypothesis_researcher_factory(titles)
+    )
+    monkeypatch.setattr(
+        research_flow, "Critic", _make_fake_critic_factory(winner_index=None, n_candidates=2)
+    )
+
+    with pytest.raises(ResearcherFanoutExhaustedError, match="critic rejected all"):
+        await research_and_translate(
+            session,
+            ResearcherInput(asset_class="FOREX"),
+            model=_dispatch_model(),
+            fanout_n=1,
+            candidates_n=2,
+        )
+
+    # Nothing persisted — no Strategy was created for a rejected batch.
+    strategies = (await session.execute(select(Strategy))).scalars().all()
+    assert strategies == []
+
+
+@pytest.mark.asyncio
+async def test_candidates_mode_partial_collection_still_runs_critic(db, monkeypatch):
+    """One of 3 candidate slots exhausts its fanout_n=1 budget; the Critic
+    still runs on however many hypotheses survived (2)."""
+    session, _ = db
+
+    counter = itertools.count()
+
+    class _PartialResearcher:
+        def __init__(self, session, *, model=None, search_client=None, available_plugins=None):
+            self.session = session
+
+        async def run(self, input):
+            idx = next(counter)
+            now = datetime.now(UTC)
+            ar = AgentRun(
+                agent_name="researcher",
+                status=AgentRunStatus.RUNNING.value,
+                started_at=now,
+                created_at=now,
+            )
+            self.session.add(ar)
+            await self.session.commit()
+            await self.session.refresh(ar)
+            if idx == 1:  # the second candidate slot fails outright
+                ar.status = AgentRunStatus.FAILED.value
+                ar.ended_at = datetime.now(UTC)
+                ar.error = "simulated failure"
+                await self.session.commit()
+                raise ResearcherError(ar.error)
+            ar.status = AgentRunStatus.DONE.value
+            ar.ended_at = datetime.now(UTC)
+            await self.session.commit()
+            return ResearcherHypothesis(**{**_HYP_ARGS, "title": f"candidate {idx}"})
+
+    monkeypatch.setattr(research_flow, "Researcher", _PartialResearcher)
+    monkeypatch.setattr(
+        research_flow, "Critic", _make_fake_critic_factory(winner_index=0, n_candidates=2)
+    )
+
+    strategy_id = await research_and_translate(
+        session,
+        ResearcherInput(asset_class="FOREX"),
+        model=_dispatch_model(),
+        fanout_n=1,
+        candidates_n=3,
+    )
+
+    s = (await session.execute(select(Strategy).where(Strategy.id == strategy_id))).scalar_one()
+    it_dir = strategy_dir(s.slug) / "iteration_001"
+    hyp = json.loads((it_dir / "hypothesis.json").read_text())
+    assert hyp["title"] == "candidate 0"
 
 
 @pytest.mark.asyncio

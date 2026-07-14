@@ -102,6 +102,10 @@ full available history is downloaded automatically for backtests.
 
 {{ lessons_digest }}
 
+# Exploration balance (diversity pressure — not a hard rule)
+
+{{ exploration_balance }}
+
 # Output
 
 Return EXACTLY ONE `ResearcherHypothesis` with:

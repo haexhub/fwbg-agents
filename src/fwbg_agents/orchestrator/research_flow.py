@@ -29,6 +29,7 @@ from pydantic_ai.models import Model
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from fwbg_agents.agents.critic import Critic, CriticReport
 from fwbg_agents.agents.researcher import Researcher, ResearcherInput
 from fwbg_agents.agents.translator import Translator
 from fwbg_agents.config import settings
@@ -47,6 +48,7 @@ from fwbg_agents.persistence.models import (
     StrategyTag,
     Transition,
 )
+from fwbg_agents.run_events import emit_run_event, run_dir
 from fwbg_agents.speckit.strategy_spec import STRATEGY_SPEC_FILENAME, render_strategy_spec_md
 from fwbg_agents.tools.api_errors import describe_api_error
 from fwbg_agents.tools.fwbg_client import (
@@ -108,6 +110,100 @@ async def _generate_valid_hypothesis(
 
     reasons = "; ".join(describe_api_error(e) for e in errors)
     raise ResearcherFanoutExhaustedError(f"all {fanout_n} attempts failed: {reasons}")
+
+
+async def _generate_valid_hypotheses(
+    input: ResearcherInput,
+    *,
+    model: Model | None,
+    search_client: SearchProvider | None,
+    fanout_n: int,
+    candidates_n: int,
+    available_plugins: dict | None = None,
+) -> list[ResearcherHypothesis]:
+    """Collect up to `candidates_n` valid hypotheses, one per candidate slot,
+    each slot getting its own `fanout_n` retry budget (Plan 010 WP3).
+
+    A slot that exhausts its retry budget is skipped, not fatal — returns
+    whatever valid hypotheses were produced (1..candidates_n). Raises
+    ResearcherFanoutExhaustedError only when EVERY slot failed.
+    """
+    hypotheses: list[ResearcherHypothesis] = []
+    slot_errors: list[BaseException] = []
+    for slot in range(1, candidates_n + 1):
+        try:
+            hypotheses.append(
+                await _generate_valid_hypothesis(
+                    input,
+                    model=model,
+                    search_client=search_client,
+                    fanout_n=fanout_n,
+                    available_plugins=available_plugins,
+                )
+            )
+        except asyncio.CancelledError:
+            raise
+        except ResearcherFanoutExhaustedError as exc:
+            log.warning(
+                "candidate slot %d/%d exhausted its fanout_n=%d budget: %s",
+                slot,
+                candidates_n,
+                fanout_n,
+                exc,
+            )
+            slot_errors.append(exc)
+
+    if not hypotheses:
+        reasons = "; ".join(str(e) for e in slot_errors)
+        raise ResearcherFanoutExhaustedError(
+            f"all {candidates_n} candidate slots exhausted (fanout_n={fanout_n} each): {reasons}"
+        )
+    return hypotheses
+
+
+async def _select_hypothesis_via_critic(
+    session: AsyncSession, hypotheses: list[ResearcherHypothesis], *, model: Model | None
+) -> tuple[ResearcherHypothesis, CriticReport]:
+    """Have the Critic score `hypotheses` and pick a winner.
+
+    Persists the losing hypotheses as a sidecar artifact under the Critic's
+    own `data/agent-runs/<critic_run_id>/` dir (raw material for a future
+    crossover mode) and emits a `critic_verdict` run event. The CriticReport
+    itself is returned for the caller to write into the winning strategy's
+    directory once its slug exists. Raises ResearcherFanoutExhaustedError if
+    the Critic rejects every candidate.
+    """
+    report, critic_run_id = await Critic(session, model=model).judge(hypotheses)
+
+    passing = [i for i, c in enumerate(report.candidates) if c.verdict == "pass"]
+    if not passing:
+        raise ResearcherFanoutExhaustedError(
+            f"critic rejected all {len(hypotheses)} candidates: "
+            + "; ".join(
+                f"[{i}] score={c.score:.2f} risks={c.kill_risks}"
+                for i, c in enumerate(report.candidates)
+            )
+        )
+    winner_idx = report.winner_index
+    if winner_idx is None or winner_idx not in passing:
+        # A missing/inconsistent winner_index is a cosmetic model slip, not a
+        # reason to fail an otherwise-usable batch — recover deterministically.
+        winner_idx = max(passing, key=lambda i: report.candidates[i].score)
+
+    critic_dir = run_dir(critic_run_id)
+    critic_dir.mkdir(parents=True, exist_ok=True)
+    losers = [h for i, h in enumerate(hypotheses) if i != winner_idx]
+    (critic_dir / "losing_hypotheses.json").write_text(
+        json.dumps([h.model_dump(mode="json") for h in losers], indent=2)
+    )
+    emit_run_event(
+        critic_run_id,
+        "critic_verdict",
+        n_candidates=len(hypotheses),
+        winner_index=winner_idx,
+        scores=[c.score for c in report.candidates],
+    )
+    return hypotheses[winner_idx], report
 
 
 def _render_research_notes(hypothesis: ResearcherHypothesis) -> str:
@@ -223,15 +319,16 @@ async def research_and_translate(
     model: Model | None = None,
     search_client: SearchProvider | None = None,
     fanout_n: int = 1,
+    candidates_n: int = 1,
     fwbg_client: FwbgClient | None = None,
 ) -> int:
-    """Run Researcher (fanout_n candidates, first-valid-wins) → persist
-    Strategy → run Translator (fresh).
+    """Run Researcher (candidates_n candidates, Critic-picked if >1) →
+    persist Strategy → run Translator (fresh).
 
-    Returns the new Strategy id. The Researcher and Translator each manage
-    their own AgentRun rows; this function is pure orchestration. Failures
-    propagate (ResearcherFanoutExhaustedError / TranslatorError) — the
-    caller is responsible for wrapping bookkeeping (e.g. the API
+    Returns the new Strategy id. The Researcher, Critic and Translator each
+    manage their own AgentRun rows; this function is pure orchestration.
+    Failures propagate (ResearcherFanoutExhaustedError / TranslatorError) —
+    the caller is responsible for wrapping bookkeeping (e.g. the API
     background task).
     """
     client = fwbg_client if fwbg_client is not None else FwbgClient(base_url=settings.fwbg_api_url)
@@ -242,6 +339,7 @@ async def research_and_translate(
             model=model,
             search_client=search_client,
             fanout_n=fanout_n,
+            candidates_n=candidates_n,
             fwbg_client=client,
         )
     finally:
@@ -256,6 +354,7 @@ async def _research_and_translate(
     model: Model | None,
     search_client: SearchProvider | None,
     fanout_n: int,
+    candidates_n: int = 1,
     fwbg_client: FwbgClient,
 ) -> int:
     """Run research fanout and translate the hypothesis into a persisted strategy.
@@ -264,13 +363,27 @@ async def _research_and_translate(
     # One live-catalog fetch per research run: the Researcher must see the
     # CURRENT plugin set (it grows as plugins are adopted), not a frozen list.
     live = await fetch_live_catalog(session, fwbg_client)
-    hypothesis = await _generate_valid_hypothesis(
-        input,
-        model=model,
-        search_client=search_client,
-        fanout_n=fanout_n,
-        available_plugins=researcher_summary(live),
-    )
+    critic_report: CriticReport | None = None
+    if candidates_n <= 1:
+        hypothesis = await _generate_valid_hypothesis(
+            input,
+            model=model,
+            search_client=search_client,
+            fanout_n=fanout_n,
+            available_plugins=researcher_summary(live),
+        )
+    else:
+        candidates = await _generate_valid_hypotheses(
+            input,
+            model=model,
+            search_client=search_client,
+            fanout_n=fanout_n,
+            candidates_n=candidates_n,
+            available_plugins=researcher_summary(live),
+        )
+        hypothesis, critic_report = await _select_hypothesis_via_critic(
+            session, candidates, model=model
+        )
 
     slug = await generate_slug(session, hypothesis.strategy_family, hypothesis.asset_class)
 
@@ -301,6 +414,10 @@ async def _research_and_translate(
     (iteration_dir / STRATEGY_SPEC_FILENAME).write_text(
         render_strategy_spec_md(strategy_spec_from_hypothesis(hypothesis))
     )
+    if critic_report is not None:
+        (strategy_dir(slug) / "critic_report.json").write_text(
+            critic_report.model_dump_json(indent=2)
+        )
 
     strategy.hypothesis_path = str(hypothesis_path)
     strategy.updated_at = datetime.now(UTC)

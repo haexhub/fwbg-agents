@@ -55,8 +55,19 @@ class Settings(BaseSettings):
         ge=1,
         le=5,
         description=(
-            "Max sequential researcher attempts per /research/brief call; "
-            "each attempt runs alone — on failure the next starts immediately."
+            "Max sequential researcher attempts per candidate slot; each attempt "
+            "runs alone — on failure the next starts immediately."
+        ),
+    )
+    researcher_candidates_n: int = Field(
+        default=3,
+        ge=1,
+        le=5,
+        description=(
+            "Number of valid hypothesis candidates to collect before picking one. "
+            "1 = today's first-valid-wins behaviour (no Critic). >1 collects up to "
+            "this many valid candidates (each within its own researcher_fanout_n "
+            "retry budget) and has the Critic agent score + pick a winner."
         ),
     )
     pipeline_min_proposed: int = Field(
