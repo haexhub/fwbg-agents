@@ -46,6 +46,11 @@ from fwbg_agents.orchestrator.metrics import (
     median_metrics_across_assets as _median_metrics_across_assets,
 )
 from fwbg_agents.orchestrator.plugin_catalog import PluginCatalog
+from fwbg_agents.orchestrator.trade_diagnostics import (
+    build_trade_store,
+    describe_trades,
+    query_trades,
+)
 from fwbg_agents.persistence.agent_runs import (
     fail_agent_run,
     finish_agent_run,
@@ -56,6 +61,7 @@ from fwbg_agents.persistence.models import (
     LlmCall,
     Strategy,
 )
+from fwbg_agents.run_events import emit_run_event
 from fwbg_agents.tools.fwbg_client import FwbgClient
 from fwbg_agents.tools.llm import model_for, prompt_path_for
 
@@ -513,11 +519,42 @@ class Analyst:
                 system_prompt=system_prompt,
                 retries={"output": 3},
             )
-            t0 = time.monotonic()
-            result = await run_instrumented(
-                agent, "Emit your recommendation now.", agent_run_id=ar.id
+
+            run_id = results.get("run_id")
+            symbols = list((results.get("assets") or {}).keys())
+            run_dir = (
+                settings.fwbg_test_results_dir / run_id
+                if isinstance(run_id, str) and run_id
+                else settings.fwbg_test_results_dir / "__no_run_id__"
             )
-            latency_ms = int((time.monotonic() - t0) * 1000)
+            trade_conn = build_trade_store(run_dir, symbols)
+            agent_run_id = ar.id
+            try:
+
+                @agent.tool_plain
+                def query_trades_tool(sql: str) -> str:
+                    """Run a read-only SELECT against the `trades` table (one row per
+                    walk-forward trade, columns include pnl_raw, entry_time, exit_time,
+                    hour, bars_held, mae, mfe, symbol, fold, ...). Single SELECT only,
+                    capped at 200 rows. Call describe_trades_tool first if unsure of the
+                    schema."""
+                    emit_run_event(agent_run_id, "analyst_query", sql=sql)
+                    return query_trades(trade_conn, sql)
+
+                @agent.tool_plain
+                def describe_trades_tool() -> dict:
+                    """Column list, total row count, and entry-time range per symbol
+                    for the `trades` table — call this before query_trades_tool if
+                    unsure what columns exist."""
+                    return describe_trades(trade_conn)
+
+                t0 = time.monotonic()
+                result = await run_instrumented(
+                    agent, "Emit your recommendation now.", agent_run_id=ar.id
+                )
+                latency_ms = int((time.monotonic() - t0) * 1000)
+            finally:
+                trade_conn.close()
 
             usage = result.usage
             self.session.add(

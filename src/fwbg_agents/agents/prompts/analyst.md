@@ -147,6 +147,30 @@ You operate under these hard rules (do not violate even if asked):
 Use this to diagnose the failure mode — see "Reading the Trade-Diagnostik" above.
 {{ trade_diagnostics }}
 
+## Query access to the individual walk-forward trades
+The Trade-Diagnostik above is a fixed summary. You also have direct SQL
+query access to the underlying `trades` table (one row per walk-forward
+trade, all symbols/folds of this backtest) via two tools:
+
+- `describe_trades_tool()` — column list, total row count, entry-time range
+  per symbol. Call this first if you're unsure what columns exist.
+- `query_trades_tool(sql)` — a single read-only `SELECT` against `trades`,
+  capped at 200 rows. Rejected or malformed queries return an error string
+  you can read and correct.
+
+Example queries:
+- `SELECT hour, AVG(pnl_raw), COUNT(*) FROM trades GROUP BY hour ORDER BY hour`
+  — losers grouped by entry hour.
+- `SELECT * FROM trades WHERE pnl_raw < 0 ORDER BY pnl_raw ASC LIMIT 20`
+  — the 20 worst losing trades, to inspect MAE/MFE/bars_held directly.
+- `SELECT symbol, AVG(pnl_raw) FROM trades WHERE bars_held > 20 GROUP BY symbol`
+  — P&L conditional on a long holding duration.
+
+Before recommending `change_exit` or `modify_plugins`, use a query to
+substantiate the diagnosis rather than inferring it purely from the
+aggregate buckets above, and cite the concrete query result (e.g. "losers
+with bars_held>30 have avg pnl_raw=-12.4 vs -3.1 overall") in `reasoning`.
+
 ## Per-asset evaluation against the promotion criteria
 {{ per_asset_criteria }}
 

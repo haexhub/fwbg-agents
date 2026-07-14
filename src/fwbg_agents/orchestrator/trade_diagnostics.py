@@ -23,6 +23,8 @@ from __future__ import annotations
 
 import json
 import logging
+import re
+import sqlite3
 import statistics
 from datetime import datetime
 from pathlib import Path
@@ -308,3 +310,139 @@ def _render_symbol(d: SymbolDiagnostics, *, heading: str) -> str:
         lines.append(json.dumps(d.trade_analytics, indent=2, sort_keys=True))
         lines.append("```")
     return "\n".join(lines)
+
+
+# --- trade store (Analyst tool-use, Plan 010 WP4) ---------------------------
+
+TRADE_QUERY_ROW_CAP = 200
+
+# Anything beyond a read of the `trades` table is out of scope for the
+# Analyst's ad-hoc queries — reject rather than let a stray write/PRAGMA slip
+# through to the shared in-memory connection.
+_FORBIDDEN_SQL_KEYWORDS = (
+    "PRAGMA",
+    "ATTACH",
+    "DETACH",
+    "INSERT",
+    "UPDATE",
+    "DELETE",
+    "DROP",
+    "ALTER",
+    "CREATE",
+    "REPLACE",
+    "VACUUM",
+    "REINDEX",
+    "TRIGGER",
+)
+
+
+def _sql_safe_value(v: Any) -> Any:
+    """SQLite can only bind None/int/float/str/bytes — JSON-encode anything else."""
+    if v is None or isinstance(v, (int, float, str, bytes)):
+        return v
+    return json.dumps(v)
+
+
+def build_trade_store(run_dir: Path, symbols: list[str]) -> sqlite3.Connection:
+    """Load every trade of every symbol/fold of one run into an in-memory
+    SQLite ``trades`` table (columns = union of trade-dict keys + ``symbol``
+    + ``fold``). Built once, up front — no filesystem access happens from
+    inside the query tools that read from the returned connection.
+    """
+    rows: list[dict] = []
+    columns: dict[str, None] = {}
+    for symbol in symbols:
+        path = run_dir / "grid_details" / symbol / "fold_results.json"
+        if not path.is_file():
+            continue
+        try:
+            data = json.loads(path.read_text())
+        except (OSError, json.JSONDecodeError) as exc:
+            log.warning("trade_store: skipping %s — bad fold_results.json (%s)", path, exc)
+            continue
+        folds = (data.get("walk_forward") or {}).get("fold_details") or []
+        for fold_idx, fold in enumerate(folds):
+            for t in fold.get("test_trades_detail") or []:
+                if not isinstance(t, dict):
+                    continue
+                row = dict(t)
+                row["symbol"] = symbol
+                row["fold"] = fold_idx
+                rows.append(row)
+                for k in row:
+                    columns.setdefault(k, None)
+
+    # pydantic-ai runs `tool_plain` sync callables in a worker-thread executor,
+    # so the connection built on the event-loop thread is used from a
+    # different thread on every tool call — sqlite3's default same-thread
+    # check would reject that. Calls are still sequential (one awaited tool
+    # call at a time), so this is safe.
+    conn = sqlite3.connect(":memory:", check_same_thread=False)
+    col_names = list(columns) or ["symbol", "fold"]
+    quoted = ", ".join(f'"{c}"' for c in col_names)
+    conn.execute(f"CREATE TABLE trades ({quoted})")
+    if rows:
+        placeholders = ", ".join("?" for _ in col_names)
+        conn.executemany(
+            f"INSERT INTO trades ({quoted}) VALUES ({placeholders})",
+            [[_sql_safe_value(row.get(c)) for c in col_names] for row in rows],
+        )
+    conn.commit()
+    return conn
+
+
+def validate_select_sql(sql: str) -> str | None:
+    """Return an error message if ``sql`` isn't a single safe SELECT, else None."""
+    stripped = sql.strip()
+    if stripped.endswith(";"):
+        stripped = stripped[:-1].strip()
+    if ";" in stripped:
+        return "only a single SELECT statement is allowed (no ';')"
+    if not re.match(r"(?is)^\s*SELECT\b", stripped):
+        return "only SELECT statements are allowed"
+    upper = stripped.upper()
+    for kw in _FORBIDDEN_SQL_KEYWORDS:
+        if re.search(rf"\b{kw}\b", upper):
+            return f"forbidden keyword: {kw}"
+    return None
+
+
+def query_trades(conn: sqlite3.Connection, sql: str) -> str:
+    """Run a read-only, single-statement SELECT against the trade store.
+
+    Returns compact JSON on success (capped at ``TRADE_QUERY_ROW_CAP`` rows,
+    enforced by ``fetchmany`` so the query's own ORDER BY is respected — not
+    by wrapping in a sub-SELECT, which SQLite doesn't guarantee to preserve).
+    On rejection or a SQL error, returns a plain error string so the model
+    can see what went wrong and self-correct.
+    """
+    error = validate_select_sql(sql)
+    if error:
+        return f"query rejected: {error}"
+    stripped = sql.strip().rstrip(";")
+    try:
+        cur = conn.execute(stripped)
+        cols = [d[0] for d in cur.description or []]
+        fetched = cur.fetchmany(TRADE_QUERY_ROW_CAP)
+    except sqlite3.Error as exc:
+        return f"query error: {exc}"
+    rows = [dict(zip(cols, row, strict=True)) for row in fetched]
+    return json.dumps(rows, separators=(",", ":"), default=str)
+
+
+def describe_trades(conn: sqlite3.Connection) -> dict[str, Any]:
+    """Column list + row count + entry-time range per symbol, so the model
+    doesn't have to guess the schema before querying."""
+    columns = [row[1] for row in conn.execute("PRAGMA table_info(trades)").fetchall()]
+    total = conn.execute("SELECT COUNT(*) FROM trades").fetchone()[0]
+    per_symbol = []
+    if "symbol" in columns:
+        has_entry_time = "entry_time" in columns
+        time_cols = "MIN(entry_time), MAX(entry_time)" if has_entry_time else "NULL, NULL"
+        for symbol, count, min_t, max_t in conn.execute(
+            f"SELECT symbol, COUNT(*), {time_cols} FROM trades GROUP BY symbol ORDER BY symbol"
+        ).fetchall():
+            per_symbol.append(
+                {"symbol": symbol, "count": count, "min_entry_time": min_t, "max_entry_time": max_t}
+            )
+    return {"columns": columns, "total_rows": total, "per_symbol": per_symbol}
