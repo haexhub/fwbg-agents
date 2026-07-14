@@ -1,4 +1,4 @@
-"""Tests for GET /api/trials/summary (Plan 010 WP2 — dashboard DSR display)."""
+"""Tests for GET /trials/summary (Plan 010 WP2 — dashboard DSR display)."""
 
 from __future__ import annotations
 
@@ -42,7 +42,7 @@ async def client_with_db(tmp_path, monkeypatch):
 
 async def test_trials_summary_empty_when_no_backtests(client_with_db):
     client, _session, _tmp_path = client_with_db
-    resp = await client.get("/api/trials/summary")
+    resp = await client.get("/trials/summary")
     assert resp.status_code == 200
     body = resp.json()
     assert body == {
@@ -85,7 +85,7 @@ async def test_trials_summary_counts_trials_and_variance(client_with_db):
         )
     )
 
-    resp = await client.get("/api/trials/summary")
+    resp = await client.get("/trials/summary")
     assert resp.status_code == 200
     body = resp.json()
     assert body["n_trials"] == 4

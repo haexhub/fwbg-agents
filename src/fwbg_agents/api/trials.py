@@ -18,7 +18,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from fwbg_agents.orchestrator.trials import count_trials
 from fwbg_agents.persistence.database import get_session
 
-router = APIRouter(prefix="/api/trials", tags=["trials"])
+router = APIRouter(tags=["trials"])
 
 
 class TrialsSummary(BaseModel):
@@ -31,7 +31,7 @@ class TrialsSummary(BaseModel):
     sr_variance_sample_size: int
 
 
-@router.get("/summary")
+@router.get("/trials/summary")
 async def trials_summary(session: AsyncSession = Depends(get_session)) -> TrialsSummary:
     counts = await count_trials(session)
     variance = (
