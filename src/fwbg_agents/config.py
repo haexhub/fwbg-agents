@@ -36,13 +36,14 @@ class Settings(BaseSettings):
         ),
     )
     llm_max_retries: int = Field(
-        default=1,
+        default=2,
         ge=0,
         le=5,
         description=(
-            "Anthropic client retry budget per LLM call. The SDK default is 2 "
-            "(=3 attempts); 1 keeps one retry for transient 429/529/connection "
-            "blips while bounding a wedged-proxy hang to 2 x llm_timeout_seconds."
+            "Anthropic client retry budget per LLM call (SDK default, =3 "
+            "attempts). Covers transient 429/5xx/connection blips — proxy "
+            "502s ate whole researcher fanouts at 1. Worst case stays bounded "
+            "at 3 x llm_timeout_seconds for a wedged proxy."
         ),
     )
 

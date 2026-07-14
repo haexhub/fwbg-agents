@@ -135,6 +135,7 @@ class Researcher:
                 self.model,
                 output_type=ResearcherHypothesis,
                 system_prompt=system_prompt,
+                retries={"output": 3},
             )
 
             session = self.session
