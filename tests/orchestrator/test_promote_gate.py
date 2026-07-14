@@ -1,9 +1,10 @@
-"""Promote-gate tests (Plan 009 WP4).
+"""Promote-gate tests (Plan 009 WP4 + Plan 010 WP2).
 
 Drives run_promote_gate with a scripted fake fwbg client (no real backtests):
-holdout + cost-stress pass/fail paths, a backtest-error path, and the
-cumulative fail_count. Also covers the validate_and_apply integration
-(promote transitions only when the gate passes).
+holdout + cost-stress pass/fail paths, a backtest-error path, the cumulative
+fail_count, and the DSR check (Plan 010 WP2). Also covers the
+validate_and_apply integration (promote transitions only when the gate
+passes).
 """
 
 from __future__ import annotations
@@ -136,10 +137,15 @@ async def test_gate_passes_when_both_runs_clear(gate_env):
 
     assert result.passed is True
     assert result.fail_count == 0
-    assert [r.label for r in result.runs] == ["holdout", "cost_stress"]
+    assert [r.label for r in result.runs] == ["holdout", "cost_stress", "dsr"]
     # holdout run carried a date window; cost-stress run carried the multiplier.
     assert fake.start_calls[0].get("start_date") and fake.start_calls[0].get("end_date")
     assert fake.start_calls[1].get("cost_multiplier") == 2.0
+    # No fwbg run dir on disk for the fake holdout job -> no trade data -> the
+    # DSR check has nothing to judge and passes trivially (never blocks on
+    # missing data).
+    dsr = next(r for r in result.runs if r.label == "dsr")
+    assert dsr.passed is True
 
 
 async def test_gate_fails_on_weak_holdout(gate_env):
@@ -179,7 +185,13 @@ async def test_gate_run_error_counts_as_failure(gate_env):
         result = await run_promote_gate(session, strat, fwbg_client=fake)
 
     assert result.passed is False
-    assert all(r.error for r in result.runs)
+    holdout = next(r for r in result.runs if r.label == "holdout")
+    cost = next(r for r in result.runs if r.label == "cost_stress")
+    assert holdout.error and cost.error
+    # DSR has no holdout job_id to inspect (the backtest itself errored) -> no
+    # data to judge, trivial pass; it never masks the real backtest failures.
+    dsr = next(r for r in result.runs if r.label == "dsr")
+    assert dsr.passed is True
 
 
 async def test_fail_count_accumulates_across_runs(gate_env):
@@ -206,6 +218,80 @@ async def test_validate_and_apply_promote_blocked_by_failed_gate(gate_env):
     async with Session() as v:
         strat = (await v.execute(select(Strategy).where(Strategy.id == sid))).scalar_one()
         assert strat.current_state == StrategyState.BACKTESTED.value
+
+
+def _write_run_trades(settings, run_id: str, symbol: str, pnls: list[float]) -> None:
+    sym_dir = settings.fwbg_test_results_dir / run_id / "grid_details" / symbol
+    sym_dir.mkdir(parents=True, exist_ok=True)
+    (sym_dir / "fold_results.json").write_text(
+        json.dumps(
+            {
+                "walk_forward": {
+                    "fold_details": [
+                        {
+                            "test_trades_detail": [
+                                {"pnl_raw": p, "entry_time": "2024-01-01T00:00:00"}
+                                for p in pnls
+                            ]
+                        }
+                    ]
+                }
+            }
+        )
+    )
+
+
+async def test_gate_fails_on_low_dsr_despite_clean_holdout_and_cost_stress(gate_env):
+    """A weak-edge holdout trade series must block promotion via DSR even
+    when the criteria-based holdout/cost-stress checks both pass."""
+    Session, sid, settings = gate_env
+
+    # Two historical strategies establish the cross-trial SR variance sample.
+    async with Session() as session:
+        now = datetime.now(UTC)
+        for slug in ("prior_a", "prior_b"):
+            session.add(
+                Strategy(
+                    slug=slug,
+                    current_state=StrategyState.BACKTESTED.value,
+                    iteration_count=1,
+                    asset_class="FOREX",
+                    strategy_family="ORB",
+                    created_at=now,
+                    updated_at=now,
+                )
+            )
+        await session.commit()
+
+    for slug, run_id, pnls in [
+        ("prior_a", "hist_run_a", [5, -4, 6, -5, 4, -3, 5, -4, 6, -5]),
+        ("prior_b", "hist_run_b", [-2, 3, -1, 2, -3, 1, -2, 3, -1, 2]),
+    ]:
+        it_dir = settings.data_dir / "strategies" / slug / "iteration_001"
+        it_dir.mkdir(parents=True, exist_ok=True)
+        (it_dir / "fwbg_results.json").write_text(
+            json.dumps({"run_id": run_id, "assets": {"EURUSD": {"unified_metrics": {}}}})
+        )
+        _write_run_trades(settings, run_id, "EURUSD", pnls)
+
+    # The holdout job (job_1, first start_run call) gets a weak-edge trade
+    # series: non-trivial per-trade mean but noisy enough that DSR < 0.95.
+    holdout_pnls = [
+        10, -8, 12, -9, 11, -7, 9, -10, 13, -8, 10, -9, 11, -8, 9, -7, 8, -9, 10, -8,
+    ]
+    _write_run_trades(settings, "job_1", "EURUSD", holdout_pnls)
+
+    fake = _GateFake([_run(), _run()])  # both criteria-based checks pass
+    async with Session() as session:
+        strat = (await session.execute(select(Strategy).where(Strategy.id == sid))).scalar_one()
+        result = await run_promote_gate(session, strat, fwbg_client=fake)
+
+    assert result.passed is False
+    dsr = next(r for r in result.runs if r.label == "dsr")
+    assert dsr.passed is False
+    assert dsr.metrics["dsr"] < settings.dsr_min
+    assert result.dsr == dsr.metrics["dsr"]
+    assert result.n_trials is not None and result.n_trials >= 2
 
 
 async def test_validate_and_apply_promote_passes_gate_and_transitions(gate_env):

@@ -168,6 +168,18 @@ class Settings(BaseSettings):
             "[today - holdout_months, today] before a strategy may advance to paper."
         ),
     )
+    dsr_min: float = Field(
+        default=0.95,
+        ge=0.0,
+        le=1.0,
+        description=(
+            "Minimum Deflated Sharpe Ratio (Bailey/López de Prado 2014) at the "
+            "promote gate. The candidate's per-trade Sharpe on the holdout run "
+            "must beat the expected max Sharpe of N zero-skill trials (N = all "
+            "backtests ever run, incl. grid combinations) with this "
+            "probability; below it, promote is blocked like a holdout fail."
+        ),
+    )
     min_iterations_before_abandon: int = Field(
         default=3,
         ge=1,
