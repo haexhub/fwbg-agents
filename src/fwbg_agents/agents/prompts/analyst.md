@@ -138,6 +138,12 @@ You operate under these hard rules (do not violate even if asked):
 ## Family history (iteration chain — which change produced which metrics)
 {{ family_history }}
 
+## Interventions digest (median Sharpe delta by family x lever, across ALL lines)
+Historical evidence of what each lever (`tune_params`/`change_exit`/`modify_plugins`/
+`add_indicator`) typically did for strategies in the SAME family as this one — use
+this to prefer a lever with a track record over one with none, all else equal.
+{{ interventions_digest }}
+
 ## Backtest metrics per asset
 ```json
 {{ per_asset_metrics }}

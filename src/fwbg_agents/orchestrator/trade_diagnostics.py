@@ -63,6 +63,8 @@ class SymbolDiagnostics(BaseModel):
     by_hour: list[Bucket]
     by_weekday: list[Bucket]
     by_holding: list[Bucket]
+    by_vol_regime: list[Bucket]  # fwbg-computed ATR tercile at entry (Plan 010 WP5)
+    by_trend_regime: list[Bucket]  # fwbg-computed ADX bucket at entry (Plan 010 WP5)
     by_year: list[YearSegment]
     payoff_ratio: float | None  # mean win / mean |loss|
     longest_loss_streak: int
@@ -160,6 +162,16 @@ def _weekday_key(t: dict) -> str | None:
     return _WEEKDAYS[dt.weekday()] if dt else None
 
 
+def _vol_regime_key(t: dict) -> str | None:
+    regime = t.get("vol_regime")
+    return regime if isinstance(regime, str) else None
+
+
+def _trend_regime_key(t: dict) -> str | None:
+    regime = t.get("trend_regime")
+    return regime if isinstance(regime, str) else None
+
+
 def _holding_buckets(trades: list[dict]) -> list[Bucket]:
     """Split trades into holding-duration quartiles by ``bars_held``."""
     held = [t for t in trades if isinstance(t.get("bars_held"), (int, float))]
@@ -250,6 +262,8 @@ def _diagnose(symbol: str, trades: list[dict], analytics: dict | None) -> Symbol
         by_hour=_bucketize(trades, _hour_key),
         by_weekday=_bucketize(trades, _weekday_key),
         by_holding=_holding_buckets(trades),
+        by_vol_regime=_bucketize(trades, _vol_regime_key),
+        by_trend_regime=_bucketize(trades, _trend_regime_key),
         by_year=_year_segments(trades),
         payoff_ratio=_payoff_ratio(pnls),
         longest_loss_streak=_longest_loss_streak(trades),
@@ -298,6 +312,12 @@ def _render_symbol(d: SymbolDiagnostics, *, heading: str) -> str:
     lines.append(_fmt_buckets(d.by_weekday))
     lines.append("- P&L by holding-duration quartile:")
     lines.append(_fmt_buckets(d.by_holding))
+    if d.by_vol_regime:
+        lines.append("- P&L by volatility regime at entry (ATR tercile):")
+        lines.append(_fmt_buckets(d.by_vol_regime))
+    if d.by_trend_regime:
+        lines.append("- P&L by trend regime at entry (ADX bucket):")
+        lines.append(_fmt_buckets(d.by_trend_regime))
     if d.by_year:
         lines.append("- P&L by year (is the edge only in one year?):")
         lines.extend(

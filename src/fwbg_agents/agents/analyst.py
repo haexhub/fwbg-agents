@@ -39,6 +39,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from fwbg_agents.agents.instrumented import run_instrumented
 from fwbg_agents.config import settings
+from fwbg_agents.orchestrator.interventions import (
+    interventions_digest,
+    regenerate_interventions_digest,
+)
 from fwbg_agents.orchestrator.lifecycle import check_backtest_criteria, strategy_dir
 from fwbg_agents.orchestrator.lineage import render_family_history
 from fwbg_agents.orchestrator.live_catalog import LiveCatalog, fetch_live_catalog
@@ -363,6 +367,7 @@ def _render_prompt(
     trade_diagnostics: str,
     promote_gate: str,
     catalog_snapshot: str,
+    interventions_digest: str,
 ) -> str:
     """Tiny mustache-style replacer — we don't need Jinja for a handful of variables."""
     out = template
@@ -385,6 +390,7 @@ def _render_prompt(
     out = out.replace("{{ trade_diagnostics }}", trade_diagnostics)
     out = out.replace("{{ promote_gate }}", promote_gate)
     out = out.replace("{{ catalog_snapshot }}", catalog_snapshot)
+    out = out.replace("{{ interventions_digest }}", interventions_digest)
     return out
 
 
@@ -492,6 +498,8 @@ class Analyst:
             catalog_snapshot = _render_catalog_details(live)
 
             depth, family_history = await render_family_history(self.session, strategy)
+            await regenerate_interventions_digest(self.session)
+            interventions = interventions_digest()
 
             template = self.prompt_path.read_text()
             system_prompt = _render_prompt(
@@ -511,6 +519,7 @@ class Analyst:
                 trade_diagnostics=trade_diagnostics,
                 promote_gate=promote_gate,
                 catalog_snapshot=catalog_snapshot,
+                interventions_digest=interventions,
             )
 
             agent = Agent(  # type: ignore[call-overload]  # pydantic-ai union output_type not matched by overloads

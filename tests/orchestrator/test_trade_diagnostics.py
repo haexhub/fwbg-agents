@@ -122,6 +122,54 @@ def test_aggregate_across_symbols(tmp_path):
     assert diag.aggregate.n_trades == 2
 
 
+def test_by_vol_and_trend_regime_buckets_from_fwbg_labels(tmp_path):
+    """vol_regime/trend_regime (fwbg-computed, Plan 010 WP5) bucket like any
+    other trade field; trades missing them are simply dropped from that
+    specific bucket, same as unparseable entry_time for by_hour."""
+    trades = [
+        {**_trade(1.0, entry="2025-01-01T10:00:00", exit="2025-01-01T11:00:00", bars=1),
+         "vol_regime": "low", "trend_regime": "ranging"},
+        {**_trade(-1.0, entry="2025-01-01T12:00:00", exit="2025-01-01T13:00:00", bars=1),
+         "vol_regime": "low", "trend_regime": "trending"},
+        {**_trade(2.0, entry="2025-01-01T14:00:00", exit="2025-01-01T15:00:00", bars=1),
+         "vol_regime": "high", "trend_regime": "strong_trend"},
+        # No regime labels at all (older run / plugin not configured) — dropped.
+        _trade(0.5, entry="2025-01-01T16:00:00", exit="2025-01-01T17:00:00", bars=1),
+    ]
+    _write_fold_results(tmp_path, "EURUSD", trades)
+    diag = compute_trade_diagnostics(tmp_path, ["EURUSD"])
+    sym = diag.per_symbol[0]
+
+    vol_by_key = {b.key: b for b in sym.by_vol_regime}
+    assert vol_by_key["low"].count == 2
+    assert vol_by_key["low"].total_pnl == 0.0
+    assert vol_by_key["high"].count == 1
+
+    trend_by_key = {b.key: b for b in sym.by_trend_regime}
+    assert {"ranging", "trending", "strong_trend"} == set(trend_by_key)
+
+    md = diag.render_markdown()
+    assert "volatility regime at entry" in md
+    assert "trend regime at entry" in md
+
+
+def test_no_regime_labels_omits_regime_sections_from_markdown(tmp_path):
+    """Older runs / runs without the volatility+adx plugins configured have
+    no vol_regime/trend_regime at all — the digest must not show empty
+    regime sections for every strategy until the feature is fully adopted."""
+    _write_fold_results(
+        tmp_path,
+        "EURUSD",
+        [_trade(1.0, entry="2025-01-01T10:00:00", exit="2025-01-01T11:00:00", bars=1)],
+    )
+    diag = compute_trade_diagnostics(tmp_path, ["EURUSD"])
+    assert diag.aggregate.by_vol_regime == []
+    assert diag.aggregate.by_trend_regime == []
+    md = diag.render_markdown()
+    assert "volatility regime at entry" not in md
+    assert "trend regime at entry" not in md
+
+
 def test_missing_run_dir_degrades(tmp_path):
     diag = compute_trade_diagnostics(tmp_path / "nope", ["EURUSD"])
     assert diag.aggregate is None
@@ -234,6 +282,30 @@ def test_describe_trades_reports_columns_and_per_symbol_range(tmp_path):
             "max_entry_time": "2025-01-03T10:00:00",
         }
     ]
+
+
+def test_describe_trades_surfaces_regime_columns_when_present(tmp_path):
+    """fwbg-computed vol_regime/trend_regime (Plan 010 WP5) become ordinary
+    trade-dict keys, so build_trade_store's dynamic column union picks them
+    up automatically -- no query_trades/describe_trades code change needed."""
+    _write_fold_results(
+        tmp_path,
+        "EURUSD",
+        [
+            {
+                **_trade(1.0, entry="2025-01-01T10:00:00", exit="2025-01-01T11:00:00", bars=1),
+                "vol_regime": "low",
+                "trend_regime": "ranging",
+            },
+        ],
+    )
+    conn = build_trade_store(tmp_path, ["EURUSD"])
+    desc = describe_trades(conn)
+    assert "vol_regime" in desc["columns"]
+    assert "trend_regime" in desc["columns"]
+
+    result = query_trades(conn, "SELECT vol_regime, trend_regime FROM trades")
+    assert json.loads(result) == [{"vol_regime": "low", "trend_regime": "ranging"}]
 
 
 def test_query_trades_returns_compact_json(tmp_path):
