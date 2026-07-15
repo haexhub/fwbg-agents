@@ -1,5 +1,30 @@
 # Changelog
 
+## [0.24.0](https://github.com/haexhub/fwbg-agents/compare/v0.23.1...v0.24.0) (2026-07-15)
+
+
+### Features
+
+* **analyst:** regime buckets in trade diagnostics + interventions digest (Plan 010 WP5) ([159963a](https://github.com/haexhub/fwbg-agents/commit/159963a52a6d533af821e264491ab07d78f3a27f))
+* **analyst:** tool-use over per-trade data via ad-hoc SQL (Plan 010 WP4) ([46094d4](https://github.com/haexhub/fwbg-agents/commit/46094d4ecad90c1cd2f1f136919b5afe18a0caad))
+* **api:** GET /api/trials/summary — global trial census for external DSR display ([48c9f5d](https://github.com/haexhub/fwbg-agents/commit/48c9f5d54199ca724c9efa1dc932a030461e0599))
+* **loop:** deterministic datasource normalization + retry budgets (Plan 010 WP1) ([6cd19a1](https://github.com/haexhub/fwbg-agents/commit/6cd19a17c7602f5e87f47ab041e423e81bbd005f))
+* **promote-gate:** trial counting + Deflated Sharpe Ratio gate (Plan 010 WP2) ([ca1e204](https://github.com/haexhub/fwbg-agents/commit/ca1e2049b543f121d8736ea52d5a96a9b3e4f9cf))
+* **research:** Researcher fan-out with Critic + exploration-balance pressure (Plan 010 WP3) ([4ce33de](https://github.com/haexhub/fwbg-agents/commit/4ce33de26e30a78e350c897e2645d33dc1adcff4))
+
+
+### Bug Fixes
+
+* **010:** review fixes — add_indicator in interventions digest, critic all-reject artifacts, thread-safe analyst events ([f12c057](https://github.com/haexhub/fwbg-agents/commit/f12c0578ff7112337c0a8a8f092b1c8ff07f42f2))
+* **api:** drop /api prefix on trials endpoint for router convention ([83031aa](https://github.com/haexhub/fwbg-agents/commit/83031aafa8dc2bc7b17904f2be617fb6239e9c3a))
+* **validator:** check exit-strategy choice params against the plugin param schema ([8602cbf](https://github.com/haexhub/fwbg-agents/commit/8602cbfacdb0fc5116d5f2b831c9fa95bc8ece96))
+* **validator:** reject invalid exit-strategy choice params at translation time ([afbc2f5](https://github.com/haexhub/fwbg-agents/commit/afbc2f55cf3d914d3b160f15cb038f9cad6e5e13))
+
+
+### Documentation
+
+* **plans:** commit Plan 010 doc, mark WP1-WP5 done, WP6 deferred pending spike ([63c157a](https://github.com/haexhub/fwbg-agents/commit/63c157a21d140d2336c157c973e981d0f6f519bd))
+
 ## [0.23.1](https://github.com/haexhub/fwbg-agents/compare/v0.23.0...v0.23.1) (2026-07-13)
 
 
