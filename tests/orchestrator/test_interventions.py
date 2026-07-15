@@ -151,6 +151,63 @@ async def test_aggregates_median_delta_by_family_and_kind(db):
     assert "ORB x tune_params: median Δsharpe=-0.10 (n=1)" in digest
 
 
+async def test_reiterate_with_plugin_edge_counts_as_add_indicator(db):
+    """run_reiterate_with_plugin transitions have no `recommendation` dict in
+    their payload — the plugin_slug marker maps them to the add_indicator
+    lever, so the digest covers all four levers it advertises."""
+    Session, settings = db
+    async with Session() as session:
+        now = datetime.now(UTC)
+        parent = Strategy(
+            slug="mr_p",
+            current_state=StrategyState.BACKTESTED.value,
+            iteration_count=1,
+            asset_class="FOREX",
+            strategy_family="mean_reversion",
+            created_at=now,
+            updated_at=now,
+        )
+        session.add(parent)
+        await session.flush()
+        child = Strategy(
+            slug="mr_p__plugin",
+            current_state=StrategyState.BACKTESTED.value,
+            iteration_count=1,
+            parent_strategy_id=parent.id,
+            asset_class="FOREX",
+            strategy_family="mean_reversion",
+            created_at=now,
+            updated_at=now,
+        )
+        session.add(child)
+        await session.flush()
+        session.add(
+            Transition(
+                entity_type="strategy",
+                entity_id=child.id,
+                from_state=None,
+                to_state=StrategyState.PROPOSED.value,
+                reason="translator: reiterate_with_plugin",
+                payload={
+                    "parent_strategy_id": parent.id,
+                    "plugin_slug": "atr-bands",
+                    "sidecar": {},
+                },
+                created_by="translator",
+                created_at=now,
+            )
+        )
+        await session.commit()
+
+    _write_results(settings, "mr_p", [1.0])
+    _write_results(settings, "mr_p__plugin", [1.4])
+
+    async with Session() as session:
+        await regenerate_interventions_digest(session)
+    digest = interventions_digest()
+    assert "mean_reversion x add_indicator: median Δsharpe=+0.40 (n=1)" in digest
+
+
 async def test_edge_without_recognized_recommendation_kind_is_excluded(db):
     Session, settings = db
     async with Session() as session:

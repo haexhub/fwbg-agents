@@ -56,20 +56,34 @@ async def exploration_balance_digest(
     if not cells:
         return "(no strategies proposed yet — every cell is unexplored)"
 
-    lines = [
+    header = [
         "Existing strategies by strategy_family x asset_class x timeframe "
         "(most-crowded first):",
         "",
     ]
-    for (family, asset_class, timeframe), count in sorted(
-        cells.items(), key=lambda kv: (-kv[1], kv[0])
-    ):
-        lines.append(f"- {family} x {asset_class} x {timeframe}: {count}")
-    lines.append("")
-    lines.append(
+    cell_lines = [
+        f"- {family} x {asset_class} x {timeframe}: {count}"
+        for (family, asset_class, timeframe), count in sorted(
+            cells.items(), key=lambda kv: (-kv[1], kv[0])
+        )
+    ]
+    trailer = [
+        "",
         "Prefer an underexplored cell for your hypothesis, but only if the "
         "mechanism is genuinely sound for it — do not force a family/asset/"
-        "timeframe combination that lacks a real edge just to diversify."
-    )
-    text = "\n".join(lines)
+        "timeframe combination that lacks a real edge just to diversify.",
+    ]
+
+    # Fit the budget by dropping the least-crowded cells from the tail — the
+    # trailer (the actual instruction) must survive truncation.
+    def _render(shown: list[str]) -> str:
+        omitted = len(cell_lines) - len(shown)
+        omit_line = [f"- ... ({omitted} less-crowded cells omitted)"] if omitted else []
+        return "\n".join(header + shown + omit_line + trailer)
+
+    shown = cell_lines
+    text = _render(shown)
+    while len(text) > max_chars and shown:
+        shown = shown[:-1]
+        text = _render(shown)
     return text[:max_chars]

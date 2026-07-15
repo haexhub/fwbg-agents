@@ -25,6 +25,8 @@ work can plug in an estimator that infers USD from input/output tokens.
 
 from __future__ import annotations
 
+import asyncio
+import functools
 import json
 import logging
 import time
@@ -538,6 +540,9 @@ class Analyst:
             )
             trade_conn = build_trade_store(run_dir, symbols)
             agent_run_id = ar.id
+            # pydantic-ai runs sync tools in a worker thread; the SSE event bus
+            # is only safe on the event loop, so hop back via the captured loop.
+            loop = asyncio.get_running_loop()
             try:
 
                 @agent.tool_plain
@@ -547,7 +552,9 @@ class Analyst:
                     hour, bars_held, mae, mfe, symbol, fold, ...). Single SELECT only,
                     capped at 200 rows. Call describe_trades_tool first if unsure of the
                     schema."""
-                    emit_run_event(agent_run_id, "analyst_query", sql=sql)
+                    loop.call_soon_threadsafe(
+                        functools.partial(emit_run_event, agent_run_id, "analyst_query", sql=sql)
+                    )
                     return query_trades(trade_conn, sql)
 
                 @agent.tool_plain

@@ -176,20 +176,17 @@ async def _select_hypothesis_via_critic(
     report, critic_run_id = await Critic(session, model=model).judge(hypotheses)
 
     passing = [i for i, c in enumerate(report.candidates) if c.verdict == "pass"]
-    if not passing:
-        raise ResearcherFanoutExhaustedError(
-            f"critic rejected all {len(hypotheses)} candidates: "
-            + "; ".join(
-                f"[{i}] score={c.score:.2f} risks={c.kill_risks}"
-                for i, c in enumerate(report.candidates)
-            )
-        )
-    winner_idx = report.winner_index
-    if winner_idx is None or winner_idx not in passing:
+    winner_idx: int | None = report.winner_index
+    if passing and (winner_idx is None or winner_idx not in passing):
         # A missing/inconsistent winner_index is a cosmetic model slip, not a
         # reason to fail an otherwise-usable batch — recover deterministically.
         winner_idx = max(passing, key=lambda i: report.candidates[i].score)
+    elif not passing:
+        winner_idx = None
 
+    # Persist artifacts + event before any raise: an all-reject batch must not
+    # vanish without a trace — the hypotheses are raw material for a future
+    # crossover mode and evidence for the anti-redundancy loop.
     critic_dir = run_dir(critic_run_id)
     critic_dir.mkdir(parents=True, exist_ok=True)
     losers = [h for i, h in enumerate(hypotheses) if i != winner_idx]
@@ -203,6 +200,17 @@ async def _select_hypothesis_via_critic(
         winner_index=winner_idx,
         scores=[c.score for c in report.candidates],
     )
+    if winner_idx is None:
+        # No strategy dir will ever exist for this batch — keep the report
+        # itself in the Critic's run dir instead.
+        (critic_dir / "critic_report.json").write_text(report.model_dump_json(indent=2))
+        raise ResearcherFanoutExhaustedError(
+            f"critic rejected all {len(hypotheses)} candidates: "
+            + "; ".join(
+                f"[{i}] score={c.score:.2f} risks={c.kill_risks}"
+                for i, c in enumerate(report.candidates)
+            )
+        )
     return hypotheses[winner_idx], report
 
 

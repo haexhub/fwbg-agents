@@ -90,3 +90,19 @@ async def test_digest_is_capped_at_max_chars(db):
         digest = await exploration_balance_digest(session, max_chars=200)
 
     assert len(digest) <= 200
+
+
+async def test_truncation_drops_cells_but_keeps_the_instruction_trailer(db):
+    """When the cell list outgrows the budget, the least-crowded cells are
+    dropped — the 'prefer underexplored' instruction (the point of the digest)
+    must survive."""
+    Session, settings = db
+    for i in range(50):
+        await _seed_strategy(Session, settings, f"s_{i}", f"family_{i}", "FOREX", "HOUR")
+
+    async with Session() as session:
+        digest = await exploration_balance_digest(session, max_chars=800)
+
+    assert len(digest) <= 800
+    assert "Prefer an underexplored cell" in digest
+    assert "less-crowded cells omitted" in digest

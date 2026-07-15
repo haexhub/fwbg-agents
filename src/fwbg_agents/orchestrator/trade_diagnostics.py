@@ -399,7 +399,9 @@ def build_trade_store(run_dir: Path, symbols: list[str]) -> sqlite3.Connection:
     # call at a time), so this is safe.
     conn = sqlite3.connect(":memory:", check_same_thread=False)
     col_names = list(columns) or ["symbol", "fold"]
-    quoted = ", ".join(f'"{c}"' for c in col_names)
+    # Column names come from artifact JSON keys — escape quotes so a stray
+    # '"' in a key can't break out of the identifier.
+    quoted = ", ".join('"{}"'.format(c.replace('"', '""')) for c in col_names)
     conn.execute(f"CREATE TABLE trades ({quoted})")
     if rows:
         placeholders = ", ".join("?" for _ in col_names)

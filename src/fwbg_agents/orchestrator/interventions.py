@@ -76,9 +76,16 @@ async def _recommendation_kind(session: AsyncSession, child_id: int) -> str | No
     ).scalar_one_or_none()
     if tr is None:
         return None
-    rec = (tr.payload or {}).get("recommendation")
+    payload = tr.payload or {}
+    rec = payload.get("recommendation")
     kind = rec.get("kind") if isinstance(rec, dict) else None
-    return kind if isinstance(kind, str) else None
+    if isinstance(kind, str):
+        return kind
+    # run_reiterate_with_plugin transitions carry no recommendation dict — the
+    # plugin_slug marker identifies the add_indicator lever that spawned them.
+    if "plugin_slug" in payload:
+        return "add_indicator"
+    return None
 
 
 async def regenerate_interventions_digest(session: AsyncSession) -> Path:

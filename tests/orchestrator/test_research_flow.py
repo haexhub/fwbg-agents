@@ -669,6 +669,19 @@ async def test_candidates_mode_all_rejected_raises_fanout_exhausted(db, monkeypa
     strategies = (await session.execute(select(Strategy))).scalars().all()
     assert strategies == []
 
+    # ... but the rejected hypotheses and the Critic's report survive under
+    # the Critic's own run dir (anti-redundancy evidence + crossover material).
+    critic_ar = next(
+        r
+        for r in (await session.execute(select(AgentRun))).scalars().all()
+        if r.agent_name == "critic"
+    )
+    losers = json.loads((run_dir(critic_ar.id) / "losing_hypotheses.json").read_text())
+    assert sorted(h["title"] for h in losers) == ["candidate A", "candidate B"]
+    report = json.loads((run_dir(critic_ar.id) / "critic_report.json").read_text())
+    assert report["winner_index"] is None
+    assert len(report["candidates"]) == 2
+
 
 @pytest.mark.asyncio
 async def test_candidates_mode_partial_collection_still_runs_critic(db, monkeypatch):
