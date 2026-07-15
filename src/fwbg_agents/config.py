@@ -36,13 +36,14 @@ class Settings(BaseSettings):
         ),
     )
     llm_max_retries: int = Field(
-        default=1,
+        default=2,
         ge=0,
         le=5,
         description=(
-            "Anthropic client retry budget per LLM call. The SDK default is 2 "
-            "(=3 attempts); 1 keeps one retry for transient 429/529/connection "
-            "blips while bounding a wedged-proxy hang to 2 x llm_timeout_seconds."
+            "Anthropic client retry budget per LLM call (SDK default, =3 "
+            "attempts). Covers transient 429/5xx/connection blips — proxy "
+            "502s ate whole researcher fanouts at 1. Worst case stays bounded "
+            "at 3 x llm_timeout_seconds for a wedged proxy."
         ),
     )
 
@@ -54,8 +55,19 @@ class Settings(BaseSettings):
         ge=1,
         le=5,
         description=(
-            "Max sequential researcher attempts per /research/brief call; "
-            "each attempt runs alone — on failure the next starts immediately."
+            "Max sequential researcher attempts per candidate slot; each attempt "
+            "runs alone — on failure the next starts immediately."
+        ),
+    )
+    researcher_candidates_n: int = Field(
+        default=3,
+        ge=1,
+        le=5,
+        description=(
+            "Number of valid hypothesis candidates to collect before picking one. "
+            "1 = today's first-valid-wins behaviour (no Critic). >1 collects up to "
+            "this many valid candidates (each within its own researcher_fanout_n "
+            "retry budget) and has the Critic agent score + pick a winner."
         ),
     )
     pipeline_min_proposed: int = Field(
@@ -165,6 +177,18 @@ class Settings(BaseSettings):
             "Iteration backtests end at today - holdout_months (no iteration ever "
             "sees this window); the promote gate then runs a holdout backtest on "
             "[today - holdout_months, today] before a strategy may advance to paper."
+        ),
+    )
+    dsr_min: float = Field(
+        default=0.95,
+        ge=0.0,
+        le=1.0,
+        description=(
+            "Minimum Deflated Sharpe Ratio (Bailey/López de Prado 2014) at the "
+            "promote gate. The candidate's per-trade Sharpe on the holdout run "
+            "must beat the expected max Sharpe of N zero-skill trials (N = all "
+            "backtests ever run, incl. grid combinations) with this "
+            "probability; below it, promote is blocked like a holdout fail."
         ),
     )
     min_iterations_before_abandon: int = Field(

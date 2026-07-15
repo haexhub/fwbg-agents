@@ -18,6 +18,7 @@ from fwbg_agents.api import (
     runs,
     secrets,
     strategies,
+    trials,
 )
 from fwbg_agents.config import settings
 from fwbg_agents.orchestrator import auto_runner, run_janitor
@@ -74,3 +75,4 @@ app.include_router(runs.router)
 app.include_router(research.router)
 app.include_router(agents_config.router)
 app.include_router(secrets.router)
+app.include_router(trials.router)

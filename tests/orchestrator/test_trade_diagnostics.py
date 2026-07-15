@@ -10,8 +10,15 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
+
 from fwbg_agents.orchestrator.trade_diagnostics import (
+    TRADE_QUERY_ROW_CAP,
+    build_trade_store,
     compute_trade_diagnostics,
+    describe_trades,
+    query_trades,
+    validate_select_sql,
 )
 
 
@@ -115,6 +122,63 @@ def test_aggregate_across_symbols(tmp_path):
     assert diag.aggregate.n_trades == 2
 
 
+def test_by_vol_and_trend_regime_buckets_from_fwbg_labels(tmp_path):
+    """vol_regime/trend_regime (fwbg-computed, Plan 010 WP5) bucket like any
+    other trade field; trades missing them are simply dropped from that
+    specific bucket, same as unparseable entry_time for by_hour."""
+    trades = [
+        {
+            **_trade(1.0, entry="2025-01-01T10:00:00", exit="2025-01-01T11:00:00", bars=1),
+            "vol_regime": "low",
+            "trend_regime": "ranging",
+        },
+        {
+            **_trade(-1.0, entry="2025-01-01T12:00:00", exit="2025-01-01T13:00:00", bars=1),
+            "vol_regime": "low",
+            "trend_regime": "trending",
+        },
+        {
+            **_trade(2.0, entry="2025-01-01T14:00:00", exit="2025-01-01T15:00:00", bars=1),
+            "vol_regime": "high",
+            "trend_regime": "strong_trend",
+        },
+        # No regime labels at all (older run / plugin not configured) — dropped.
+        _trade(0.5, entry="2025-01-01T16:00:00", exit="2025-01-01T17:00:00", bars=1),
+    ]
+    _write_fold_results(tmp_path, "EURUSD", trades)
+    diag = compute_trade_diagnostics(tmp_path, ["EURUSD"])
+    sym = diag.per_symbol[0]
+
+    vol_by_key = {b.key: b for b in sym.by_vol_regime}
+    assert vol_by_key["low"].count == 2
+    assert vol_by_key["low"].total_pnl == 0.0
+    assert vol_by_key["high"].count == 1
+
+    trend_by_key = {b.key: b for b in sym.by_trend_regime}
+    assert {"ranging", "trending", "strong_trend"} == set(trend_by_key)
+
+    md = diag.render_markdown()
+    assert "volatility regime at entry" in md
+    assert "trend regime at entry" in md
+
+
+def test_no_regime_labels_omits_regime_sections_from_markdown(tmp_path):
+    """Older runs / runs without the volatility+adx plugins configured have
+    no vol_regime/trend_regime at all — the digest must not show empty
+    regime sections for every strategy until the feature is fully adopted."""
+    _write_fold_results(
+        tmp_path,
+        "EURUSD",
+        [_trade(1.0, entry="2025-01-01T10:00:00", exit="2025-01-01T11:00:00", bars=1)],
+    )
+    diag = compute_trade_diagnostics(tmp_path, ["EURUSD"])
+    assert diag.aggregate.by_vol_regime == []
+    assert diag.aggregate.by_trend_regime == []
+    md = diag.render_markdown()
+    assert "volatility regime at entry" not in md
+    assert "trend regime at entry" not in md
+
+
 def test_missing_run_dir_degrades(tmp_path):
     diag = compute_trade_diagnostics(tmp_path / "nope", ["EURUSD"])
     assert diag.aggregate is None
@@ -163,3 +227,151 @@ def test_trades_with_missing_or_bad_timestamps_do_not_crash(tmp_path):
     assert [y.year for y in sym.by_year] == [2025]
     # Renders without raising.
     assert "EURUSD" in diag.render_markdown()
+
+
+# --- trade store (Analyst tool-use, Plan 010 WP4) ---------------------------
+
+
+def test_build_trade_store_loads_rows_with_symbol_and_fold(tmp_path):
+    _write_fold_results(
+        tmp_path,
+        "EURUSD",
+        [
+            _trade(1.0, entry="2025-01-01T10:00:00", exit="2025-01-01T11:00:00", bars=1),
+            _trade(-1.0, entry="2025-01-01T12:00:00", exit="2025-01-01T13:00:00", bars=1),
+        ],
+    )
+    conn = build_trade_store(tmp_path, ["EURUSD"])
+    rows = conn.execute("SELECT symbol, fold, pnl_raw FROM trades ORDER BY pnl_raw").fetchall()
+    assert rows == [("EURUSD", 0, -1.0), ("EURUSD", 0, 1.0)]
+
+
+def test_build_trade_store_across_multiple_symbols(tmp_path):
+    _write_fold_results(
+        tmp_path,
+        "EURUSD",
+        [_trade(1.0, entry="2025-01-01T10:00:00", exit="2025-01-01T11:00:00", bars=1)],
+    )
+    _write_fold_results(
+        tmp_path,
+        "GBPUSD",
+        [_trade(2.0, entry="2025-01-02T10:00:00", exit="2025-01-02T11:00:00", bars=1)],
+    )
+    conn = build_trade_store(tmp_path, ["EURUSD", "GBPUSD"])
+    total = conn.execute("SELECT COUNT(*) FROM trades").fetchone()[0]
+    assert total == 2
+    symbols = {r[0] for r in conn.execute("SELECT DISTINCT symbol FROM trades").fetchall()}
+    assert symbols == {"EURUSD", "GBPUSD"}
+
+
+def test_build_trade_store_handles_missing_symbol_dir(tmp_path):
+    conn = build_trade_store(tmp_path, ["NONEXISTENT"])
+    assert conn.execute("SELECT COUNT(*) FROM trades").fetchone()[0] == 0
+
+
+def test_describe_trades_reports_columns_and_per_symbol_range(tmp_path):
+    _write_fold_results(
+        tmp_path,
+        "EURUSD",
+        [
+            _trade(1.0, entry="2025-01-01T10:00:00", exit="2025-01-01T11:00:00", bars=1),
+            _trade(-1.0, entry="2025-01-03T10:00:00", exit="2025-01-03T11:00:00", bars=1),
+        ],
+    )
+    conn = build_trade_store(tmp_path, ["EURUSD"])
+    desc = describe_trades(conn)
+    assert "pnl_raw" in desc["columns"]
+    assert "symbol" in desc["columns"] and "fold" in desc["columns"]
+    assert desc["total_rows"] == 2
+    assert desc["per_symbol"] == [
+        {
+            "symbol": "EURUSD",
+            "count": 2,
+            "min_entry_time": "2025-01-01T10:00:00",
+            "max_entry_time": "2025-01-03T10:00:00",
+        }
+    ]
+
+
+def test_describe_trades_surfaces_regime_columns_when_present(tmp_path):
+    """fwbg-computed vol_regime/trend_regime (Plan 010 WP5) become ordinary
+    trade-dict keys, so build_trade_store's dynamic column union picks them
+    up automatically -- no query_trades/describe_trades code change needed."""
+    _write_fold_results(
+        tmp_path,
+        "EURUSD",
+        [
+            {
+                **_trade(1.0, entry="2025-01-01T10:00:00", exit="2025-01-01T11:00:00", bars=1),
+                "vol_regime": "low",
+                "trend_regime": "ranging",
+            },
+        ],
+    )
+    conn = build_trade_store(tmp_path, ["EURUSD"])
+    desc = describe_trades(conn)
+    assert "vol_regime" in desc["columns"]
+    assert "trend_regime" in desc["columns"]
+
+    result = query_trades(conn, "SELECT vol_regime, trend_regime FROM trades")
+    assert json.loads(result) == [{"vol_regime": "low", "trend_regime": "ranging"}]
+
+
+def test_query_trades_returns_compact_json(tmp_path):
+    _write_fold_results(
+        tmp_path,
+        "EURUSD",
+        [_trade(1.0, entry="2025-01-01T10:00:00", exit="2025-01-01T11:00:00", bars=1)],
+    )
+    conn = build_trade_store(tmp_path, ["EURUSD"])
+    result = query_trades(conn, "SELECT symbol, pnl_raw FROM trades")
+    rows = json.loads(result)
+    assert rows == [{"symbol": "EURUSD", "pnl_raw": 1.0}]
+    assert " " not in result  # compact separators
+
+
+def test_query_trades_unknown_column_returns_error_string_not_raise(tmp_path):
+    conn = build_trade_store(tmp_path, ["EURUSD"])
+    result = query_trades(conn, "SELECT no_such_column FROM trades")
+    assert "query error" in result
+    assert "no_such_column" in result
+
+
+@pytest.mark.parametrize(
+    "sql",
+    [
+        "SELECT * FROM trades; DROP TABLE trades",
+        "SELECT * FROM trades; ATTACH DATABASE '/etc/passwd' AS x",
+        "PRAGMA table_info(trades)",
+        "DROP TABLE trades",
+        "INSERT INTO trades (symbol) VALUES ('x')",
+        "UPDATE trades SET pnl_raw = 0",
+        "DELETE FROM trades",
+        "ATTACH DATABASE ':memory:' AS evil",
+    ],
+)
+def test_query_trades_rejects_unsafe_sql(tmp_path, sql):
+    conn = build_trade_store(tmp_path, ["EURUSD"])
+    result = query_trades(conn, sql)
+    assert result.startswith("query rejected:")
+
+
+def test_query_trades_enforces_row_cap(tmp_path):
+    trades = [
+        _trade(float(i), entry="2025-01-01T10:00:00", exit="2025-01-01T11:00:00", bars=1)
+        for i in range(TRADE_QUERY_ROW_CAP + 50)
+    ]
+    _write_fold_results(tmp_path, "EURUSD", trades)
+    conn = build_trade_store(tmp_path, ["EURUSD"])
+    result = query_trades(conn, "SELECT pnl_raw FROM trades ORDER BY pnl_raw")
+    rows = json.loads(result)
+    assert len(rows) == TRADE_QUERY_ROW_CAP
+    # ORDER BY is respected — the cap takes the first 200 in ascending order.
+    assert rows[0]["pnl_raw"] == 0.0
+    assert rows[-1]["pnl_raw"] == float(TRADE_QUERY_ROW_CAP - 1)
+
+
+def test_validate_select_sql_allows_plain_select():
+    assert validate_select_sql("SELECT * FROM trades") is None
+    assert validate_select_sql("  select symbol from trades  ") is None
+    assert validate_select_sql("SELECT * FROM trades;") is None

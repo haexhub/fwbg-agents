@@ -21,7 +21,7 @@ from pathlib import Path
 import pytest
 import pytest_asyncio
 import yaml
-from pydantic_ai.messages import ModelResponse, ToolCallPart
+from pydantic_ai.messages import ModelRequest, ModelResponse, ToolCallPart, ToolReturnPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
@@ -531,3 +531,227 @@ async def test_analyst_prompt_includes_trade_diagnostics_sidecar(db_and_backtest
 
     assert "## Trade-Diagnostik" in captured["prompt"]
     assert "payoff ratio: 0.31" in captured["prompt"]
+
+
+# --- Analyst tool-use over per-trade data (Plan 010 WP4) --------------------
+
+
+def _write_trade_fold_results(settings, run_id: str, symbol: str, trades: list[dict]) -> None:
+    sym_dir = settings.fwbg_test_results_dir / run_id / "grid_details" / symbol
+    sym_dir.mkdir(parents=True, exist_ok=True)
+    (sym_dir / "fold_results.json").write_text(
+        json.dumps({"walk_forward": {"fold_details": [{"test_trades_detail": trades}]}})
+    )
+
+
+async def test_analyst_query_trades_tool_returns_plausible_result(db_and_backtested, monkeypatch):
+    """A tool-call round trip: the model queries trades, gets back real rows,
+    then emits its final recommendation."""
+    from fwbg_agents.config import settings
+
+    SessionMaker, strategy_id, tmp_path = db_and_backtested
+    monkeypatch.setattr(settings, "fwbg_test_results_dir", tmp_path / "test_results")
+    _write_trade_fold_results(
+        settings,
+        "abc",
+        "EURUSD",
+        [
+            {"pnl_raw": 10.0, "entry_time": "2025-01-01T10:00:00", "hour": 10},
+            {"pnl_raw": -5.0, "entry_time": "2025-01-01T11:00:00", "hour": 11},
+        ],
+    )
+
+    captured: dict[str, str] = {}
+
+    def handler(messages: list[ModelRequest], _info: AgentInfo) -> ModelResponse:
+        seen_query = any(
+            isinstance(part, ToolReturnPart) and part.tool_name == "query_trades_tool"
+            for msg in messages
+            for part in getattr(msg, "parts", [])
+        )
+        if not seen_query:
+            return ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        "query_trades_tool",
+                        {"sql": "SELECT hour, pnl_raw FROM trades ORDER BY hour"},
+                    )
+                ]
+            )
+        for msg in messages:
+            for part in getattr(msg, "parts", []):
+                if isinstance(part, ToolReturnPart) and part.tool_name == "query_trades_tool":
+                    captured["tool_result"] = part.content
+        return ModelResponse(
+            parts=[
+                ToolCallPart(
+                    "final_result_Promote",
+                    {"kind": "promote", "confidence": 0.7, "reasoning": "queried trades"},
+                )
+            ]
+        )
+
+    async with SessionMaker() as session:
+        s = (await session.execute(select(Strategy).where(Strategy.id == strategy_id))).scalar_one()
+        rec = await Analyst(session, model=FunctionModel(handler)).analyze(s)
+
+    assert isinstance(rec, Promote)
+    rows = json.loads(captured["tool_result"])
+    assert rows == [{"hour": 10, "pnl_raw": 10.0}, {"hour": 11, "pnl_raw": -5.0}]
+
+
+async def test_analyst_query_trades_tool_rejects_unsafe_sql(db_and_backtested, monkeypatch):
+    from fwbg_agents.config import settings
+
+    SessionMaker, strategy_id, tmp_path = db_and_backtested
+    monkeypatch.setattr(settings, "fwbg_test_results_dir", tmp_path / "test_results")
+    _write_trade_fold_results(settings, "abc", "EURUSD", [{"pnl_raw": 1.0}])
+
+    captured: dict[str, str] = {}
+
+    def handler(messages: list[ModelRequest], _info: AgentInfo) -> ModelResponse:
+        seen_query = any(
+            isinstance(part, ToolReturnPart) and part.tool_name == "query_trades_tool"
+            for msg in messages
+            for part in getattr(msg, "parts", [])
+        )
+        if not seen_query:
+            return ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        "query_trades_tool",
+                        {"sql": "SELECT * FROM trades; DROP TABLE trades"},
+                    )
+                ]
+            )
+        for msg in messages:
+            for part in getattr(msg, "parts", []):
+                if isinstance(part, ToolReturnPart) and part.tool_name == "query_trades_tool":
+                    captured["tool_result"] = part.content
+        return ModelResponse(
+            parts=[
+                ToolCallPart(
+                    "final_result_Promote",
+                    {"kind": "promote", "confidence": 0.5, "reasoning": "x"},
+                )
+            ]
+        )
+
+    async with SessionMaker() as session:
+        s = (await session.execute(select(Strategy).where(Strategy.id == strategy_id))).scalar_one()
+        await Analyst(session, model=FunctionModel(handler)).analyze(s)
+
+    assert captured["tool_result"].startswith("query rejected:")
+
+
+async def test_analyst_query_trades_tool_enforces_row_cap(db_and_backtested, monkeypatch):
+    from fwbg_agents.config import settings
+    from fwbg_agents.orchestrator.trade_diagnostics import TRADE_QUERY_ROW_CAP
+
+    SessionMaker, strategy_id, tmp_path = db_and_backtested
+    monkeypatch.setattr(settings, "fwbg_test_results_dir", tmp_path / "test_results")
+    trades = [{"pnl_raw": float(i)} for i in range(TRADE_QUERY_ROW_CAP + 20)]
+    _write_trade_fold_results(settings, "abc", "EURUSD", trades)
+
+    captured: dict[str, str] = {}
+
+    def handler(messages: list[ModelRequest], _info: AgentInfo) -> ModelResponse:
+        seen_query = any(
+            isinstance(part, ToolReturnPart) and part.tool_name == "query_trades_tool"
+            for msg in messages
+            for part in getattr(msg, "parts", [])
+        )
+        if not seen_query:
+            return ModelResponse(
+                parts=[ToolCallPart("query_trades_tool", {"sql": "SELECT pnl_raw FROM trades"})]
+            )
+        for msg in messages:
+            for part in getattr(msg, "parts", []):
+                if isinstance(part, ToolReturnPart) and part.tool_name == "query_trades_tool":
+                    captured["tool_result"] = part.content
+        return ModelResponse(
+            parts=[
+                ToolCallPart(
+                    "final_result_Promote",
+                    {"kind": "promote", "confidence": 0.5, "reasoning": "x"},
+                )
+            ]
+        )
+
+    async with SessionMaker() as session:
+        s = (await session.execute(select(Strategy).where(Strategy.id == strategy_id))).scalar_one()
+        await Analyst(session, model=FunctionModel(handler)).analyze(s)
+
+    rows = json.loads(captured["tool_result"])
+    assert len(rows) == TRADE_QUERY_ROW_CAP
+
+
+async def test_analyst_describe_trades_tool_reports_schema(db_and_backtested, monkeypatch):
+    from fwbg_agents.config import settings
+
+    SessionMaker, strategy_id, tmp_path = db_and_backtested
+    monkeypatch.setattr(settings, "fwbg_test_results_dir", tmp_path / "test_results")
+    _write_trade_fold_results(
+        settings, "abc", "EURUSD", [{"pnl_raw": 1.0, "entry_time": "2025-01-01T10:00:00"}]
+    )
+
+    def handler(messages: list[ModelRequest], _info: AgentInfo) -> ModelResponse:
+        seen_describe = any(
+            isinstance(part, ToolReturnPart) and part.tool_name == "describe_trades_tool"
+            for msg in messages
+            for part in getattr(msg, "parts", [])
+        )
+        if not seen_describe:
+            return ModelResponse(parts=[ToolCallPart("describe_trades_tool", {})])
+        return ModelResponse(
+            parts=[
+                ToolCallPart(
+                    "final_result_Promote",
+                    {"kind": "promote", "confidence": 0.5, "reasoning": "x"},
+                )
+            ]
+        )
+
+    async with SessionMaker() as session:
+        s = (await session.execute(select(Strategy).where(Strategy.id == strategy_id))).scalar_one()
+        await Analyst(session, model=FunctionModel(handler)).analyze(s)
+
+
+async def test_analyst_emits_analyst_query_run_event(db_and_backtested, monkeypatch):
+    from fwbg_agents.config import settings
+    from fwbg_agents.run_events import run_dir
+
+    SessionMaker, strategy_id, tmp_path = db_and_backtested
+    monkeypatch.setattr(settings, "fwbg_test_results_dir", tmp_path / "test_results")
+    _write_trade_fold_results(settings, "abc", "EURUSD", [{"pnl_raw": 1.0}])
+
+    def handler(messages: list[ModelRequest], _info: AgentInfo) -> ModelResponse:
+        seen_query = any(
+            isinstance(part, ToolReturnPart) and part.tool_name == "query_trades_tool"
+            for msg in messages
+            for part in getattr(msg, "parts", [])
+        )
+        if not seen_query:
+            return ModelResponse(
+                parts=[ToolCallPart("query_trades_tool", {"sql": "SELECT pnl_raw FROM trades"})]
+            )
+        return ModelResponse(
+            parts=[
+                ToolCallPart(
+                    "final_result_Promote",
+                    {"kind": "promote", "confidence": 0.5, "reasoning": "x"},
+                )
+            ]
+        )
+
+    async with SessionMaker() as session:
+        s = (await session.execute(select(Strategy).where(Strategy.id == strategy_id))).scalar_one()
+        await Analyst(session, model=FunctionModel(handler)).analyze(s)
+
+    async with SessionMaker() as v:
+        ar = (await v.execute(select(AgentRun))).scalars().all()[0]
+    events_path = run_dir(ar.id) / "events.jsonl"
+    events = [json.loads(line) for line in events_path.read_text().splitlines()]
+    assert any(
+        e["type"] == "analyst_query" and e["sql"] == "SELECT pnl_raw FROM trades" for e in events
+    )
