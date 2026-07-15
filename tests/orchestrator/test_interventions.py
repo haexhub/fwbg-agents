@@ -38,8 +38,7 @@ def _write_results(settings, slug: str, sharpes: list[float]) -> None:
         json.dumps(
             {
                 "assets": {
-                    f"SYM{i}": {"unified_metrics": {"sharpe": sh}}
-                    for i, sh in enumerate(sharpes)
+                    f"SYM{i}": {"unified_metrics": {"sharpe": sh}} for i, sh in enumerate(sharpes)
                 }
             }
         )

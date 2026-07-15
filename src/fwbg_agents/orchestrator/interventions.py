@@ -104,9 +104,7 @@ async def regenerate_interventions_digest(session: AsyncSession) -> Path:
         s.id: s
         for s in (
             await session.execute(
-                select(Strategy).where(
-                    Strategy.id.in_({c.parent_strategy_id for c in children})
-                )
+                select(Strategy).where(Strategy.id.in_({c.parent_strategy_id for c in children}))
             )
         )
         .scalars()

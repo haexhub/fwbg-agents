@@ -57,8 +57,7 @@ async def exploration_balance_digest(
         return "(no strategies proposed yet — every cell is unexplored)"
 
     header = [
-        "Existing strategies by strategy_family x asset_class x timeframe "
-        "(most-crowded first):",
+        "Existing strategies by strategy_family x asset_class x timeframe (most-crowded first):",
         "",
     ]
     cell_lines = [

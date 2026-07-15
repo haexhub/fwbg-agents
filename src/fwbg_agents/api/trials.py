@@ -34,9 +34,7 @@ class TrialsSummary(BaseModel):
 @router.get("/trials/summary")
 async def trials_summary(session: AsyncSession = Depends(get_session)) -> TrialsSummary:
     counts = await count_trials(session)
-    variance = (
-        statistics.variance(counts.trade_sharpes) if len(counts.trade_sharpes) >= 2 else None
-    )
+    variance = statistics.variance(counts.trade_sharpes) if len(counts.trade_sharpes) >= 2 else None
     return TrialsSummary(
         n_trials=counts.global_trials,
         sr_variance_across_trials=variance,

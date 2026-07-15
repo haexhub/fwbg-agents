@@ -230,8 +230,7 @@ def _write_run_trades(settings, run_id: str, symbol: str, pnls: list[float]) -> 
                     "fold_details": [
                         {
                             "test_trades_detail": [
-                                {"pnl_raw": p, "entry_time": "2024-01-01T00:00:00"}
-                                for p in pnls
+                                {"pnl_raw": p, "entry_time": "2024-01-01T00:00:00"} for p in pnls
                             ]
                         }
                     ]
@@ -277,7 +276,26 @@ async def test_gate_fails_on_low_dsr_despite_clean_holdout_and_cost_stress(gate_
     # The holdout job (job_1, first start_run call) gets a weak-edge trade
     # series: non-trivial per-trade mean but noisy enough that DSR < 0.95.
     holdout_pnls = [
-        10, -8, 12, -9, 11, -7, 9, -10, 13, -8, 10, -9, 11, -8, 9, -7, 8, -9, 10, -8,
+        10,
+        -8,
+        12,
+        -9,
+        11,
+        -7,
+        9,
+        -10,
+        13,
+        -8,
+        10,
+        -9,
+        11,
+        -8,
+        9,
+        -7,
+        8,
+        -9,
+        10,
+        -8,
     ]
     _write_run_trades(settings, "job_1", "EURUSD", holdout_pnls)
 

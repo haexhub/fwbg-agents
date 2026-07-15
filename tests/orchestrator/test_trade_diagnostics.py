@@ -127,12 +127,21 @@ def test_by_vol_and_trend_regime_buckets_from_fwbg_labels(tmp_path):
     other trade field; trades missing them are simply dropped from that
     specific bucket, same as unparseable entry_time for by_hour."""
     trades = [
-        {**_trade(1.0, entry="2025-01-01T10:00:00", exit="2025-01-01T11:00:00", bars=1),
-         "vol_regime": "low", "trend_regime": "ranging"},
-        {**_trade(-1.0, entry="2025-01-01T12:00:00", exit="2025-01-01T13:00:00", bars=1),
-         "vol_regime": "low", "trend_regime": "trending"},
-        {**_trade(2.0, entry="2025-01-01T14:00:00", exit="2025-01-01T15:00:00", bars=1),
-         "vol_regime": "high", "trend_regime": "strong_trend"},
+        {
+            **_trade(1.0, entry="2025-01-01T10:00:00", exit="2025-01-01T11:00:00", bars=1),
+            "vol_regime": "low",
+            "trend_regime": "ranging",
+        },
+        {
+            **_trade(-1.0, entry="2025-01-01T12:00:00", exit="2025-01-01T13:00:00", bars=1),
+            "vol_regime": "low",
+            "trend_regime": "trending",
+        },
+        {
+            **_trade(2.0, entry="2025-01-01T14:00:00", exit="2025-01-01T15:00:00", bars=1),
+            "vol_regime": "high",
+            "trend_regime": "strong_trend",
+        },
         # No regime labels at all (older run / plugin not configured) — dropped.
         _trade(0.5, entry="2025-01-01T16:00:00", exit="2025-01-01T17:00:00", bars=1),
     ]

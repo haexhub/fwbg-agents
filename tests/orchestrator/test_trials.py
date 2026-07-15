@@ -38,9 +38,7 @@ def test_expected_max_sharpe_matches_paper_example():
 
 
 def test_dsr_matches_paper_non_normal_example():
-    dsr = deflated_sharpe_ratio(
-        _DAILY_SR, _DAILY_VAR, n_trials=100, n_obs=_T, skew=-3, kurtosis=10
-    )
+    dsr = deflated_sharpe_ratio(_DAILY_SR, _DAILY_VAR, n_trials=100, n_obs=_T, skew=-3, kurtosis=10)
     assert dsr == pytest.approx(0.9004, abs=0.01)
 
 
@@ -50,9 +48,7 @@ def test_dsr_matches_paper_normal_returns_example():
 
 
 def test_dsr_matches_paper_fewer_trials_example():
-    dsr = deflated_sharpe_ratio(
-        _DAILY_SR, _DAILY_VAR, n_trials=46, n_obs=_T, skew=-3, kurtosis=10
-    )
+    dsr = deflated_sharpe_ratio(_DAILY_SR, _DAILY_VAR, n_trials=46, n_obs=_T, skew=-3, kurtosis=10)
     assert dsr == pytest.approx(0.9505, abs=0.01)
 
 
@@ -104,8 +100,7 @@ def _write_fold_results(run_dir, symbol: str, pnls: list[float]) -> None:
                     "fold_details": [
                         {
                             "test_trades_detail": [
-                                {"pnl_raw": p, "entry_time": "2024-01-01T00:00:00"}
-                                for p in pnls
+                                {"pnl_raw": p, "entry_time": "2024-01-01T00:00:00"} for p in pnls
                             ]
                         }
                     ]
@@ -227,9 +222,7 @@ async def test_count_trials_collects_per_trade_sharpes_from_surviving_run_dirs(t
     (it_dir / "fwbg_results.json").write_text(
         json.dumps({"run_id": "run_a", "assets": {"EURUSD": {"unified_metrics": {}}}})
     )
-    _write_fold_results(
-        settings.fwbg_test_results_dir / "run_a", "EURUSD", [1.0, -2.0, 3.0, -1.0]
-    )
+    _write_fold_results(settings.fwbg_test_results_dir / "run_a", "EURUSD", [1.0, -2.0, 3.0, -1.0])
 
     async with Session() as session:
         counts = await count_trials(session)
