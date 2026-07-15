@@ -33,6 +33,9 @@ class _FakeFwbg:
                 "phase": "exit_strategies",
                 "description": "",
                 "defaults": {},
+                "param_schema": {
+                    "tp_mode": {"type": "choice", "choices": ["atr", "range"]},
+                },
             },
             {
                 "name": "kelly",
@@ -122,6 +125,12 @@ async def test_fetch_builds_catalog_from_api(session):
     assert live.catalog.all_slugs_for("indicators") == ["adx"]
     assert live.catalog.all_slugs_for("models") == ["xgboost"]
     assert live.catalog.all_slugs_for("exit_strategies") == ["atr_based"]
+    # param_schema is carried into the manifest (choice validation needs it);
+    # plugins without one get an empty dict.
+    atr = live.catalog.get("exit_strategies", "atr_based")
+    assert atr is not None and atr.param_schema["tp_mode"]["choices"] == ["atr", "range"]
+    adx = live.catalog.get("indicators", "adx")
+    assert adx is not None and adx.param_schema == {}
     # fwbg has no `filters` phase — risk_management plugins route to `filters`,
     # the category the validator queries for extra_filters.
     assert live.catalog.all_slugs_for("filters") == ["kelly"]
