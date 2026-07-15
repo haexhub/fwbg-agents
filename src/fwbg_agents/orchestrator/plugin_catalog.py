@@ -9,9 +9,9 @@ Agent-authored plugins appear here after being registered via POST /api/plugins
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 Provenance = Literal["fwbg-core", "fwbg-premium", "agent-authored"]
 
@@ -26,6 +26,10 @@ class PluginManifest(BaseModel):
     provenance: Provenance
     version: str
     source_path: Path
+    # Parameter schema as served by fwbg (param name → spec with type/
+    # default/choices/...). Empty when fwbg didn't provide one; validation
+    # is then lax for this plugin.
+    param_schema: dict[str, Any] = Field(default_factory=dict)
 
 
 class PluginCatalog(BaseModel):

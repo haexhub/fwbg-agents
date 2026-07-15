@@ -181,6 +181,40 @@ def _check_exit_strategies(items: Any, *, catalog: PluginCatalog | None) -> None
                     f"exit_strategies[{i}].name={item['name']!r} is not in the "
                     f"catalog.{_suggest(item['name'], allowed)}"
                 )
+            _check_exit_params_against_schema(i, item, catalog=catalog)
+
+
+def _check_exit_params_against_schema(i: int, item: dict, *, catalog: PluginCatalog) -> None:
+    """Validate choice-typed exit params against the plugin's param schema.
+
+    An invalid choice value is exactly the class of error that silently
+    corrupted run 20260715_042300_0b19fe: `sl_level: "range"` (not a valid
+    choice for orb_based) made fwbg resolve a range-HEIGHT column as an
+    absolute SL PRICE — shorts exited instantly at a phantom price and booked
+    the full entry price as profit. fwbg now rejects such values at
+    simulation time; this check moves the failure to translation time so the
+    Translator gets immediate feedback instead of a dead backtest run.
+
+    Only params the schema declares with `choices` are checked; everything
+    else stays lax (fwbg's pydantic config is the ultimate validator). An
+    empty schema (older fwbg without param_schema in GET /api/plugins)
+    disables the check for that plugin.
+    """
+    manifest = catalog.get("exit_strategies", item["name"])
+    if manifest is None or not manifest.param_schema:
+        return
+    for key, value in item["params"].items():
+        spec = manifest.param_schema.get(key)
+        if not isinstance(spec, dict):
+            continue
+        choices = spec.get("choices")
+        if choices and value not in choices:
+            raise StrategyValidationError(
+                f"exit_strategies[{i}].params.{key}={value!r} is not a valid "
+                f"choice for exit strategy {item['name']!r} "
+                f"(allowed: {list(choices)})."
+                f"{_suggest(str(value), [str(c) for c in choices])}"
+            )
 
 
 def _check_preset_string(

@@ -224,6 +224,72 @@ def test_catalog_empty_falls_back_to_frozenset():
 
 
 # ---------------------------------------------------------------------------
+# Exit-param choice validation against the plugin param_schema
+# (regression for run 20260715_042300_0b19fe: sl_level="range" silently
+# resolved a range-HEIGHT column as an absolute SL PRICE in fwbg)
+
+
+_ORB_SCHEMA = {
+    "sl_level": {
+        "type": "choice",
+        "default": "none",
+        "choices": ["none", "or_midpoint", "or_high", "or_low"],
+    },
+    "tp_mode": {"type": "choice", "default": "atr", "choices": ["atr", "range"]},
+    "sl_mult": {"type": "float", "default": 1.0, "min": 0.5, "max": 3.0},
+}
+
+
+def _schema_catalog() -> PluginCatalog:
+    manifest = PluginManifest(
+        name="orb_based",
+        category="exit_strategies",
+        provenance="fwbg-core",
+        version="1.0.0",
+        source_path=Path("/tmp/x"),
+        param_schema=_ORB_SCHEMA,
+    )
+    return PluginCatalog(by_category={"exit_strategies": {"orb_based": manifest}})
+
+
+def test_exit_param_invalid_choice_rejected():
+    payload = dict(VALID_FIXTURE)
+    payload["exit_strategies"] = [
+        {"name": "orb_based", "params": {"sl_level": "range", "sl_mult": 1.0}}
+    ]
+    with pytest.raises(StrategyValidationError) as exc:
+        validate_strategy_json(payload, catalog=_schema_catalog())
+    msg = str(exc.value)
+    assert "sl_level='range'" in msg
+    assert "or_midpoint" in msg
+
+
+def test_exit_param_valid_choice_passes():
+    payload = dict(VALID_FIXTURE)
+    payload["exit_strategies"] = [
+        {"name": "orb_based", "params": {"sl_level": "or_midpoint", "tp_mode": "range"}}
+    ]
+    validate_strategy_json(payload, catalog=_schema_catalog())
+
+
+def test_exit_param_non_choice_params_stay_lax():
+    # Numeric/unknown params are fwbg's job (pydantic config) — not checked here.
+    payload = dict(VALID_FIXTURE)
+    payload["exit_strategies"] = [
+        {"name": "orb_based", "params": {"sl_mult": 99.0, "unknown_param": "x"}}
+    ]
+    validate_strategy_json(payload, catalog=_schema_catalog())
+
+
+def test_exit_param_check_skipped_without_schema():
+    # Manifests without param_schema (older fwbg) → lax, like before.
+    payload = dict(VALID_FIXTURE)
+    payload["exit_strategies"] = [{"name": "orb_based", "params": {"sl_level": "range"}}]
+    cat = _catalog({"exit_strategies": ["orb_based"]})
+    validate_strategy_json(payload, catalog=cat)
+
+
+# ---------------------------------------------------------------------------
 # M5c: plugin-slot list-fields (indicators / feature_selection /
 # preprocessing / extra_filters)
 # ---------------------------------------------------------------------------
