@@ -85,6 +85,7 @@ async def _run_research_background(input: ResearcherInput, agent_run_id: int) ->
                     input,
                     search_client=search_client,
                     fanout_n=settings.researcher_fanout_n,
+                    candidates_n=settings.researcher_candidates_n,
                     fwbg_client=fwbg,
                 )
             output_artifact_path = str(

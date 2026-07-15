@@ -50,6 +50,7 @@ from fwbg_agents.persistence.models import (
     StrategyTag,
     Transition,
 )
+from fwbg_agents.run_events import emit_run_event
 from fwbg_agents.tools.fwbg_client import FwbgClient
 from fwbg_agents.tools.llm import model_for, prompt_path_for
 
@@ -243,6 +244,34 @@ def _validate_inline_params(
                     )
 
 
+def _normalize_datasource(
+    payload: dict, datasources: list[str] | None, agent_run_id: int | None
+) -> None:
+    """Coerce an off-catalog datasource when the choice is forced.
+
+    With exactly one configured source the LLM's pick (historically
+    'default'/'forexsb') carries no information — failing the whole run over
+    it is pure waste. With ≥2 sources the choice is real, so validation must
+    keep rejecting unknown names; without a live list nothing is checkable.
+    """
+    if not datasources or len(datasources) != 1:
+        return
+    ds = payload.get("datasource")
+    if not isinstance(ds, str) or ds == datasources[0]:
+        return
+    log.warning(
+        "datasource %r is not in the fwbg catalog %s — normalized to %r",
+        ds,
+        datasources,
+        datasources[0],
+    )
+    if agent_run_id is not None:
+        emit_run_event(
+            agent_run_id, "datasource_normalized", original=ds, normalized=datasources[0]
+        )
+    payload["datasource"] = datasources[0]
+
+
 class TranslatorError(RuntimeError):
     """Raised when the Translator output fails structural validation."""
 
@@ -416,12 +445,14 @@ class Translator:
             payload = result.output.model_dump()
             payload["name"] = strategy.slug  # canonical slug wins
 
+            datasources = live.datasource_names() or None
+            _normalize_datasource(payload, datasources, ar.id)
             try:
                 validate_strategy_json(
                     payload,
                     catalog=live.catalog,
                     presets=live.presets,
-                    datasources=live.datasource_names() or None,
+                    datasources=datasources,
                     timeframes=live.timeframes or None,
                 )
                 if self.fwbg_client is not None:
@@ -534,11 +565,13 @@ class Translator:
 
             try:
                 live = await fetch_live_catalog(self.session, self.fwbg_client)
+                datasources = live.datasource_names() or None
+                _normalize_datasource(child_payload, datasources, ar.id)
                 validate_strategy_json(
                     child_payload,
                     catalog=live.catalog,
                     presets=live.presets,
-                    datasources=live.datasource_names() or None,
+                    datasources=datasources,
                     timeframes=live.timeframes or None,
                 )
             except StrategyValidationError as exc:
@@ -691,12 +724,14 @@ class Translator:
             child_payload["name"] = child_slug
 
             live = await fetch_live_catalog(self.session, self.fwbg_client)
+            datasources = live.datasource_names() or None
+            _normalize_datasource(child_payload, datasources, ar.id)
             try:
                 validate_strategy_json(
                     child_payload,
                     catalog=live.catalog,
                     presets=live.presets,
-                    datasources=live.datasource_names() or None,
+                    datasources=datasources,
                     timeframes=live.timeframes or None,
                 )
             except StrategyValidationError as exc:

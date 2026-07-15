@@ -25,6 +25,8 @@ work can plug in an estimator that infers USD from input/output tokens.
 
 from __future__ import annotations
 
+import asyncio
+import functools
 import json
 import logging
 import time
@@ -39,6 +41,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from fwbg_agents.agents.instrumented import run_instrumented
 from fwbg_agents.config import settings
+from fwbg_agents.orchestrator.interventions import (
+    interventions_digest,
+    regenerate_interventions_digest,
+)
 from fwbg_agents.orchestrator.lifecycle import check_backtest_criteria, strategy_dir
 from fwbg_agents.orchestrator.lineage import render_family_history
 from fwbg_agents.orchestrator.live_catalog import LiveCatalog, fetch_live_catalog
@@ -46,6 +52,11 @@ from fwbg_agents.orchestrator.metrics import (
     median_metrics_across_assets as _median_metrics_across_assets,
 )
 from fwbg_agents.orchestrator.plugin_catalog import PluginCatalog
+from fwbg_agents.orchestrator.trade_diagnostics import (
+    build_trade_store,
+    describe_trades,
+    query_trades,
+)
 from fwbg_agents.persistence.agent_runs import (
     fail_agent_run,
     finish_agent_run,
@@ -56,6 +67,7 @@ from fwbg_agents.persistence.models import (
     LlmCall,
     Strategy,
 )
+from fwbg_agents.run_events import emit_run_event
 from fwbg_agents.tools.fwbg_client import FwbgClient
 from fwbg_agents.tools.llm import model_for, prompt_path_for
 
@@ -357,6 +369,7 @@ def _render_prompt(
     trade_diagnostics: str,
     promote_gate: str,
     catalog_snapshot: str,
+    interventions_digest: str,
 ) -> str:
     """Tiny mustache-style replacer — we don't need Jinja for a handful of variables."""
     out = template
@@ -379,6 +392,7 @@ def _render_prompt(
     out = out.replace("{{ trade_diagnostics }}", trade_diagnostics)
     out = out.replace("{{ promote_gate }}", promote_gate)
     out = out.replace("{{ catalog_snapshot }}", catalog_snapshot)
+    out = out.replace("{{ interventions_digest }}", interventions_digest)
     return out
 
 
@@ -486,6 +500,8 @@ class Analyst:
             catalog_snapshot = _render_catalog_details(live)
 
             depth, family_history = await render_family_history(self.session, strategy)
+            await regenerate_interventions_digest(self.session)
+            interventions = interventions_digest()
 
             template = self.prompt_path.read_text()
             system_prompt = _render_prompt(
@@ -505,6 +521,7 @@ class Analyst:
                 trade_diagnostics=trade_diagnostics,
                 promote_gate=promote_gate,
                 catalog_snapshot=catalog_snapshot,
+                interventions_digest=interventions,
             )
 
             agent = Agent(  # type: ignore[call-overload]  # pydantic-ai union output_type not matched by overloads
@@ -513,11 +530,47 @@ class Analyst:
                 system_prompt=system_prompt,
                 retries={"output": 3},
             )
-            t0 = time.monotonic()
-            result = await run_instrumented(
-                agent, "Emit your recommendation now.", agent_run_id=ar.id
+
+            run_id = results.get("run_id")
+            symbols = list((results.get("assets") or {}).keys())
+            run_dir = (
+                settings.fwbg_test_results_dir / run_id
+                if isinstance(run_id, str) and run_id
+                else settings.fwbg_test_results_dir / "__no_run_id__"
             )
-            latency_ms = int((time.monotonic() - t0) * 1000)
+            trade_conn = build_trade_store(run_dir, symbols)
+            agent_run_id = ar.id
+            # pydantic-ai runs sync tools in a worker thread; the SSE event bus
+            # is only safe on the event loop, so hop back via the captured loop.
+            loop = asyncio.get_running_loop()
+            try:
+
+                @agent.tool_plain
+                def query_trades_tool(sql: str) -> str:
+                    """Run a read-only SELECT against the `trades` table (one row per
+                    walk-forward trade, columns include pnl_raw, entry_time, exit_time,
+                    hour, bars_held, mae, mfe, symbol, fold, ...). Single SELECT only,
+                    capped at 200 rows. Call describe_trades_tool first if unsure of the
+                    schema."""
+                    loop.call_soon_threadsafe(
+                        functools.partial(emit_run_event, agent_run_id, "analyst_query", sql=sql)
+                    )
+                    return query_trades(trade_conn, sql)
+
+                @agent.tool_plain
+                def describe_trades_tool() -> dict:
+                    """Column list, total row count, and entry-time range per symbol
+                    for the `trades` table — call this before query_trades_tool if
+                    unsure what columns exist."""
+                    return describe_trades(trade_conn)
+
+                t0 = time.monotonic()
+                result = await run_instrumented(
+                    agent, "Emit your recommendation now.", agent_run_id=ar.id
+                )
+                latency_ms = int((time.monotonic() - t0) * 1000)
+            finally:
+                trade_conn.close()
 
             usage = result.usage
             self.session.add(

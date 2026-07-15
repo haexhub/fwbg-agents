@@ -228,10 +228,12 @@ async def test_fresh_unknown_plugin_slug_fails(db_with_strategy):
 
 @pytest.mark.asyncio
 async def test_fresh_unconfigured_datasource_fails(db_with_strategy, monkeypatch):
-    """A datasource that fwbg does not have configured (e.g. the old frozen
-    'forexsb' default on a machine that only has 'eur-usd') must be rejected
-    at translate time — not fail silently at run start."""
-    live = make_live_catalog(datasources=[{"name": "eur-usd", "assets": []}])
+    """With ≥2 configured sources the choice is real: a datasource that fwbg
+    does not have configured (e.g. the old frozen 'forexsb' default) must be
+    rejected at translate time — not fail silently at run start."""
+    live = make_live_catalog(
+        datasources=[{"name": "eur-usd", "assets": []}, {"name": "dukascopy", "assets": []}]
+    )
 
     async def _fetch(_session, _client):
         return live
@@ -244,6 +246,36 @@ async def test_fresh_unconfigured_datasource_fails(db_with_strategy, monkeypatch
         translator = Translator(session, model=_stub_model(VALID_OUTPUT))  # forexsb
         with pytest.raises(TranslatorError, match="datasource"):
             await translator.run_fresh(s)
+
+
+@pytest.mark.asyncio
+async def test_fresh_single_source_normalizes_datasource(db_with_strategy, monkeypatch):
+    """With exactly one configured source an off-catalog LLM datasource (e.g.
+    'default') is deterministically normalized to that source instead of
+    failing the whole run."""
+    live = make_live_catalog(datasources=[{"name": "dukascopy", "assets": []}])
+
+    async def _fetch(_session, _client):
+        return live
+
+    monkeypatch.setattr(translator_module, "fetch_live_catalog", _fetch)
+
+    output = dict(VALID_OUTPUT)
+    output["datasource"] = "default"
+
+    SessionMaker, strategy_id, *_ = db_with_strategy
+    async with SessionMaker() as session:
+        s = (await session.execute(select(Strategy).where(Strategy.id == strategy_id))).scalar_one()
+        translator = Translator(session, model=_stub_model(output))
+        result_path = await translator.run_fresh(s)
+
+    data = json.loads(result_path.read_text())
+    assert data["datasource"] == "dukascopy"
+
+    async with SessionMaker() as v:
+        runs = (await v.execute(select(AgentRun))).scalars().all()
+        assert len(runs) == 1
+        assert runs[0].status == AgentRunStatus.DONE.value
 
 
 @pytest.mark.asyncio
