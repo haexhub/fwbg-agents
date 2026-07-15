@@ -165,6 +165,7 @@ async def _fetch_from_api(session: AsyncSession, fwbg: FwbgClient) -> LiveCatalo
             provenance="fwbg-core",
             version=str(p.get("version", "")),
             source_path=Path("."),
+            param_schema=p.get("param_schema") or {},
         )
         details.setdefault(category, []).append(_detail(p))
 
