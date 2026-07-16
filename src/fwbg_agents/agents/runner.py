@@ -52,6 +52,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from fwbg_agents.config import settings
 from fwbg_agents.orchestrator.lifecycle import strategy_dir, transition_strategy
+from fwbg_agents.orchestrator.lineage_boundary import get_or_freeze_boundary
 from fwbg_agents.orchestrator.metrics import (
     median_metrics_across_assets as _median_metrics_across_assets,
 )
@@ -269,6 +270,11 @@ class Runner:
             attempts = plan_universe_attempts(strategy)
             tf_by_symbol = timeframes_by_symbol(strategy)
             last_reason = "no universe attempts produced results"
+            # Frozen per-lineage boundary — every iteration of every
+            # generation ends its in-sample data at the same date, so the
+            # promote gate's holdout later never overlaps with anything an
+            # iteration trained/tested on.
+            boundary = await get_or_freeze_boundary(self.session, strategy)
 
             for attempt in attempts:
                 assets = await self._resolve_assets(attempt, tf_by_symbol)
@@ -294,9 +300,12 @@ class Runner:
                         assets=assets,
                         asset_classes=asset_classes,
                         agent_run_id=ar.id,
-                        # Reserve the most recent `holdout_months` as an unseen
-                        # holdout — the promote gate validates on it later.
-                        end_date=_months_ago_iso(settings.holdout_months),
+                        # Reserve the frozen lineage boundary onward as an
+                        # unseen holdout — the promote gate validates on it
+                        # later. Frozen once per lineage (see
+                        # orchestrator/lineage_boundary.py), not recomputed
+                        # from today() on every run.
+                        end_date=boundary,
                     )
                 except RunnerError as exc:
                     last_reason = f"attempt {attempt.label!r}: {exc}"

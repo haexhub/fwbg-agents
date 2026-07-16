@@ -205,6 +205,109 @@ async def test_fail_count_accumulates_across_runs(gate_env):
     assert result2.fail_count == 2
 
 
+async def test_holdout_window_uses_frozen_lineage_boundary(gate_env, monkeypatch):
+    """The holdout start_date is frozen on first use and does not shift on a
+    later gate run even if "today - holdout_months" would now compute
+    differently (Plan 014)."""
+    Session, sid, _ = gate_env
+    import fwbg_agents.agents.runner as runner_mod
+
+    calls = iter(["2024-01-01", "2099-12-31"])
+    monkeypatch.setattr(runner_mod, "_months_ago_iso", lambda months: next(calls))
+
+    fake1 = _GateFake([_run(), _run()])
+    async with Session() as session:
+        strat = (await session.execute(select(Strategy).where(Strategy.id == sid))).scalar_one()
+        await run_promote_gate(session, strat, fwbg_client=fake1)
+    first_start = fake1.start_calls[0]["start_date"]
+    assert first_start == "2024-01-01"
+
+    fake2 = _GateFake([_run(), _run()])
+    async with Session() as session:
+        strat = (await session.execute(select(Strategy).where(Strategy.id == sid))).scalar_one()
+        await run_promote_gate(session, strat, fwbg_client=fake2)
+    second_start = fake2.start_calls[0]["start_date"]
+
+    assert second_start == first_start == "2024-01-01"  # not "2099-12-31"
+
+
+async def test_fail_count_shared_across_lineage_children(gate_env):
+    """Two children of one root share one fail_count — a failure recorded via
+    child A is visible when child B runs the gate (Plan 014)."""
+    Session, root_sid, _ = gate_env
+    async with Session() as session:
+        now = datetime.now(UTC)
+        child_a = Strategy(
+            slug="demo_v1_child_a",
+            current_state=StrategyState.BACKTESTED.value,
+            iteration_count=1,
+            parent_strategy_id=root_sid,
+            asset_class="FOREX",
+            strategy_family="ORB",
+            created_at=now,
+            updated_at=now,
+        )
+        child_b = Strategy(
+            slug="demo_v1_child_b",
+            current_state=StrategyState.BACKTESTED.value,
+            iteration_count=1,
+            parent_strategy_id=root_sid,
+            asset_class="FOREX",
+            strategy_family="ORB",
+            created_at=now,
+            updated_at=now,
+        )
+        session.add_all([child_a, child_b])
+        await session.commit()
+        child_a_id, child_b_id = child_a.id, child_b.id
+
+    async with Session() as session:
+        strat_a = (
+            await session.execute(select(Strategy).where(Strategy.id == child_a_id))
+        ).scalar_one()
+        result_a = await run_promote_gate(
+            session, strat_a, fwbg_client=_GateFake([_run(sharpe=0.1), _run()])
+        )
+    assert result_a.fail_count == 1
+
+    async with Session() as session:
+        strat_b = (
+            await session.execute(select(Strategy).where(Strategy.id == child_b_id))
+        ).scalar_one()
+        result_b = await run_promote_gate(session, strat_b, fwbg_client=_GateFake([_run(), _run()]))
+    # Child B's own gate run passes, but the cumulative counter is shared
+    # with the lineage root — child A's earlier failure is still visible.
+    assert result_b.passed is True
+    assert result_b.fail_count == 1
+
+
+async def test_budget_short_circuit_after_max_attempts(gate_env, monkeypatch):
+    Session, sid, settings = gate_env
+    monkeypatch.setattr(settings, "promote_max_attempts", 2)
+
+    async with Session() as session:
+        strat = (await session.execute(select(Strategy).where(Strategy.id == sid))).scalar_one()
+        await run_promote_gate(
+            session, strat, fwbg_client=_GateFake([_run(sharpe=0.1), _run()])
+        )  # fail 1
+
+    async with Session() as session:
+        strat = (await session.execute(select(Strategy).where(Strategy.id == sid))).scalar_one()
+        await run_promote_gate(
+            session, strat, fwbg_client=_GateFake([_run(sharpe=0.1), _run()])
+        )  # fail 2 == budget
+
+    fake3 = _GateFake([_run(), _run()])  # would pass, but budget already exhausted
+    async with Session() as session:
+        strat = (await session.execute(select(Strategy).where(Strategy.id == sid))).scalar_one()
+        result3 = await run_promote_gate(session, strat, fwbg_client=fake3)
+
+    assert result3.passed is False
+    assert result3.fail_count == 2
+    assert result3.runs == []
+    assert fake3.start_calls == []  # fwbg client never invoked — no backtest ran
+
+
 async def test_validate_and_apply_promote_blocked_by_failed_gate(gate_env):
     Session, sid, _ = gate_env
     rec = Promote(kind="promote", confidence=0.9, reasoning="looks great in-sample")
