@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.25.2](https://github.com/haexhub/fwbg-agents/compare/v0.25.1...v0.25.2) (2026-07-16)
+
+
+### Bug Fixes
+
+* **evaluator:** load fwbg_sdk class plugins ([40702d3](https://github.com/haexhub/fwbg-agents/commit/40702d3e276a86fe991523cffc2888903280d1ad))
+* **evaluator:** load fwbg_sdk class plugins — no authored plugin ever verified ([#203](https://github.com/haexhub/fwbg-agents/issues/203)) ([7de8736](https://github.com/haexhub/fwbg-agents/commit/7de8736381ba64d647768b427d254c4188589709))
+
 ## [0.25.1](https://github.com/haexhub/fwbg-agents/compare/v0.25.0...v0.25.1) (2026-07-16)
 
 
