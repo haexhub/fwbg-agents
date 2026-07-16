@@ -19,6 +19,7 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 
+from fwbg_sdk.base import PluginPhase
 from pydantic import ValidationError
 from pydantic_ai import Agent
 from pydantic_ai.exceptions import UnexpectedModelBehavior
@@ -43,16 +44,16 @@ log = logging.getLogger(__name__)
 
 _PROMPT_PATH = Path(__file__).parents[3] / "prompts" / "plugin_authoring.md"
 
-# Expected BasePlugin subclass for each PluginPhase value (where one exists in
-# fwbg-sdk). Phases without a widely-used base (labeling, model, validation)
+# Expected BasePlugin subclass for each fwbg_sdk.PluginPhase (where one exists
+# in fwbg-sdk). Phases without a widely-used base (labeling, model, validation)
 # skip the base-class check.
 _PHASE_TO_BASE: dict[str, str] = {
-    "indicators": "BaseIndicator",
-    "preprocessing": "BasePreprocessor",
-    "feature_selection": "BaseFeatureSelector",
-    "risk_management": "BaseRiskManager",
-    "exit_strategies": "BaseExitStrategy",
-    "data_loading": "BaseDataLoader",
+    PluginPhase.INDICATORS.value: "BaseIndicator",
+    PluginPhase.PREPROCESSING.value: "BasePreprocessor",
+    PluginPhase.FEATURE_SELECTION.value: "BaseFeatureSelector",
+    PluginPhase.RISK_MANAGEMENT.value: "BaseRiskManager",
+    PluginPhase.EXIT_STRATEGIES.value: "BaseExitStrategy",
+    PluginPhase.DATA_LOADING.value: "BaseDataLoader",
 }
 
 

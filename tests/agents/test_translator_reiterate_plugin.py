@@ -169,7 +169,7 @@ async def test_run_reiterate_with_plugin_happy_path_indicator_phase(db_with_pare
     SessionMaker, parent_id, parent_slug, _it_dir = db_with_parent
     # Default fixture seeds slug under kind=indicators (first iteration of loop)
     # — that's exactly what we want for this test.
-    sidecar = _sidecar("indicator")
+    sidecar = _sidecar("indicators")
 
     async with SessionMaker() as session:
         parent = (
@@ -225,27 +225,28 @@ async def test_run_reiterate_with_plugin_happy_path_indicator_phase(db_with_pare
         assert ars[0].status == AgentRunStatus.DONE.value
 
 
+def test_phase_to_field_keys_are_sdk_plugin_phases():
+    """The phase vocabulary is fwbg_sdk.PluginPhase — no other spellings."""
+    from fwbg_sdk.base import PluginPhase
+
+    from fwbg_agents.agents.translator import _PHASE_TO_FIELD
+
+    assert set(_PHASE_TO_FIELD) <= {p.value for p in PluginPhase}
+
+
 @pytest.mark.asyncio
-async def test_run_reiterate_with_plugin_accepts_plural_indicator_phase(db_with_parent):
-    # The Analyst's AddIndicator sidecar normalises phases to the PLURAL forms
-    # ("indicators", "filters"); run_reiterate_with_plugin must accept them.
+async def test_run_reiterate_with_plugin_rejects_legacy_singular_phase(db_with_parent):
+    # Pre-enum sidecars used singular spellings ("indicator"); those are no
+    # longer part of the vocabulary and must be rejected.
     SessionMaker, parent_id, _parent_slug, _it_dir = db_with_parent
-    sidecar = _sidecar("indicators")
+    sidecar = _sidecar("indicator")
 
     async with SessionMaker() as session:
         parent = (
             await session.execute(select(Strategy).where(Strategy.id == parent_id))
         ).scalar_one()
-        child = await Translator(session).run_reiterate_with_plugin(parent, PLUGIN_SLUG, sidecar)
-
-    from fwbg_agents.config import settings
-
-    child_payload = json.loads(
-        (
-            settings.data_dir / "strategies" / child.slug / "iteration_001" / "strategy.json"
-        ).read_text()
-    )
-    assert child_payload["indicators"] == [PLUGIN_SLUG]
+        with pytest.raises(TranslatorError, match="unknown phase"):
+            await Translator(session).run_reiterate_with_plugin(parent, PLUGIN_SLUG, sidecar)
 
 
 @pytest.mark.asyncio
@@ -304,7 +305,7 @@ async def test_run_reiterate_with_plugin_filter_phase(db_with_parent):
     SessionMaker, parent_id, _parent_slug, _it_dir = db_with_parent
     slug = "volatility-regime-filter"
     await _seed_plugin_kind(SessionMaker, slug, "filters")
-    sidecar = _sidecar("filter", slug=slug, capability="skip low-vol regimes")
+    sidecar = _sidecar("risk_management", slug=slug, capability="skip low-vol regimes")
 
     async with SessionMaker() as session:
         parent = (
@@ -384,7 +385,7 @@ async def test_run_reiterate_with_plugin_rejects_parent_not_backtested(tmp_path,
         await setup.refresh(s)
         parent_id = s.id
 
-    sidecar = _sidecar("indicator")
+    sidecar = _sidecar("indicators")
     async with Session() as session:
         parent = (
             await session.execute(select(Strategy).where(Strategy.id == parent_id))
@@ -429,7 +430,7 @@ async def test_run_reiterate_with_plugin_appends_to_existing_iterations(db_with_
     }
     (it_dir / "hypothesis.json").write_text(json.dumps(parent_hypothesis_with_prior, indent=2))
 
-    sidecar = _sidecar("indicator")
+    sidecar = _sidecar("indicators")
 
     async with SessionMaker() as session:
         parent = (

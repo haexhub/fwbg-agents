@@ -217,6 +217,18 @@ async def test_planner_raises_on_unknown_sidecar_phase():
     assert "unknown sidecar phase" in str(exc_info.value)
 
 
+def test_plugin_phase_literal_matches_sdk_enum():
+    """PluginPhaseLit is the LLM-facing mirror of fwbg_sdk.PluginPhase —
+    pinned so the two vocabularies cannot drift apart."""
+    from typing import get_args
+
+    from fwbg_sdk.base import PluginPhase
+
+    from fwbg_agents.agents.plugin_planner import PluginPhaseLit
+
+    assert set(get_args(PluginPhaseLit)) == {p.value for p in PluginPhase}
+
+
 async def test_planner_raises_on_slug_collision():
     parent = _build_parent_strategy()
     planner = PluginPlanner(model=_stub_model(_valid_plan_args()))
