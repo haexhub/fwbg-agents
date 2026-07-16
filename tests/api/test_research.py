@@ -73,7 +73,7 @@ async def test_post_research_brief_schedules_and_returns_202(research_client, mo
 
     # Stub fwbg asset-registry — no live server needed.
     class _FakeFwbgClient:
-        def __init__(self, base_url):
+        def __init__(self, base_url, api_key=None):
             pass
 
         async def get_asset_classes(self):

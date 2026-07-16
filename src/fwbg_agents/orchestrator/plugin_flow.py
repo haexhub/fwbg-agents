@@ -188,7 +188,7 @@ async def author_plugin_from_strategy(
     # fwbg is the single source of truth for the plugin catalog + example
     # source: fetch the live catalog and reuse the client for the planner's
     # in-tree examples. No filesystem fallback — a dead API fails loudly.
-    client = FwbgClient(base_url=settings.fwbg_api_url)
+    client = FwbgClient(base_url=settings.fwbg_api_url, api_key=settings.fwbg_api_key)
     try:
         live = await fetch_live_catalog(session, client)
 
@@ -393,7 +393,7 @@ async def _register_verified_plugin_in_fwbg(
         with contextlib.suppress(OSError):
             spec_md = Path(plugin.spec_path).read_text(encoding="utf-8")
 
-    client = FwbgClient(base_url=settings.fwbg_api_url)
+    client = FwbgClient(base_url=settings.fwbg_api_url, api_key=settings.fwbg_api_key)
     try:
         await client.register_plugin(
             slug=plugin.slug,
@@ -496,7 +496,7 @@ async def reiterate_with_plugin(
             f"not match sidecar capability={parent_capability!r}"
         )
 
-    client = FwbgClient(base_url=settings.fwbg_api_url)
+    client = FwbgClient(base_url=settings.fwbg_api_url, api_key=settings.fwbg_api_key)
     try:
         translator = Translator(session, fwbg_client=client)
         child = await translator.run_reiterate_with_plugin(parent, plugin_slug, sidecar)
@@ -543,7 +543,7 @@ async def resync_verified_plugins() -> None:
     if not settings.plugin_resync_enabled:
         return
 
-    client = FwbgClient(base_url=settings.fwbg_api_url)
+    client = FwbgClient(base_url=settings.fwbg_api_url, api_key=settings.fwbg_api_key)
     try:
         try:
             remote = await client.get_plugins()

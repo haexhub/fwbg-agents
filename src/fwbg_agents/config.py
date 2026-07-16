@@ -99,6 +99,10 @@ class Settings(BaseSettings):
 
     # fwbg
     fwbg_api_url: str = Field(default="http://localhost:8420")
+    fwbg_api_key: str | None = Field(
+        default=None,
+        description="Sent as X-API-Key on every fwbg request; matches the server's FWBG_API_KEY.",
+    )
     fwbg_test_results_dir: Path = Field(
         default=Path.home() / "fwbg" / "test_results",
         description="Where fwbg writes per-run output directories. Scanned by Calibrator.",
@@ -124,8 +128,8 @@ class Settings(BaseSettings):
     # up (watchtower recreates, keep-alive races). The backtest itself keeps
     # running on the fwbg side during such blips.
     runner_poll_outage_tolerance_seconds: float = 120.0
-    # fwbg enforces a single backtest slot (429 while busy) — how long to
-    # sleep between attempts to grab it.
+    # fwbg is configured with a single backtest slot (FWBG_MAX_CONCURRENT_RUNS=1,
+    # its default; 429 while busy) — how long to sleep between attempts to grab it.
     runner_busy_wait_seconds: float = 30.0
 
     # On-demand data provisioning (fwbg POST /api/data/ensure, Phase 1c).
