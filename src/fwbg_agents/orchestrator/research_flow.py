@@ -280,7 +280,11 @@ async def publish_strategy_to_fwbg(
     be lost, so this logs a warning and returns None (the Runner re-publishes
     before the next backtest).
     """
-    client = fwbg_client if fwbg_client is not None else FwbgClient(base_url=settings.fwbg_api_url)
+    client = (
+        fwbg_client
+        if fwbg_client is not None
+        else FwbgClient(base_url=settings.fwbg_api_url, api_key=settings.fwbg_api_key)
+    )
     base_name = safe_fwbg_strategy_name(strategy.slug, 1)
     try:
         payload = json.loads(strategy_path.read_text())
@@ -339,7 +343,11 @@ async def research_and_translate(
     the caller is responsible for wrapping bookkeeping (e.g. the API
     background task).
     """
-    client = fwbg_client if fwbg_client is not None else FwbgClient(base_url=settings.fwbg_api_url)
+    client = (
+        fwbg_client
+        if fwbg_client is not None
+        else FwbgClient(base_url=settings.fwbg_api_url, api_key=settings.fwbg_api_key)
+    )
     try:
         return await _research_and_translate(
             session,
@@ -505,7 +513,11 @@ async def reiterate(
             f"at {sidecar}; run /strategies/{parent_id}/analyze first"
         )
 
-    client = fwbg_client if fwbg_client is not None else FwbgClient(base_url=settings.fwbg_api_url)
+    client = (
+        fwbg_client
+        if fwbg_client is not None
+        else FwbgClient(base_url=settings.fwbg_api_url, api_key=settings.fwbg_api_key)
+    )
     try:
         translator = Translator(session, model=model, fwbg_client=client)
         child = await translator.run_reiterate(parent)

@@ -167,7 +167,7 @@ async def test_tick_runs_the_picked_strategy(env, monkeypatch):
             ran.append(strategy.id)
 
     class _FakeClient:
-        def __init__(self, base_url=None):
+        def __init__(self, base_url=None, api_key=None):
             pass
 
         async def aclose(self):
@@ -589,7 +589,7 @@ class _RepairRunner:
 
 
 class _NoopClient:
-    def __init__(self, base_url=None):
+    def __init__(self, base_url=None, api_key=None):
         pass
 
     async def aclose(self):

@@ -74,7 +74,7 @@ async def _run_research_background(input: ResearcherInput, agent_run_id: int) ->
         tavily = TavilyClient(api_key=get_secret("tavily"))
         brave = BraveClient(api_key=get_secret("brave"))
         search_client = FallbackSearchClient([tavily, brave])
-        fwbg = FwbgClient(base_url=settings.fwbg_api_url)
+        fwbg = FwbgClient(base_url=settings.fwbg_api_url, api_key=settings.fwbg_api_key)
         try:
             # Scope this flow run as parent so the researcher + translator runs
             # spawned inside link back to it (Plan 008 Schritt 5). The auto-
@@ -149,7 +149,7 @@ async def _run_reiterate_background(parent_id: int, agent_run_id: int) -> None:
         ).scalar_one()
         ar.status = AgentRunStatus.RUNNING.value
         await session.commit()
-        fwbg = FwbgClient(base_url=settings.fwbg_api_url)
+        fwbg = FwbgClient(base_url=settings.fwbg_api_url, api_key=settings.fwbg_api_key)
         try:
             with use_parent_run(agent_run_id):
                 child_id = await reiterate(session, parent_id, fwbg_client=fwbg)
@@ -184,7 +184,7 @@ async def post_research_brief(
     constrained vocabulary is enforced at intake, not at LLM time.
     """
     if body.asset_class is not None:
-        client = FwbgClient(base_url=settings.fwbg_api_url)
+        client = FwbgClient(base_url=settings.fwbg_api_url, api_key=settings.fwbg_api_key)
         try:
             known_classes = await client.get_asset_classes()
         except FwbgClientError as exc:
