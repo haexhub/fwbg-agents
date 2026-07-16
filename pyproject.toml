@@ -22,6 +22,9 @@ dependencies = [
     "numpy>=2.1.0",
     "pandas>=2.2.0",
     "pyarrow>=18.0.0",
+    # PluginEvaluator loads agent-authored plugin.py files that subclass the
+    # fwbg plugin SDK (BaseIndicator etc.), so the SDK must be importable here.
+    "fwbg-sdk",
 ]
 
 [dependency-groups]
@@ -34,6 +37,10 @@ dev = [
     "hypothesis>=6.118.0",
     "types-pyyaml>=6.0.12.20260518",
 ]
+
+[tool.uv.sources]
+# The SDK lives in the fwbg monorepo; uv.lock pins the resolved commit.
+fwbg-sdk = { git = "https://github.com/haexhub/fwbg", subdirectory = "packages/fwbg-sdk", branch = "main" }
 
 [build-system]
 requires = ["hatchling"]

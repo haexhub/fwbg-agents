@@ -104,6 +104,68 @@ def compute(df: pd.DataFrame, *, window: int = 14) -> pd.Series:
     return df['close'].rolling(window).mean()  # leading warm-up NaNs, rest valid
 """
 
+# fwbg_sdk class convention (M5d Planner→Implementer chain): a BaseIndicator
+# subclass whose compute() returns the augmented input frame.
+_CLASS_PLUGIN_CODE = """
+import pandas as pd
+from fwbg_sdk.base import PluginPhase
+from fwbg_sdk.indicators import BaseIndicator, shift_features
+
+class MaClassIndicator(BaseIndicator):
+    name = "ma_class"
+    phase = PluginPhase.INDICATORS
+    version = "0.1.0"
+
+    def compute(self, df: pd.DataFrame, **params) -> pd.DataFrame:
+        window = int(params.get("window", 14))
+        features = {"ma": df["close"].rolling(window, min_periods=1).mean()}
+        return pd.concat([df, shift_features(features, df.index)], axis=1)
+
+    def get_feature_columns(self):
+        return ["ma"]
+"""
+
+_CLASS_MISSING_COLUMN_CODE = """
+import pandas as pd
+from fwbg_sdk.base import PluginPhase
+from fwbg_sdk.indicators import BaseIndicator
+
+class NoColumnIndicator(BaseIndicator):
+    name = "no_column"
+    phase = PluginPhase.INDICATORS
+
+    def compute(self, df: pd.DataFrame, **params) -> pd.DataFrame:
+        return df  # never adds the declared 'ma' output column
+"""
+
+_CLASS_INIT_RAISES_CODE = """
+import pandas as pd
+from fwbg_sdk.base import PluginPhase
+from fwbg_sdk.indicators import BaseIndicator
+
+class BrokenInitIndicator(BaseIndicator):
+    name = "broken_init"
+    phase = PluginPhase.INDICATORS
+
+    def __init__(self):
+        raise RuntimeError("boom")
+
+    def compute(self, df: pd.DataFrame, **params) -> pd.DataFrame:
+        return df
+"""
+
+_TWO_CLASSES_CODE = """
+import pandas as pd
+
+class FirstThing:
+    def compute(self, df, **params):
+        return df['close']
+
+class SecondThing:
+    def compute(self, df, **params):
+        return df['close']
+"""
+
 
 @pytest_asyncio.fixture
 async def db(tmp_path, monkeypatch):
@@ -384,6 +446,84 @@ async def test_evaluator_no_compute_callable_fails(db):
     assert vr.status == "failed"
     payload = json.loads(Path(vr.error_log_path).read_text())
     assert any("compute" in e["invariant_violated"].lower() for e in payload["errors"])
+
+
+async def test_evaluator_class_plugin_passes_and_transitions_to_verified(db):
+    session, settings = db
+    p = await _seed_plugin(
+        session,
+        settings,
+        slug="ma_class",
+        code=_CLASS_PLUGIN_CODE,
+        scenarios=["trending_up", "sideways"],
+    )
+
+    vr_id = await PluginEvaluator(session).run(p)
+
+    vr = (
+        await session.execute(select(VerificationRun).where(VerificationRun.id == vr_id))
+    ).scalar_one()
+    assert vr.status == "passed"
+    assert vr.scenarios_passed == 2
+    await session.refresh(p)
+    assert p.current_state == PluginState.VERIFIED.value
+
+
+async def test_evaluator_class_plugin_missing_output_column_fails(db):
+    session, settings = db
+    p = await _seed_plugin(
+        session,
+        settings,
+        slug="no_column",
+        code=_CLASS_MISSING_COLUMN_CODE,
+        scenarios=["trending_up"],
+    )
+
+    vr_id = await PluginEvaluator(session).run(p)
+    vr = (
+        await session.execute(select(VerificationRun).where(VerificationRun.id == vr_id))
+    ).scalar_one()
+    assert vr.status == "failed"
+    payload = json.loads(Path(vr.error_log_path).read_text())
+    assert any(e["invariant_violated"] == "length_mismatch" for e in payload["errors"])
+
+
+async def test_evaluator_class_plugin_init_failure_fails(db):
+    session, settings = db
+    p = await _seed_plugin(
+        session,
+        settings,
+        slug="broken_init",
+        code=_CLASS_INIT_RAISES_CODE,
+        scenarios=["trending_up"],
+    )
+
+    vr_id = await PluginEvaluator(session).run(p)
+    vr = (
+        await session.execute(select(VerificationRun).where(VerificationRun.id == vr_id))
+    ).scalar_one()
+    assert vr.status == "failed"
+    payload = json.loads(Path(vr.error_log_path).read_text())
+    assert any(e["invariant_violated"] == "plugin_instantiation_failed" for e in payload["errors"])
+
+
+async def test_evaluator_ambiguous_compute_classes_fail(db):
+    session, settings = db
+    p = await _seed_plugin(
+        session,
+        settings,
+        slug="two_classes",
+        code=_TWO_CLASSES_CODE,
+        scenarios=["trending_up"],
+    )
+
+    vr_id = await PluginEvaluator(session).run(p)
+    vr = (
+        await session.execute(select(VerificationRun).where(VerificationRun.id == vr_id))
+    ).scalar_one()
+    assert vr.status == "failed"
+    payload = json.loads(Path(vr.error_log_path).read_text())
+    assert any(e["invariant_violated"] == "ambiguous_compute" for e in payload["errors"])
 
 
 async def test_evaluator_second_run_overwrites_error_log(db):
