@@ -1,6 +1,6 @@
 [project]
 name = "fwbg-agents"
-version = "0.25.2"
+version = "0.26.0"
 description = "Autonomous agents for fwbg strategy research, backtesting, paper trading, and live trading"
 requires-python = ">=3.12"
 readme = "README.md"
