@@ -1,5 +1,23 @@
 # Changelog
 
+## [0.25.0](https://github.com/haexhub/fwbg-agents/compare/v0.24.0...v0.25.0) (2026-07-16)
+
+
+### Features
+
+* **client:** send FWBG_API_KEY and document single-slot run contract ([bd88d3d](https://github.com/haexhub/fwbg-agents/commit/bd88d3d3e71102e43b2bbdd8e9b46b7127ee88e6))
+* **economics:** LLM cost telemetry — estimator, fill-on-write, backfill, rollup endpoint ([#194](https://github.com/haexhub/fwbg-agents/issues/194)) ([182e062](https://github.com/haexhub/fwbg-agents/commit/182e06220aa3f85ec53e65bd9a029ec0bb7cafe5))
+* **paper:** add fill-fidelity metrics and per-trade Sharpe to paper summary ([50f4c96](https://github.com/haexhub/fwbg-agents/commit/50f4c962fc4c997e981a0f6b67d1ffb810ea2879))
+* **paper:** fill-fidelity metrics and per-trade Sharpe in paper summary ([c5c95c0](https://github.com/haexhub/fwbg-agents/commit/c5c95c06b3bae3bc1d25b8e78406fbb214503793))
+* send FWBG API key + document single-slot run contract (plans 011, 013) ([bb833a9](https://github.com/haexhub/fwbg-agents/commit/bb833a991fbbbe82ec7a6288ee53bb648d332892))
+
+
+### Documentation
+
+* **plan-017:** portfolio-correlation risk-layer design spike ([a52a091](https://github.com/haexhub/fwbg-agents/commit/a52a0917e1c2f1e02757d58854e81c7510582056))
+* **plan-017:** portfolio-correlation risk-layer design spike ([3e9b20d](https://github.com/haexhub/fwbg-agents/commit/3e9b20d40aec94a288fab78681511afb7c8ec756))
+* **plans:** re-audit 2026-07-16 — plans 011-019 + index update ([#195](https://github.com/haexhub/fwbg-agents/issues/195)) ([ca4b1d3](https://github.com/haexhub/fwbg-agents/commit/ca4b1d3bf42f890d681da2f1f5606330d5a66d14))
+
 ## [0.24.0](https://github.com/haexhub/fwbg-agents/compare/v0.23.1...v0.24.0) (2026-07-15)
 
 
