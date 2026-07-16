@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.26.0](https://github.com/haexhub/fwbg-agents/compare/v0.25.2...v0.26.0) (2026-07-16)
+
+
+### Features
+
+* **evaluator:** sparse output flag — event columns may be all-NaN on signal-free scenarios ([#207](https://github.com/haexhub/fwbg-agents/issues/207)) ([77a1ce2](https://github.com/haexhub/fwbg-agents/commit/77a1ce24b5a0faa7c4f553ced03e777f56d3c100))
+* **evaluator:** sparse output flag for event-style plugin columns ([b507adb](https://github.com/haexhub/fwbg-agents/commit/b507adb8840b23f1a4cd7f8324a9ca138032845b))
+
 ## [0.25.2](https://github.com/haexhub/fwbg-agents/compare/v0.25.1...v0.25.2) (2026-07-16)
 
 
