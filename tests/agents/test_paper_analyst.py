@@ -44,6 +44,7 @@ def _make_summary(*, slug: str = "demo_v1", days_in_paper: int = 40) -> PaperTra
     return PaperTradeSummary(
         strategy_slug=slug,
         sharpe_paper=1.8,
+        sharpe_paper_per_trade=0.114,
         max_dd_paper=0.12,
         trades_total=120,
         trades_today=2,
@@ -53,6 +54,10 @@ def _make_summary(*, slug: str = "demo_v1", days_in_paper: int = 40) -> PaperTra
         current_equity=10500.0,
         starting_equity=10000.0,
         equity_curve_sample=[],
+        avg_entry_slippage=None,
+        avg_assumed_half_spread=None,
+        fill_fidelity_ratio=None,
+        fidelity_sample_size=0,
     )
 
 
