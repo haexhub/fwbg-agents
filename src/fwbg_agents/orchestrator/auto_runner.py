@@ -469,7 +469,7 @@ async def _retranslate(session: AsyncSession, sid: int) -> None:
     translation failed. The hypothesis.json is already on disk; a new
     translator AgentRun is created automatically by the Translator agent."""
     s = (await session.execute(select(Strategy).where(Strategy.id == sid))).scalar_one()
-    client = FwbgClient(base_url=settings.fwbg_api_url)
+    client = FwbgClient(base_url=settings.fwbg_api_url, api_key=settings.fwbg_api_key)
     try:
         translator = Translator(session, fwbg_client=client)
         strategy_path = await translator.run_fresh(s)
@@ -523,7 +523,7 @@ async def _analyze_and_apply(session: AsyncSession, sid: int) -> None:
     queue an iteration for tune/change-exit. Shared by the fresh-backtest path
     and the backtested-backlog drain."""
     s = (await session.execute(select(Strategy).where(Strategy.id == sid))).scalar_one()
-    client = FwbgClient(base_url=settings.fwbg_api_url)
+    client = FwbgClient(base_url=settings.fwbg_api_url, api_key=settings.fwbg_api_key)
     try:
         rec = await Analyst(session, fwbg_client=client).analyze(s)
     except Exception:
@@ -598,7 +598,7 @@ async def _analyze_and_apply(session: AsyncSession, sid: int) -> None:
 
     # A promote runs the holdout + cost-stress gate, which needs a live client
     # (the analyst client above is already closed).
-    gate_client = FwbgClient(base_url=settings.fwbg_api_url)
+    gate_client = FwbgClient(base_url=settings.fwbg_api_url, api_key=settings.fwbg_api_key)
     try:
         await validate_and_apply(session, s, rec, metrics=metrics, fwbg_client=gate_client)
     except Exception as exc:
@@ -781,7 +781,7 @@ async def tick() -> int | None:
         config_error: RunnerConfigError | None = None
         async with SessionLocal() as session:
             s = (await session.execute(select(Strategy).where(Strategy.id == sid))).scalar_one()
-            client = FwbgClient(base_url=settings.fwbg_api_url)
+            client = FwbgClient(base_url=settings.fwbg_api_url, api_key=settings.fwbg_api_key)
             try:
                 await Runner(client, session).run(s)
                 backtest_ok = True
@@ -930,7 +930,7 @@ async def _fill_pipeline_background(agent_run_id: int) -> None:
         tavily = TavilyClient(api_key=get_secret("tavily"))
         brave = BraveClient(api_key=get_secret("brave"))
         search_client = FallbackSearchClient([tavily, brave])
-        fwbg = FwbgClient(base_url=settings.fwbg_api_url)
+        fwbg = FwbgClient(base_url=settings.fwbg_api_url, api_key=settings.fwbg_api_key)
         try:
             strategy_id = await research_and_translate(
                 session,
