@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.26.1](https://github.com/haexhub/fwbg-agents/compare/v0.26.0...v0.26.1) (2026-07-16)
+
+
+### Bug Fixes
+
+* **translator:** accept plural phase forms in reiterate-with-plugin ([dcd1f76](https://github.com/haexhub/fwbg-agents/commit/dcd1f7627e136d2ae7c4629055bc5be9db656fe5))
+* **translator:** accept the Analyst's plural phase forms in reiterate-with-plugin ([#211](https://github.com/haexhub/fwbg-agents/issues/211)) ([fe39843](https://github.com/haexhub/fwbg-agents/commit/fe39843e8da7d67f3041c3bd18eedfd59dbb4171))
+
 ## [0.26.0](https://github.com/haexhub/fwbg-agents/compare/v0.25.2...v0.26.0) (2026-07-16)
 
 
