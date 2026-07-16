@@ -255,7 +255,13 @@ class _PluginLoadError(Exception):
 
 
 def _load_compute(plugin_py: Path):
-    """Load and return the compute() callable from the given plugin.py path."""
+    """Load and return the compute callable from the given plugin.py path.
+
+    Two authoring conventions are supported: a module-level ``compute()``
+    function (the retired M5b PluginAuthor) and a plugin class with a
+    ``compute`` method (M5d Planner→Implementer chain, ``fwbg_sdk``
+    BasePlugin subclasses). For a class the plugin is instantiated once and
+    the bound method is returned."""
     if not plugin_py.is_file():
         raise _PluginLoadError("plugin_py_missing")
     try:
@@ -271,9 +277,31 @@ def _load_compute(plugin_py: Path):
             "plugin_import_failed", tb="".join(traceback.format_exception(exc))
         ) from exc
     compute = getattr(mod, "compute", None)
-    if not callable(compute):
-        raise _PluginLoadError("compute_callable_missing")
-    return compute
+    if callable(compute):
+        return compute
+
+    candidates = [
+        obj
+        for obj in vars(mod).values()
+        if isinstance(obj, type)
+        and obj.__module__ == mod.__name__
+        and callable(getattr(obj, "compute", None))
+    ]
+    if len(candidates) > 1:
+        raise _PluginLoadError(
+            "ambiguous_compute",
+            tb=f"multiple classes define compute(): {sorted(c.__name__ for c in candidates)}",
+        )
+    if candidates:
+        try:
+            instance = candidates[0]()
+        except Exception as exc:
+            raise _PluginLoadError(
+                "plugin_instantiation_failed", tb="".join(traceback.format_exception(exc))
+            ) from exc
+        return instance.compute
+
+    raise _PluginLoadError("compute_callable_missing")
 
 
 def _evaluate_scenario(
@@ -341,9 +369,12 @@ def _evaluate_scenario(
 
 def _output_values(result: Any, contract: PluginContract) -> dict[str, Any]:
     """Map each declared output name to its observed value, mirroring the
-    extraction convention of `_output_lengths` (single output → the result
-    itself; multi output → a dict keyed by output.name)."""
+    extraction convention of `_output_lengths` (DataFrame → declared columns;
+    single output → the result itself; multi output → a dict keyed by
+    output.name)."""
     declared = contract.outputs
+    if isinstance(result, pd.DataFrame):
+        return {o.name: (result[o.name] if o.name in result.columns else None) for o in declared}
     if len(declared) == 1:
         return {declared[0].name: result}
     if isinstance(result, dict):
@@ -402,6 +433,13 @@ def _output_lengths(result: Any, contract: PluginContract) -> dict[str, int]:
     """Map each declared output name to the length we observed."""
     out: dict[str, int] = {}
     declared = contract.outputs
+
+    # DataFrame convention (fwbg_sdk class plugins): the augmented input frame
+    # with one column per declared output. A missing column signals mismatch.
+    if isinstance(result, pd.DataFrame):
+        for o in declared:
+            out[o.name] = len(result) if o.name in result.columns else -1
+        return out
 
     # Single-output convention: result is a Series / 1-D array / scalar.
     if len(declared) == 1:
