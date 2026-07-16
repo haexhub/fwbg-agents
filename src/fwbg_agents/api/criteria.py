@@ -180,7 +180,7 @@ async def trigger_calibration() -> dict[str, Any]:
     # If fwbg is unreachable we log a warning and proceed with an empty map
     # (all symbols fall back to "FOREX") so calibration still runs.
     symbol_asset_class: dict[str, str] = {}
-    client = FwbgClient(base_url=settings.fwbg_api_url)
+    client = FwbgClient(base_url=settings.fwbg_api_url, api_key=settings.fwbg_api_key)
     try:
         assets = await client.get_assets()
         symbol_asset_class = {

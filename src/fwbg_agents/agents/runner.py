@@ -445,9 +445,10 @@ class Runner:
         Adopting closes the duplicate-run hole: a /runs/start whose response
         is lost in a transport blip still starts the run on the fwbg side;
         the retry must attach to it instead of launching a second copy.
-        fwbg enforces one concurrent run (FWBG_MAX_CONCURRENT_RUNS=1) and
-        answers 429 while busy — the intended behaviour then is to wait for
-        the slot, not to burn a universe attempt.
+        The contract with fwbg is a single backtest slot: the paired server is
+        configured with FWBG_MAX_CONCURRENT_RUNS=1 (its default) and answers
+        429 while busy — the intended behaviour then is to wait for the slot,
+        not to burn a universe attempt.
         """
         deadline = time.monotonic() + settings.runner_poll_timeout_seconds
         while True:

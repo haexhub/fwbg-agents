@@ -78,7 +78,7 @@ async def _run_runner_background(strategy_id: int) -> None:
     """Run the backtest runner task in the background."""
     async with SessionLocal() as session:
         s = (await session.execute(select(Strategy).where(Strategy.id == strategy_id))).scalar_one()
-        client = FwbgClient(base_url=settings.fwbg_api_url)
+        client = FwbgClient(base_url=settings.fwbg_api_url, api_key=settings.fwbg_api_key)
         try:
             runner = Runner(client, session)
             await runner.run(s)
@@ -92,7 +92,7 @@ async def _run_analyst_background(strategy_id: int) -> None:
     """Run the analyst task in the background."""
     async with SessionLocal() as session:
         s = (await session.execute(select(Strategy).where(Strategy.id == strategy_id))).scalar_one()
-        client = FwbgClient(base_url=settings.fwbg_api_url)
+        client = FwbgClient(base_url=settings.fwbg_api_url, api_key=settings.fwbg_api_key)
         analyst = Analyst(session, fwbg_client=client)
         try:
             rec = await analyst.analyze(s)
