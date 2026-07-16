@@ -22,6 +22,7 @@ import time
 from datetime import UTC, datetime
 from pathlib import Path
 
+from fwbg_sdk.base import PluginPhase  # type: ignore[import-untyped]  # no py.typed marker
 from pydantic import BaseModel, ConfigDict
 from pydantic_ai import Agent
 from pydantic_ai.models import Model
@@ -59,18 +60,15 @@ log = logging.getLogger(__name__)
 
 _PROMPT_PATH = Path(__file__).parent / "prompts" / "translator.md"
 
-# Maps Analyst AddIndicator.phase strings → strategy.json list-field names.
-# Used by `run_reiterate_with_plugin` when splicing a VERIFIED plugin slug
-# into a child Strategy. Module-scope so tests/callers can reference it.
+# Maps fwbg_sdk.PluginPhase values (the Analyst sidecar's phase vocabulary)
+# → strategy.json list-field names. Used by `run_reiterate_with_plugin` when
+# splicing a VERIFIED plugin slug into a child Strategy. risk_management
+# plugins act as trade filters and land in `extra_filters`.
 _PHASE_TO_FIELD: dict[str, str] = {
-    "indicator": "indicators",
-    "feature_selection": "feature_selection",
-    "preprocessing": "preprocessing",
-    "filter": "extra_filters",
-    # The Analyst's AddIndicator sidecar normalises to the plural forms
-    # (analyst.AddIndicator.phase Literal) — accept both spellings.
-    "indicators": "indicators",
-    "filters": "extra_filters",
+    PluginPhase.INDICATORS.value: "indicators",
+    PluginPhase.FEATURE_SELECTION.value: "feature_selection",
+    PluginPhase.PREPROCESSING.value: "preprocessing",
+    PluginPhase.RISK_MANAGEMENT.value: "extra_filters",
 }
 
 
@@ -682,11 +680,12 @@ class Translator:
         which rejects any slug not visible in the catalog.
 
         Parent stays in BACKTESTED; child is a fresh PROPOSED row with
-        `parent_strategy_id=parent.id`. Phase-to-field mapping:
-            "indicator"          -> indicators
+        `parent_strategy_id=parent.id`. Phase-to-field mapping (phases are
+        fwbg_sdk.PluginPhase values, see _PHASE_TO_FIELD):
+            "indicators"         -> indicators
             "feature_selection"  -> feature_selection
             "preprocessing"      -> preprocessing
-            "filter"             -> extra_filters
+            "risk_management"    -> extra_filters
         """
         ar = await start_agent_run(self.session, agent_name="translator", strategy_id=parent.id)
 

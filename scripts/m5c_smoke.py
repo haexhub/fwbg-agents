@@ -272,7 +272,7 @@ async def _seed_parent_strategy() -> int:
                 "kind": "add_indicator",
                 "capability": _CAPABILITY,
                 "category": "indicator",
-                "phase": "indicator",
+                "phase": "indicators",
                 "confidence": 0.85,
                 "reasoning": "smoke synthetic - validate reiterate-with-plugin loop",
                 "strategy_id": strategy_id,
