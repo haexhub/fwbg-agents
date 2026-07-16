@@ -34,6 +34,8 @@ from fwbg_agents.agents.plugin_authoring_shared import (
 )
 from fwbg_agents.agents.plugin_planner import LlmCallMeta, PluginPlan
 from fwbg_agents.config import settings
+from fwbg_agents.orchestrator.plugin_contract import PluginContract
+from fwbg_agents.orchestrator.scenario_generators import SCENARIO_GENERATORS
 from fwbg_agents.run_events import emit_run_event
 from fwbg_agents.tools.llm import model_for, prompt_path_for
 
@@ -286,6 +288,23 @@ def contract_check(code: str, plan: PluginPlan) -> ContractCheck:
     return ContractCheck(ok=True)
 
 
+def scenario_names_check(contract: PluginContract) -> ContractCheck:
+    """Deterministic gate: every `contract.test_scenarios[*].name` must have a
+    generator in SCENARIO_GENERATORS. The Evaluator's pre-flight rejects the
+    whole verification run on the first unknown name (no auto-retry), so an
+    invented name must be caught here where the refinement loop can fix it."""
+    unknown = sorted({s.name for s in contract.test_scenarios} - set(SCENARIO_GENERATORS))
+    if unknown:
+        return ContractCheck(
+            ok=False,
+            msg=(
+                f"unknown test_scenarios names {unknown}; each name must be one of "
+                f"{sorted(SCENARIO_GENERATORS)} (the Evaluator's deterministic generators)"
+            ),
+        )
+    return ContractCheck(ok=True)
+
+
 def _render_implementer_prompt(
     *,
     plan: PluginPlan,
@@ -426,6 +445,13 @@ class PluginImplementer:
             if not check.ok:
                 last_code = code
                 last_err = f"ContractError: {check.msg}"
+                _round_failed(last_err)
+                continue
+
+            scenarios = scenario_names_check(output.contract)
+            if not scenarios.ok:
+                last_code = code
+                last_err = f"ContractError: {scenarios.msg}"
                 _round_failed(last_err)
                 continue
 
