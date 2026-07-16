@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.25.1](https://github.com/haexhub/fwbg-agents/compare/v0.25.0...v0.25.1) (2026-07-16)
+
+
+### Bug Fixes
+
+* **plugin-authoring:** gate contract test_scenario names against evaluator registry ([e6edf99](https://github.com/haexhub/fwbg-agents/commit/e6edf99ec66981d835cdb5c15ced30cf1bb19929))
+* **plugin-authoring:** gate contract test_scenario names against evaluator registry ([9a57469](https://github.com/haexhub/fwbg-agents/commit/9a5746999c94266e5b9a2b155528736bd2065931))
+* **plugin-authoring:** gate contract test_scenario names against evaluator registry ([d13b900](https://github.com/haexhub/fwbg-agents/commit/d13b9008b6e34cd09f534e70f03423f43db95d70))
+
 ## [0.25.0](https://github.com/haexhub/fwbg-agents/compare/v0.24.0...v0.25.0) (2026-07-16)
 
 
