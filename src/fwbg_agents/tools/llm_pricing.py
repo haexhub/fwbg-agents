@@ -41,7 +41,8 @@ def _price_table() -> dict[str, tuple[float, float]]:
     raw = settings.llm_price_table_json
     if not raw:
         return DEFAULT_PRICE_TABLE
-    return _parse_table(raw) or DEFAULT_PRICE_TABLE
+    parsed = _parse_table(raw)
+    return parsed if parsed is not None else DEFAULT_PRICE_TABLE
 
 
 def estimate_cost_usd(model: str, input_tokens: int, output_tokens: int) -> float | None:

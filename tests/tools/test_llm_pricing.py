@@ -45,3 +45,8 @@ def test_malformed_settings_json_falls_back_to_default(monkeypatch):
     monkeypatch.setattr(settings, "llm_price_table_json", "not json {")
     cost = estimate_cost_usd("claude-opus-4-7", 1_000_000, 0)
     assert cost == pytest.approx(5.0)
+
+
+def test_explicit_empty_override_leaves_all_models_unpriced(monkeypatch):
+    monkeypatch.setattr(settings, "llm_price_table_json", "{}")
+    assert estimate_cost_usd("claude-opus-4-7", 1_000_000, 1_000_000) is None

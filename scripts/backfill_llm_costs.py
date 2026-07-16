@@ -45,7 +45,7 @@ async def backfill(session: AsyncSession) -> tuple[int, int]:
 async def main() -> None:
     async with SessionLocal() as session:
         updated, skipped = await backfill(session)
-    print(f"updated {updated}, skipped {skipped} (unknown model)")
+    log.info("updated %d, skipped %d (unknown model)", updated, skipped)
 
 
 if __name__ == "__main__":
