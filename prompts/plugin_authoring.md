@@ -207,6 +207,22 @@ Every plugin directory contains a `tests.py` file with pytest-compatible test fu
 - **Edge-case tests are encouraged:** empty df, single-row df, all-NaN inputs, constant prices.
 - **Parameter-variation test:** exercise at least two non-default parameter combinations.
 
+## Contract `test_scenarios` (deterministic Evaluator)
+
+The `contract.test_scenarios[*].name` values are NOT free text. The
+PluginEvaluator only knows five deterministic, seeded OHLCV generators and
+rejects the whole verification run on the first unknown name:
+
+- `trending_up`, `trending_down`, `sideways`, `high_vola`, `sparse_data`
+
+Rules:
+- Every scenario name MUST be one of the five above. Do NOT invent
+  plugin-specific scenario names.
+- `data_path` MUST be `"test_scenarios/<name>.parquet"` — the Evaluator
+  generates and writes the data itself; never point at hand-made fixtures.
+- Omit `expected_outputs` — the deterministic Evaluator checks structural
+  invariants (length parity, finite values, dtypes), not expected values.
+
 ## File Layout
 
 ```
