@@ -226,6 +226,29 @@ async def test_run_reiterate_with_plugin_happy_path_indicator_phase(db_with_pare
 
 
 @pytest.mark.asyncio
+async def test_run_reiterate_with_plugin_accepts_plural_indicator_phase(db_with_parent):
+    # The Analyst's AddIndicator sidecar normalises phases to the PLURAL forms
+    # ("indicators", "filters"); run_reiterate_with_plugin must accept them.
+    SessionMaker, parent_id, _parent_slug, _it_dir = db_with_parent
+    sidecar = _sidecar("indicators")
+
+    async with SessionMaker() as session:
+        parent = (
+            await session.execute(select(Strategy).where(Strategy.id == parent_id))
+        ).scalar_one()
+        child = await Translator(session).run_reiterate_with_plugin(parent, PLUGIN_SLUG, sidecar)
+
+    from fwbg_agents.config import settings
+
+    child_payload = json.loads(
+        (
+            settings.data_dir / "strategies" / child.slug / "iteration_001" / "strategy.json"
+        ).read_text()
+    )
+    assert child_payload["indicators"] == [PLUGIN_SLUG]
+
+
+@pytest.mark.asyncio
 async def test_run_reiterate_with_plugin_feature_selection_phase(db_with_parent):
     SessionMaker, parent_id, _parent_slug, _it_dir = db_with_parent
     # The fixture seeded slug under `indicators`. For this test we need it
