@@ -35,6 +35,7 @@ class PaperTradeSummary(BaseModel):
 
     strategy_slug: str
     sharpe_paper: float
+    sharpe_paper_per_trade: float
     max_dd_paper: float  # 0.0..1.0
     trades_total: int
     trades_today: int
@@ -44,6 +45,13 @@ class PaperTradeSummary(BaseModel):
     current_equity: float
     starting_equity: float
     equity_curve_sample: list[dict[str, Any]]
+    # Fill-fidelity metrics (plan 016) — None until trades carry
+    # signal_price/assumed_spread (fwbg bot telemetry). Legacy trades.jsonl
+    # files therefore keep producing a fully-valid summary with these unset.
+    avg_entry_slippage: float | None
+    avg_assumed_half_spread: float | None
+    fill_fidelity_ratio: float | None
+    fidelity_sample_size: int
 
 
 class PaperPosition(BaseModel):
@@ -109,7 +117,14 @@ def _parse_dt(value: Any) -> datetime | None:
 
 
 def _compute_sharpe(pnls: list[float]) -> float:
-    """Annualised Sharpe assuming ~252 trading days. 0.0 if undefined."""
+    """Annualised Sharpe, treating each trade as one daily return (sqrt(252)).
+
+    NOT comparable to the backtest's per-trade Sharpe (mean/std of the
+    trade-P&L series, no annualisation — see `orchestrator/trials.py` "Unit
+    discipline"); prefer `_compute_sharpe_per_trade` /
+    `sharpe_paper_per_trade` for backtest-vs-paper comparisons. 0.0 if
+    undefined.
+    """
     if len(pnls) < 2:
         return 0.0
     mean = statistics.mean(pnls)
@@ -117,6 +132,21 @@ def _compute_sharpe(pnls: list[float]) -> float:
     if std == 0:
         return 0.0
     return (mean / std) * math.sqrt(252)
+
+
+def _compute_sharpe_per_trade(pnls: list[float]) -> float:
+    """Per-trade Sharpe (mean/pstdev, no annualisation). 0.0 if undefined.
+
+    Mirrors the backtest side's unit discipline so paper and backtest Sharpe
+    are directly comparable.
+    """
+    if len(pnls) < 2:
+        return 0.0
+    mean = statistics.mean(pnls)
+    std = statistics.pstdev(pnls)
+    if std == 0:
+        return 0.0
+    return mean / std
 
 
 def _compute_max_dd(equity_curve_sample: list[dict[str, Any]]) -> float:
@@ -136,6 +166,55 @@ def _compute_max_dd(equity_curve_sample: list[dict[str, Any]]) -> float:
         if dd > max_dd:
             max_dd = dd
     return max_dd
+
+
+def _compute_fidelity(
+    parsed_trades: list[dict[str, Any]],
+) -> tuple[float | None, float | None, float | None, int]:
+    """Aggregate entry-slippage vs. assumed-spread fidelity across trades.
+
+    A trade contributes only when it carries finite `entry_price`,
+    `signal_price`, and `assumed_spread` (fwbg bot telemetry, plan 016).
+    Legacy trades.jsonl entries without these fields are skipped, not
+    zero-filled — so a legacy-only file yields `(None, None, None, 0)`.
+
+    Returns (avg_entry_slippage, avg_assumed_half_spread,
+    fill_fidelity_ratio, fidelity_sample_size). `fill_fidelity_ratio` is
+    None when the average half-spread is 0/undefined.
+    """
+    slippages: list[float] = []
+    half_spreads: list[float] = []
+    for trade in parsed_trades:
+        entry_price = trade.get("entry_price")
+        signal_price = trade.get("signal_price")
+        assumed_spread = trade.get("assumed_spread")
+        if not (
+            isinstance(entry_price, (int, float))
+            and isinstance(signal_price, (int, float))
+            and isinstance(assumed_spread, (int, float))
+        ):
+            continue
+        entry_price = float(entry_price)
+        signal_price = float(signal_price)
+        assumed_spread = float(assumed_spread)
+        if not (
+            math.isfinite(entry_price)
+            and math.isfinite(signal_price)
+            and math.isfinite(assumed_spread)
+        ):
+            continue
+        slippages.append(abs(entry_price - signal_price))
+        half_spreads.append(assumed_spread / 2)
+
+    if not slippages:
+        return None, None, None, 0
+
+    avg_entry_slippage = statistics.mean(slippages)
+    avg_assumed_half_spread = statistics.mean(half_spreads)
+    fill_fidelity_ratio = (
+        avg_entry_slippage / avg_assumed_half_spread if avg_assumed_half_spread else None
+    )
+    return avg_entry_slippage, avg_assumed_half_spread, fill_fidelity_ratio, len(slippages)
 
 
 # ---------- public API ----------
@@ -179,11 +258,18 @@ def read_paper_summary(strategy_slug: str, fwbg_data_dir: Path) -> PaperTradeSum
     today_utc = now.date()
 
     sharpe_paper = _compute_sharpe(pnl_values)
+    sharpe_paper_per_trade = _compute_sharpe_per_trade(pnl_values)
     win_rate = (wins / closed) if closed > 0 else 0.0
     trades_today = sum(1 for et in entry_times if et.date() == today_utc)
     last_trade_at = max(entry_times) if entry_times else None
     days_in_paper = (now - min(entry_times)).days if entry_times else 0
     trades_total = len(parsed_trades)
+    (
+        avg_entry_slippage,
+        avg_assumed_half_spread,
+        fill_fidelity_ratio,
+        fidelity_sample_size,
+    ) = _compute_fidelity(parsed_trades)
 
     # ---- status ----
     current_equity = 0.0
@@ -210,6 +296,7 @@ def read_paper_summary(strategy_slug: str, fwbg_data_dir: Path) -> PaperTradeSum
     return PaperTradeSummary(
         strategy_slug=strategy_slug,
         sharpe_paper=sharpe_paper,
+        sharpe_paper_per_trade=sharpe_paper_per_trade,
         max_dd_paper=max_dd_paper,
         trades_total=trades_total,
         trades_today=trades_today,
@@ -219,6 +306,10 @@ def read_paper_summary(strategy_slug: str, fwbg_data_dir: Path) -> PaperTradeSum
         current_equity=current_equity,
         starting_equity=starting_equity,
         equity_curve_sample=equity_curve_sample,
+        avg_entry_slippage=avg_entry_slippage,
+        avg_assumed_half_spread=avg_assumed_half_spread,
+        fill_fidelity_ratio=fill_fidelity_ratio,
+        fidelity_sample_size=fidelity_sample_size,
     )
 
 
