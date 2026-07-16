@@ -362,7 +362,9 @@ def _evaluate_scenario(
         value = output_values[declared.name]
         if value is None:
             continue  # a missing output is already flagged by length_mismatch
-        errors.extend(_value_invariant_errors(value, declared.name, scenario.name, ts))
+        errors.extend(
+            _value_invariant_errors(value, declared.name, scenario.name, ts, sparse=declared.sparse)
+        )
 
     return errors
 
@@ -383,13 +385,15 @@ def _output_values(result: Any, contract: PluginContract) -> dict[str, Any]:
 
 
 def _value_invariant_errors(
-    value: Any, output_name: str, scenario_name: str, ts
+    value: Any, output_name: str, scenario_name: str, ts, *, sparse: bool = False
 ) -> list[dict[str, Any]]:
     """Finite (Invariant 2) and dtype (Invariant 3) checks for one output.
 
     Array-like values are inspected as a pandas Series; scalars are checked
     directly. An all-NaN or ±inf-containing numeric output, or a value that is
-    neither numeric nor boolean, is a violation. Leading warm-up NaNs pass."""
+    neither numeric nor boolean, is a violation. Leading warm-up NaNs pass.
+    Outputs declared ``sparse`` in the contract skip the all-NaN check —
+    event-style columns are legitimately empty on signal-free scenarios."""
 
     def _err(kind: str, detail: str) -> dict[str, Any]:
         return {
@@ -413,7 +417,7 @@ def _value_invariant_errors(
             return [_err("wrong_dtype", f"expected numeric/boolean, got dtype {series.dtype}")]
         if is_numeric and not is_bool:
             arr = series.to_numpy(dtype="float64", na_value=np.nan)
-            if series.isna().all():
+            if not sparse and series.isna().all():
                 return [_err("non_finite_output", "all values are NaN")]
             if np.isinf(arr).any():
                 return [_err("non_finite_output", "contains ±inf")]

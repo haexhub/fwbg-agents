@@ -222,6 +222,12 @@ Rules:
   generates and writes the data itself; never point at hand-made fixtures.
 - Omit `expected_outputs` — the deterministic Evaluator checks structural
   invariants (length parity, finite values, dtypes), not expected values.
+- Mark event-style outputs that only carry values at signal bars (e.g. a
+  `*_lag` or `*_age` column) with `sparse: true` in `contract.outputs`. The
+  synthetic scenarios contain no upstream indicator columns, so composite
+  plugins legitimately produce zero signals there — a sparse output may then
+  be all-NaN without failing verification. Dense outputs (a moving average,
+  a score defined on every bar) must NOT be marked sparse.
 
 ## File Layout
 

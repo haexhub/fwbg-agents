@@ -59,6 +59,11 @@ class PluginContractOutput(BaseModel):
     name: str
     dtype: OutputDtype
     length_invariant: LengthInvariant = "same_as_input"
+    # Event-style outputs (e.g. a lag that only exists at signal bars) are
+    # legitimately all-NaN on scenarios that trigger no signals. sparse=True
+    # exempts the output from the Evaluator's all-NaN invariant; the length,
+    # dtype and ±inf checks still apply.
+    sparse: bool = False
 
 
 class PluginContractParam(BaseModel):

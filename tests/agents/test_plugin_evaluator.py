@@ -448,6 +448,97 @@ async def test_evaluator_no_compute_callable_fails(db):
     assert any("compute" in e["invariant_violated"].lower() for e in payload["errors"])
 
 
+_SPARSE_OUTPUT_CODE = """
+import pandas as pd
+
+def compute(df: pd.DataFrame, *, window: int = 14) -> pd.Series:
+    return df['close'] * float('nan')  # event column: no signals on this data
+"""
+
+
+def _sparse_contract(slug: str, scenarios: list[str], *, sparse: bool) -> PluginContract:
+    c = _good_contract(slug, scenarios)
+    return c.model_copy(
+        update={
+            "outputs": [
+                PluginContractOutput(
+                    name="ma", dtype="series", length_invariant="same_as_input", sparse=sparse
+                )
+            ]
+        }
+    )
+
+
+async def test_evaluator_sparse_output_all_nan_passes(db):
+    session, settings = db
+    p = await _seed_plugin(
+        session,
+        settings,
+        slug="sparse_ok",
+        code=_SPARSE_OUTPUT_CODE,
+        scenarios=["trending_up"],
+    )
+    target = settings.data_dir / "plugins" / "sparse_ok" / "v1"
+    dump_contract(
+        _sparse_contract("sparse_ok", ["trending_up"], sparse=True), target / "contract.yaml"
+    )
+
+    vr_id = await PluginEvaluator(session).run(p)
+    vr = (
+        await session.execute(select(VerificationRun).where(VerificationRun.id == vr_id))
+    ).scalar_one()
+    assert vr.status == "passed"
+    await session.refresh(p)
+    assert p.current_state == PluginState.VERIFIED.value
+
+
+async def test_evaluator_non_sparse_output_all_nan_still_fails(db):
+    session, settings = db
+    p = await _seed_plugin(
+        session,
+        settings,
+        slug="sparse_not_declared",
+        code=_SPARSE_OUTPUT_CODE,
+        scenarios=["trending_up"],
+    )
+    target = settings.data_dir / "plugins" / "sparse_not_declared" / "v1"
+    dump_contract(
+        _sparse_contract("sparse_not_declared", ["trending_up"], sparse=False),
+        target / "contract.yaml",
+    )
+
+    vr_id = await PluginEvaluator(session).run(p)
+    vr = (
+        await session.execute(select(VerificationRun).where(VerificationRun.id == vr_id))
+    ).scalar_one()
+    assert vr.status == "failed"
+    payload = json.loads(Path(vr.error_log_path).read_text())
+    assert any(e["invariant_violated"] == "non_finite_output" for e in payload["errors"])
+
+
+async def test_evaluator_sparse_output_inf_still_fails(db):
+    session, settings = db
+    p = await _seed_plugin(
+        session,
+        settings,
+        slug="sparse_inf",
+        code=_INF_CODE,
+        scenarios=["trending_up"],
+    )
+    target = settings.data_dir / "plugins" / "sparse_inf" / "v1"
+    dump_contract(
+        _sparse_contract("sparse_inf", ["trending_up"], sparse=True), target / "contract.yaml"
+    )
+
+    vr_id = await PluginEvaluator(session).run(p)
+    vr = (
+        await session.execute(select(VerificationRun).where(VerificationRun.id == vr_id))
+    ).scalar_one()
+    assert vr.status == "failed"
+    payload = json.loads(Path(vr.error_log_path).read_text())
+    assert any(e["invariant_violated"] == "non_finite_output" for e in payload["errors"])
+
+
 async def test_evaluator_class_plugin_passes_and_transitions_to_verified(db):
     session, settings = db
     p = await _seed_plugin(
