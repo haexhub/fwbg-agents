@@ -67,6 +67,10 @@ _PHASE_TO_FIELD: dict[str, str] = {
     "feature_selection": "feature_selection",
     "preprocessing": "preprocessing",
     "filter": "extra_filters",
+    # The Analyst's AddIndicator sidecar normalises to the plural forms
+    # (analyst.AddIndicator.phase Literal) — accept both spellings.
+    "indicators": "indicators",
+    "filters": "extra_filters",
 }
 
 
@@ -696,8 +700,7 @@ class Translator:
             phase = sidecar.get("phase")
             if phase not in _PHASE_TO_FIELD:
                 raise TranslatorError(
-                    f"unknown phase: {phase!r} (must be one of: "
-                    "indicator, feature_selection, preprocessing, filter)"
+                    f"unknown phase: {phase!r} (must be one of: {sorted(_PHASE_TO_FIELD)})"
                 )
             list_field = _PHASE_TO_FIELD[phase]
 
