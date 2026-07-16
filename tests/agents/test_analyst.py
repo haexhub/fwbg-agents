@@ -318,6 +318,30 @@ def test_add_indicator_coerces_plural_category_and_bad_phase():
     assert rec.phase == "indicators"
 
 
+def test_add_indicator_phase_values_are_sdk_plugin_phases():
+    """AddIndicator.phase is pinned to fwbg_sdk.PluginPhase values — the whole
+    downstream chain (planner, implementer, translator) keys off the enum."""
+    from typing import get_args
+
+    from fwbg_sdk.base import PluginPhase
+
+    phase_literal = AddIndicator.model_fields["phase"].annotation
+    assert set(get_args(phase_literal)) <= {p.value for p in PluginPhase}
+
+
+def test_add_indicator_normalises_filter_spellings_to_risk_management():
+    """LLM-style 'filter(s)' spellings degrade to the SDK's risk_management."""
+    for raw in ("filter", "filters", "FILTERS"):
+        rec = AddIndicator(
+            confidence=0.7,
+            reasoning="volatility gate",
+            phase=raw,
+            capability="regime filter",
+            category="risk_management",
+        )
+        assert rec.phase == "risk_management"
+
+
 async def test_analyst_add_indicator_survives_invalid_enums(
     db_and_backtested, monkeypatch, tmp_path
 ):

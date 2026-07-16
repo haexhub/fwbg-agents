@@ -34,6 +34,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Annotated, Any, Literal
 
+from fwbg_sdk.base import PluginPhase  # type: ignore[import-untyped]  # no py.typed marker
 from pydantic import BaseModel, Discriminator, Field, field_validator, model_validator
 from pydantic_ai import Agent
 from pydantic_ai.models import Model
@@ -234,11 +235,19 @@ _CATEGORY_ALIASES: dict[str, str] = {
     "entry_modifiers": "entry_modifier",
 }
 
-_PHASE_VALUES: tuple[str, ...] = ("feature_selection", "indicators", "preprocessing", "filters")
+# The four fwbg_sdk.PluginPhase values the Analyst may request a plugin for.
+# risk_management plugins act as trade filters in fwbg strategies.
+_PHASE_VALUES: tuple[str, ...] = (
+    PluginPhase.FEATURE_SELECTION.value,
+    PluginPhase.INDICATORS.value,
+    PluginPhase.PREPROCESSING.value,
+    PluginPhase.RISK_MANAGEMENT.value,
+)
 _PHASE_ALIASES: dict[str, str] = {
-    "entry": "indicators",
-    "indicator": "indicators",
-    "filter": "filters",
+    "entry": PluginPhase.INDICATORS.value,
+    "indicator": PluginPhase.INDICATORS.value,
+    "filter": PluginPhase.RISK_MANAGEMENT.value,
+    "filters": PluginPhase.RISK_MANAGEMENT.value,
 }
 
 
@@ -276,7 +285,9 @@ class AddIndicator(_RecBase):
     """
 
     kind: Literal["add_indicator"] = "add_indicator"
-    phase: Literal["feature_selection", "indicators", "preprocessing", "filters"]
+    # Values are fwbg_sdk.PluginPhase members (pinned by test); pydantic-ai
+    # needs a static Literal for the LLM-facing schema.
+    phase: Literal["feature_selection", "indicators", "preprocessing", "risk_management"]
     capability: str = Field(
         description=(
             "Free-text description of the missing capability. Must NOT be a "

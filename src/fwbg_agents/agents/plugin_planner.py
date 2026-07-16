@@ -15,6 +15,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal
 
+from fwbg_sdk.base import PluginPhase  # type: ignore[import-untyped]  # no py.typed marker
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from pydantic_ai import Agent
 from pydantic_ai.exceptions import UnexpectedModelBehavior
@@ -39,18 +40,9 @@ log = logging.getLogger(__name__)
 
 _PROMPT_PATH = Path(__file__).parents[3] / "prompts" / "plugin_authoring.md"
 
-# Sidecar phase → fwbg_sdk.base.PluginPhase value. Tolerates both forms:
-# plural (per AddIndicator.phase Literal — "indicators"/"filters") and singular
-# (M5c Translator's _PHASE_TO_FIELD + legacy smoke fixtures — "indicator"/"filter").
-# "filter(s)" routes to RISK_MANAGEMENT in the SDK enum.
-_PHASE_MAPPING: dict[str, str] = {
-    "indicators": "indicators",
-    "indicator": "indicators",
-    "feature_selection": "feature_selection",
-    "preprocessing": "preprocessing",
-    "filters": "risk_management",
-    "filter": "risk_management",
-}
+# The sidecar phase vocabulary IS fwbg_sdk.PluginPhase (the Analyst emits
+# enum values); the plan must come back in the same phase.
+_VALID_PHASES: frozenset[str] = frozenset(p.value for p in PluginPhase)
 
 PluginPhaseLit = Literal[
     "data_loading",
@@ -208,12 +200,11 @@ class PluginPlanner:
         """Generate, validate, and persist a PluginPlan for the given strategy sidecar."""
         catalog = live.catalog
         sidecar_phase = sidecar.get("phase")
-        if sidecar_phase not in _PHASE_MAPPING:
+        if sidecar_phase not in _VALID_PHASES:
             raise PluginPlannerError(
-                f"unknown sidecar phase: {sidecar_phase!r}; "
-                f"expected one of {sorted(_PHASE_MAPPING)}"
+                f"unknown sidecar phase: {sidecar_phase!r}; expected one of {sorted(_VALID_PHASES)}"
             )
-        expected_phase = _PHASE_MAPPING[sidecar_phase]
+        expected_phase = sidecar_phase
 
         try:
             system_prompt = self.prompt_path.read_text(encoding="utf-8")
@@ -257,8 +248,7 @@ class PluginPlanner:
 
         if plan.phase != expected_phase:
             raise PluginPlannerError(
-                f"phase mismatch: sidecar phase {sidecar_phase!r} maps to "
-                f"{expected_phase!r}, plan emitted {plan.phase!r}"
+                f"phase mismatch: sidecar phase is {expected_phase!r}, plan emitted {plan.phase!r}"
             )
 
         if _slug_in_catalog(plan.slug, catalog):
