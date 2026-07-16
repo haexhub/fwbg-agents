@@ -66,10 +66,24 @@ class FwbgClientError(RuntimeError):
 class FwbgClient:
     """Async HTTP client for the fwbg REST API."""
 
-    def __init__(self, base_url: str, http: httpx.AsyncClient | None = None):
-        """Initialize."""
+    def __init__(
+        self,
+        base_url: str,
+        http: httpx.AsyncClient | None = None,
+        api_key: str | None = None,
+    ):
+        """Initialize.
+
+        When ``http`` is not supplied and ``api_key`` is non-empty, the
+        internally created client sends ``X-API-Key`` on every request. An
+        externally injected ``http`` client is used as-is and never mutated.
+        """
         self.base_url = base_url
-        self._http = http if http is not None else httpx.AsyncClient(base_url=base_url)
+        if http is not None:
+            self._http = http
+        else:
+            headers = {"X-API-Key": api_key} if api_key else None
+            self._http = httpx.AsyncClient(base_url=base_url, headers=headers)
         self._owns_http = http is None
 
     async def aclose(self) -> None:

@@ -88,6 +88,26 @@ async def test_judge_returns_report_and_agent_run_id(db):
         assert len(calls) == 1
 
 
+async def test_judge_persists_llm_call_with_cost_when_model_priced(db, monkeypatch):
+    """Plan 018: a persisted LlmCall row carries a non-null cost_usd when the
+    model is in the price table (FunctionModel's model_name contains "function")."""
+    from fwbg_agents.config import settings
+
+    monkeypatch.setattr(settings, "llm_price_table_json", '{"function": [5.0, 25.0]}')
+    hyps = [_hyp("candidate A")]
+    args = {
+        "candidates": [{"score": 0.8, "kill_risks": [], "verdict": "pass"}],
+        "winner_index": 0,
+    }
+    async with db() as session:
+        _report, ar_id = await Critic(session, model=_stub_model(args)).judge(hyps)
+
+    async with db() as v:
+        call = (await v.execute(select(LlmCall).where(LlmCall.agent_run_id == ar_id))).scalar_one()
+        assert "function" in call.model
+        assert call.cost_usd is not None
+
+
 async def test_judge_all_reject_sets_null_winner(db):
     hyps = [_hyp("candidate A"), _hyp("candidate B")]
     args = {

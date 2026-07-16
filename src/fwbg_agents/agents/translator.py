@@ -53,6 +53,7 @@ from fwbg_agents.persistence.models import (
 from fwbg_agents.run_events import emit_run_event
 from fwbg_agents.tools.fwbg_client import FwbgClient
 from fwbg_agents.tools.llm import model_for, prompt_path_for
+from fwbg_agents.tools.llm_pricing import estimate_cost_usd
 
 log = logging.getLogger(__name__)
 
@@ -430,12 +431,16 @@ class Translator:
             latency_ms = int((time.monotonic() - t0) * 1000)
 
             usage = result.usage
+            model_name = getattr(self.model, "model_name", "unknown")
+            in_tokens = int(getattr(usage, "input_tokens", 0) or 0)
+            out_tokens = int(getattr(usage, "output_tokens", 0) or 0)
             self.session.add(
                 LlmCall(
                     agent_run_id=ar.id,
-                    model=getattr(self.model, "model_name", "unknown"),
-                    input_tokens=int(getattr(usage, "input_tokens", 0) or 0),
-                    output_tokens=int(getattr(usage, "output_tokens", 0) or 0),
+                    model=model_name,
+                    input_tokens=in_tokens,
+                    output_tokens=out_tokens,
+                    cost_usd=estimate_cost_usd(model_name, in_tokens, out_tokens),
                     latency_ms=latency_ms,
                     created_at=datetime.now(UTC),
                 )

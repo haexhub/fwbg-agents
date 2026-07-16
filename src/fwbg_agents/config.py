@@ -25,6 +25,15 @@ class Settings(BaseSettings):
         description="Required by SDK; proxy ignores it in favor of OAuth",
     )
     anthropic_model: str = Field(default="claude-opus-4-7")
+    llm_price_table_json: str | None = Field(
+        default=None,
+        description=(
+            "Optional JSON override for the LLM list-price table used by "
+            "tools/llm_pricing.py, e.g. '{\"claude-opus-4-7\": [5.0, 25.0]}' — "
+            "model-substring to [usd_per_1M_input, usd_per_1M_output]. "
+            "None = built-in DEFAULT_PRICE_TABLE."
+        ),
+    )
     llm_timeout_seconds: float = Field(
         default=600.0,
         description=(
@@ -90,6 +99,10 @@ class Settings(BaseSettings):
 
     # fwbg
     fwbg_api_url: str = Field(default="http://localhost:8420")
+    fwbg_api_key: str | None = Field(
+        default=None,
+        description="Sent as X-API-Key on every fwbg request; matches the server's FWBG_API_KEY.",
+    )
     fwbg_test_results_dir: Path = Field(
         default=Path.home() / "fwbg" / "test_results",
         description="Where fwbg writes per-run output directories. Scanned by Calibrator.",
@@ -115,8 +128,8 @@ class Settings(BaseSettings):
     # up (watchtower recreates, keep-alive races). The backtest itself keeps
     # running on the fwbg side during such blips.
     runner_poll_outage_tolerance_seconds: float = 120.0
-    # fwbg enforces a single backtest slot (429 while busy) — how long to
-    # sleep between attempts to grab it.
+    # fwbg is configured with a single backtest slot (FWBG_MAX_CONCURRENT_RUNS=1,
+    # its default; 429 while busy) — how long to sleep between attempts to grab it.
     runner_busy_wait_seconds: float = 30.0
 
     # On-demand data provisioning (fwbg POST /api/data/ensure, Phase 1c).

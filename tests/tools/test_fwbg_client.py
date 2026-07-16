@@ -27,6 +27,27 @@ def test_safe_fwbg_strategy_name_keeps_existing_iteration_suffix():
     assert safe_fwbg_strategy_name("orb__forex__001__it002", 1) == "orb__forex__001__it002"
 
 
+async def test_default_client_sends_api_key_header():
+    client = FwbgClient(base_url="http://fwbg-test", api_key="secret")
+    assert client._http.headers.get("X-API-Key") == "secret"
+    await client.aclose()
+
+
+async def test_default_client_omits_api_key_header_when_none():
+    client = FwbgClient(base_url="http://fwbg-test", api_key=None)
+    assert "X-API-Key" not in client._http.headers
+    await client.aclose()
+
+
+async def test_injected_http_client_is_used_as_is():
+    # An externally supplied client must not be mutated with an API key.
+    http = _mock_client(lambda request: httpx.Response(200, json={}))
+    client = FwbgClient(base_url="http://fwbg-test", http=http, api_key="secret")
+    assert client._http is http
+    assert "X-API-Key" not in http.headers
+    await http.aclose()
+
+
 async def test_start_run_posts_strategy_name_and_returns_job():
     captured: dict = {}
 
