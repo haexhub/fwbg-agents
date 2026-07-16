@@ -22,7 +22,7 @@ import time
 from datetime import UTC, datetime
 from pathlib import Path
 
-from fwbg_sdk.base import PluginPhase  # type: ignore[import-untyped]  # no py.typed marker
+from fwbg_sdk.base import PluginPhase
 from pydantic import BaseModel, ConfigDict
 from pydantic_ai import Agent
 from pydantic_ai.models import Model
