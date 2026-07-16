@@ -592,13 +592,14 @@ client = [
 
 [[package]]
 name = "fwbg-agents"
-version = "0.22.0"
+version = "0.25.0"
 source = { editable = "." }
 dependencies = [
     { name = "aiosqlite" },
     { name = "alembic" },
     { name = "anthropic" },
     { name = "fastapi" },
+    { name = "fwbg-sdk" },
     { name = "httpx" },
     { name = "numpy" },
     { name = "pandas" },
@@ -629,6 +630,7 @@ requires-dist = [
     { name = "alembic", specifier = ">=1.14.0" },
     { name = "anthropic", specifier = ">=0.40" },
     { name = "fastapi", specifier = ">=0.115.0" },
+    { name = "fwbg-sdk", git = "https://github.com/haexhub/fwbg?subdirectory=packages%2Ffwbg-sdk&branch=main" },
     { name = "httpx", specifier = ">=0.28.0" },
     { name = "numpy", specifier = ">=2.1.0" },
     { name = "pandas", specifier = ">=2.2.0" },
@@ -651,6 +653,16 @@ dev = [
     { name = "pytest-cov", specifier = ">=6.0.0" },
     { name = "ruff", specifier = ">=0.8.0" },
     { name = "types-pyyaml", specifier = ">=6.0.12.20260518" },
+]
+
+[[package]]
+name = "fwbg-sdk"
+version = "1.0.0"
+source = { git = "https://github.com/haexhub/fwbg?subdirectory=packages%2Ffwbg-sdk&branch=main#4b05aea0bb1a446aa04e41a21992cfc69308eca2" }
+dependencies = [
+    { name = "click" },
+    { name = "numpy" },
+    { name = "pandas" },
 ]
 
 [[package]]

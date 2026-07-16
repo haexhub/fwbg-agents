@@ -6,6 +6,12 @@ WORKDIR /app
 ENV UV_COMPILE_BYTECODE=1 \
     UV_LINK_MODE=copy
 
+# fwbg-sdk is a git dependency (fwbg monorepo subdirectory) — uv needs git
+# to fetch it. Builder stage only; the runtime image stays git-free.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends git \
+    && rm -rf /var/lib/apt/lists/*
+
 COPY pyproject.toml uv.lock README.md ./
 COPY src/ src/
 
