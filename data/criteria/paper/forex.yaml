@@ -5,3 +5,8 @@ required_all:
   - trades_total: ">= 30"
 hard_blockers:
   - max_dd_paper: "<= 0.15"
+
+# Enable after calibrating against observed paper fills (plan 016):
+# required_all:
+#   - fill_fidelity_ratio: "<= 1.5"
+#   - sharpe_paper_per_trade: ">= 0.05"

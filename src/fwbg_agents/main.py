@@ -11,6 +11,7 @@ from fwbg_agents import __version__
 from fwbg_agents.api import (
     agents_config,
     criteria,
+    economics,
     events,
     health,
     plugins,
@@ -76,3 +77,4 @@ app.include_router(research.router)
 app.include_router(agents_config.router)
 app.include_router(secrets.router)
 app.include_router(trials.router)
+app.include_router(economics.router)

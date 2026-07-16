@@ -240,6 +240,166 @@ def test_summary_trades_today_filters_by_utc_date(tmp_path: Path) -> None:
     assert out.trades_today == 3
 
 
+# ---------- sharpe_paper vs sharpe_paper_per_trade (Step 2) ----------
+
+
+def test_sharpe_paper_is_per_trade_sharpe_annualised(tmp_path: Path) -> None:
+    slug = "s7"
+    d = _account_dir(tmp_path, slug)
+    now = datetime.now(UTC)
+    pnls = [0.003] * 15 + [-0.001] * 15
+    trades = [
+        {
+            "trade_id": f"t{i}",
+            "strategy_slug": slug,
+            "symbol": "EURUSD",
+            "side": "buy",
+            "entry_time": (now - timedelta(days=30 - i)).isoformat(),
+            "exit_time": (now - timedelta(days=30 - i)).isoformat(),
+            "entry_price": 1.0,
+            "exit_price": 1.0 + pnls[i],
+            "pnl_pct": pnls[i],
+            "quantity": 1000,
+            "fees": 0.0,
+        }
+        for i in range(30)
+    ]
+    _write_trades(d, trades)
+    out = read_paper_summary(slug, tmp_path)
+    assert out is not None
+    assert math.isclose(out.sharpe_paper, out.sharpe_paper_per_trade * math.sqrt(252), abs_tol=1e-9)
+
+
+def test_sharpe_both_zero_when_fewer_than_two_trades(tmp_path: Path) -> None:
+    slug = "s8"
+    d = _account_dir(tmp_path, slug)
+    now = datetime.now(UTC)
+    trades = [
+        {
+            "trade_id": "t0",
+            "strategy_slug": slug,
+            "symbol": "EURUSD",
+            "side": "buy",
+            "entry_time": now.isoformat(),
+            "exit_time": now.isoformat(),
+            "entry_price": 1.0,
+            "exit_price": 1.01,
+            "pnl_pct": 0.01,
+            "quantity": 1000,
+            "fees": 0.0,
+        }
+    ]
+    _write_trades(d, trades)
+    out = read_paper_summary(slug, tmp_path)
+    assert out is not None
+    assert out.sharpe_paper == 0.0
+    assert out.sharpe_paper_per_trade == 0.0
+
+
+# ---------- fill-fidelity aggregation (Step 3) ----------
+
+
+def _conforming_trade(
+    trade_id: str,
+    entry_time: datetime,
+    *,
+    entry_price: float,
+    signal_price: float,
+    assumed_spread: float,
+) -> dict:
+    return {
+        "trade_id": trade_id,
+        "strategy_slug": "fid",
+        "symbol": "EURUSD",
+        "side": "buy",
+        "entry_time": entry_time.isoformat(),
+        "exit_time": None,
+        "entry_price": entry_price,
+        "exit_price": None,
+        "pnl_pct": None,
+        "quantity": 1000,
+        "fees": 0.0,
+        "signal_price": signal_price,
+        "assumed_spread": assumed_spread,
+    }
+
+
+def _legacy_trade(trade_id: str, entry_time: datetime) -> dict:
+    return {
+        "trade_id": trade_id,
+        "strategy_slug": "fid",
+        "symbol": "EURUSD",
+        "side": "buy",
+        "entry_time": entry_time.isoformat(),
+        "exit_time": None,
+        "entry_price": 1.0,
+        "exit_price": None,
+        "pnl_pct": None,
+        "quantity": 1000,
+        "fees": 0.0,
+    }
+
+
+def test_fidelity_aggregates_conforming_trades_and_skips_legacy(tmp_path: Path) -> None:
+    slug = "fid1"
+    d = _account_dir(tmp_path, slug)
+    now = datetime.now(UTC)
+    trades = [
+        # entry_slippage = 0.0010, half_spread = 0.0002/2 = 0.0001
+        _conforming_trade(
+            "c1", now, entry_price=1.0010, signal_price=1.0000, assumed_spread=0.0002
+        ),
+        # entry_slippage = 0.0020, half_spread = 0.0004/2 = 0.0002
+        _conforming_trade(
+            "c2", now, entry_price=1.0020, signal_price=1.0000, assumed_spread=0.0004
+        ),
+        _legacy_trade("l1", now),
+    ]
+    _write_trades(d, trades)
+    out = read_paper_summary(slug, tmp_path)
+    assert out is not None
+    assert out.fidelity_sample_size == 2
+    assert out.avg_entry_slippage is not None
+    assert math.isclose(out.avg_entry_slippage, (0.0010 + 0.0020) / 2, abs_tol=1e-12)
+    assert out.avg_assumed_half_spread is not None
+    assert math.isclose(out.avg_assumed_half_spread, (0.0001 + 0.0002) / 2, abs_tol=1e-12)
+    assert out.fill_fidelity_ratio is not None
+    assert math.isclose(
+        out.fill_fidelity_ratio, out.avg_entry_slippage / out.avg_assumed_half_spread, abs_tol=1e-12
+    )
+
+
+def test_fidelity_zero_half_spread_yields_none_ratio(tmp_path: Path) -> None:
+    slug = "fid2"
+    d = _account_dir(tmp_path, slug)
+    now = datetime.now(UTC)
+    trades = [
+        _conforming_trade("c1", now, entry_price=1.0010, signal_price=1.0000, assumed_spread=0.0),
+    ]
+    _write_trades(d, trades)
+    out = read_paper_summary(slug, tmp_path)
+    assert out is not None
+    assert out.fill_fidelity_ratio is None
+
+
+def test_fidelity_all_legacy_trades_yields_none_fields_and_zero_sample(tmp_path: Path) -> None:
+    slug = "fid3"
+    d = _account_dir(tmp_path, slug)
+    now = datetime.now(UTC)
+    trades = [_legacy_trade(f"l{i}", now) for i in range(3)]
+    _write_trades(d, trades)
+    out = read_paper_summary(slug, tmp_path)
+    assert out is not None
+    assert out.avg_entry_slippage is None
+    assert out.avg_assumed_half_spread is None
+    assert out.fill_fidelity_ratio is None
+    assert out.fidelity_sample_size == 0
+    # Regression guard: legacy summary shape is otherwise unchanged.
+    assert out.trades_total == 3
+    assert out.sharpe_paper == 0.0
+    assert out.sharpe_paper_per_trade == 0.0
+
+
 # ---------- read_paper_positions ----------
 
 
