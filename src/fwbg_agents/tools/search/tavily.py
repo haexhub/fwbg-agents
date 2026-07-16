@@ -104,6 +104,8 @@ async def _log_quota(
 ) -> None:
     """Persist a search-provider quota entry as an LlmCall row for accounting."""
     try:
+        # Search-quota pseudo-call, not an LLM call: cost_usd intentionally
+        # stays NULL (counted under unpriced_calls in /economics/summary).
         session.add(
             LlmCall(
                 agent_run_id=agent_run_id,

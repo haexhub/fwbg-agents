@@ -25,6 +25,15 @@ class Settings(BaseSettings):
         description="Required by SDK; proxy ignores it in favor of OAuth",
     )
     anthropic_model: str = Field(default="claude-opus-4-7")
+    llm_price_table_json: str | None = Field(
+        default=None,
+        description=(
+            "Optional JSON override for the LLM list-price table used by "
+            "tools/llm_pricing.py, e.g. '{\"claude-opus-4-7\": [5.0, 25.0]}' — "
+            "model-substring to [usd_per_1M_input, usd_per_1M_output]. "
+            "None = built-in DEFAULT_PRICE_TABLE."
+        ),
+    )
     llm_timeout_seconds: float = Field(
         default=600.0,
         description=(
