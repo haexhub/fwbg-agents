@@ -26,8 +26,10 @@ from fwbg_agents.agents.plugin_implementer import (
     _render_implementer_prompt,
     contract_check,
     implementer_model,
+    scenario_names_check,
 )
 from fwbg_agents.agents.plugin_planner import PluginPlan
+from fwbg_agents.orchestrator.plugin_contract import PluginContract
 
 # ---------------------------------------------------------------------------
 # Plan / result fixtures
@@ -284,6 +286,33 @@ def test_contract_check_rejects_relative_import():
 
 
 # ---------------------------------------------------------------------------
+# scenario_names_check unit tests
+# ---------------------------------------------------------------------------
+
+
+def test_scenario_names_check_accepts_known_names():
+    contract = PluginContract.model_validate(_VALID_CONTRACT)
+    check = scenario_names_check(contract)
+    assert check.ok, check.msg
+
+
+def test_scenario_names_check_rejects_invented_name():
+    contract = PluginContract.model_validate(
+        {
+            **_VALID_CONTRACT,
+            "test_scenarios": [
+                {"name": "trending_up", "data_path": "test_scenarios/trending_up.parquet"},
+                {"name": "perfect_fancy_sequence", "data_path": "tests/data/fancy.csv"},
+            ],
+        }
+    )
+    check = scenario_names_check(contract)
+    assert not check.ok
+    assert "perfect_fancy_sequence" in check.msg
+    assert "trending_up" in check.msg  # the allowed list is named in the feedback
+
+
+# ---------------------------------------------------------------------------
 # PluginImplementer loop tests
 # ---------------------------------------------------------------------------
 
@@ -316,6 +345,25 @@ async def test_implementer_recovers_from_contract_error_in_round_two():
     plan = _make_plan()
     bad = _result_args(code=_WRONG_CLASS_CODE)
     good = _result_args(code=_VALID_CODE)
+    impl = PluginImplementer(model=_stateful_model(bad, good), max_rounds=3)
+
+    result = await impl.run_implement(plan=plan)
+    assert result.rounds_used == 2
+
+
+async def test_implementer_rejects_unknown_scenario_name_and_recovers():
+    plan = _make_plan()
+    bad = _result_args()
+    bad["contract"] = {
+        **_VALID_CONTRACT,
+        "test_scenarios": [
+            {
+                "name": "perfect_fancy_sequence",
+                "data_path": "tests/data/fancy.csv",
+            }
+        ],
+    }
+    good = _result_args()
     impl = PluginImplementer(model=_stateful_model(bad, good), max_rounds=3)
 
     result = await impl.run_implement(plan=plan)
