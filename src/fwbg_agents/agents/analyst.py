@@ -34,7 +34,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Annotated, Any, Literal
 
-from fwbg_sdk.base import PluginPhase  # type: ignore[import-untyped]  # no py.typed marker
+from fwbg_sdk.base import PluginPhase
 from pydantic import BaseModel, Discriminator, Field, field_validator, model_validator
 from pydantic_ai import Agent
 from pydantic_ai.models import Model
