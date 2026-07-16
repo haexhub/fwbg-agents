@@ -55,6 +55,7 @@ from fwbg_agents.persistence.models import (
 )
 from fwbg_agents.run_events import emit_run_event
 from fwbg_agents.tools.fwbg_client import FwbgClient
+from fwbg_agents.tools.llm_pricing import estimate_cost_usd
 
 log = logging.getLogger(__name__)
 
@@ -117,6 +118,7 @@ async def _persist_llm_call(
             model=meta.model_name,
             input_tokens=meta.input_tokens,
             output_tokens=meta.output_tokens,
+            cost_usd=estimate_cost_usd(meta.model_name, meta.input_tokens, meta.output_tokens),
             latency_ms=meta.latency_ms,
             created_at=datetime.now(UTC),
         )
