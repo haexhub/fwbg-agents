@@ -245,6 +245,7 @@ def _check_inline_pipeline(value: dict, *, catalog: PluginCatalog | None) -> Non
         )
     if not value.get("indicators"):
         raise StrategyValidationError("pipeline.indicators must contain at least one plugin entry")
+    phase_names: dict[str, set[str]] = {}
     for phase, category in _PIPELINE_PHASES:
         entries = value.get(phase)
         if entries is None:
@@ -252,6 +253,7 @@ def _check_inline_pipeline(value: dict, *, catalog: PluginCatalog | None) -> Non
         if not isinstance(entries, list):
             raise StrategyValidationError(f"pipeline.{phase} must be a list")
         allowed = catalog.all_slugs_for(category) if catalog is not None else []
+        names: set[str] = set()
         for i, entry in enumerate(entries):
             if not isinstance(entry, dict):
                 raise StrategyValidationError(
@@ -267,6 +269,27 @@ def _check_inline_pipeline(value: dict, *, catalog: PluginCatalog | None) -> Non
                     f"pipeline.{phase}[{i}].name={name!r} is not in the catalog "
                     f"category {category!r}.{_suggest(name, allowed)}"
                 )
+            names.add(name)
+        phase_names[phase] = names
+
+    # fwbg's PipelineRunner resolves depends_on by short name against the
+    # OTHER plugins configured in the SAME phase — catch an incomplete chain
+    # here, at translation time, instead of one missing dependency per failed
+    # backtest run.
+    if catalog is not None:
+        for phase, category in _PIPELINE_PHASES:
+            names = phase_names.get(phase, set())
+            for name in names:
+                manifest = catalog.get(category, name)
+                if manifest is None:
+                    continue
+                missing = [dep for dep in manifest.depends_on if dep not in names]
+                if missing:
+                    raise StrategyValidationError(
+                        f"pipeline.{phase} plugin {name!r} depends on {missing!r}, "
+                        f"which {'is' if len(missing) == 1 else 'are'} not in "
+                        f"pipeline.{phase}. Add {missing!r} to pipeline.{phase}."
+                    )
 
 
 def _check_inline_model(value: dict, *, catalog: PluginCatalog | None) -> None:

@@ -147,6 +147,33 @@ def _slug_in_catalog(slug: str, catalog: PluginCatalog) -> bool:
     return any(slug in slugs for slugs in catalog.by_category.values())
 
 
+def _check_depends_on(plan: PluginPlan, catalog: PluginCatalog) -> None:
+    """Reject a plan that depends on a plugin not registered in `plan.phase`.
+
+    fwbg's pipeline runner resolves `depends_on` by short name against the
+    OTHER plugins configured in the same phase (see
+    `fwbg.pipeline.runner._topological_sort`) — a dependency that isn't a
+    real, registered plugin in that phase can never be satisfied by any
+    pipeline. Catching this at plan time means the Implementer never writes
+    code for an unsatisfiable dependency, and the Translator never has to
+    whack-a-mole through a chain of "missing dependency" backtest failures.
+
+    Lax when the catalog has no entries for `plan.phase` (offline / test call
+    sites without a live catalog), matching the M4 fallback convention used
+    throughout `strategy_validator`.
+    """
+    known = catalog.all_slugs_for(plan.phase)
+    if not known:
+        return
+    unknown = [dep for dep in plan.depends_on if dep not in known]
+    if unknown:
+        raise PluginPlannerError(
+            f"depends_on references unregistered plugin(s) {unknown!r} in phase "
+            f"{plan.phase!r}; known: {known}. A plan may only depend on "
+            "plugins that already exist in the catalog."
+        )
+
+
 def _render_user_prompt(
     *,
     strategy_excerpt: str,
@@ -253,6 +280,8 @@ class PluginPlanner:
 
         if _slug_in_catalog(plan.slug, catalog):
             raise PluginPlannerError(f"slug collision: {plan.slug!r} already exists in the catalog")
+
+        _check_depends_on(plan, catalog)
 
         plan_dir = settings.data_dir / "plugin-runs" / plan.slug
         plan_dir.mkdir(parents=True, exist_ok=True)

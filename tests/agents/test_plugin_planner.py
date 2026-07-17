@@ -242,6 +242,49 @@ async def test_planner_raises_on_slug_collision():
     assert "slug collision" in str(exc_info.value)
 
 
+async def test_planner_raises_on_unknown_depends_on():
+    parent = _build_parent_strategy()
+    plan_args = _valid_plan_args()
+    plan_args["depends_on"] = ["atr_quintile_filter"]
+    planner = PluginPlanner(model=_stub_model(plan_args))
+
+    with pytest.raises(PluginPlannerError) as exc_info:
+        await planner.run_plan(
+            parent_strategy=parent,
+            sidecar=_SIDECAR_INDICATORS,
+            live=_live_with("adx", category="indicators"),
+        )
+    assert "depends_on" in str(exc_info.value)
+    assert "atr_quintile_filter" in str(exc_info.value)
+
+
+async def test_planner_accepts_known_depends_on():
+    parent = _build_parent_strategy()
+    plan_args = _valid_plan_args()
+    plan_args["depends_on"] = ["adx"]
+    planner = PluginPlanner(model=_stub_model(plan_args))
+
+    result = await planner.run_plan(
+        parent_strategy=parent,
+        sidecar=_SIDECAR_INDICATORS,
+        live=_live_with("adx", category="indicators"),
+    )
+    assert result.plan.depends_on == ["adx"]
+
+
+async def test_planner_lax_depends_on_when_catalog_empty():
+    """Offline / no live catalog: depends_on membership is unchecked (M4 lax fallback)."""
+    parent = _build_parent_strategy()
+    plan_args = _valid_plan_args()
+    plan_args["depends_on"] = ["whatever_not_registered"]
+    planner = PluginPlanner(model=_stub_model(plan_args))
+
+    result = await planner.run_plan(
+        parent_strategy=parent, sidecar=_SIDECAR_INDICATORS, live=_empty_live()
+    )
+    assert result.plan.depends_on == ["whatever_not_registered"]
+
+
 async def test_planner_raises_when_pydantic_schema_invalid():
     parent = _build_parent_strategy()
     bad_args = _valid_plan_args()

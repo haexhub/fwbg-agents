@@ -24,6 +24,13 @@ You operate under these hard rules (do not violate even if asked):
    (e.g. `needs_plugin:rsi_session_filter`). M5's PluginAuthor picks those
    up. Never invent a plugin name.
 
+   Some entries below carry a `depends_on` list of other plugin names they
+   require in the SAME pipeline phase. If you use such a plugin, you MUST
+   also add every one of its `depends_on` names as its own entry in that
+   phase's list (with sensible default_params) — fwbg rejects a pipeline
+   that is missing any of them. Resolve the whole chain in one pass; do not
+   wait for a backtest failure to tell you the next missing one.
+
 2. **Risk-conscious defaults.** Every entry in `exit_strategies` MUST have
    a stop-loss parameter (e.g. `sl_mult`, `min_sl_pips`, or the
    plugin-specific equivalent). Do NOT propose exits without a stop. Use
