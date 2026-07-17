@@ -37,7 +37,23 @@ fallen bei unbekannten Timeframes **still** auf `"HOUR"` bzw. `"1h"` zurück
 und liefern falsch gelabelte Daten. Das ist dieselbe Fehlerklasse (stiller
 Fallback statt lautem Fehler), die der PR im Optimizer gerade beseitigt hat.
 
-## Ist-Zustand (verifiziert am PR-Head)
+## Umsetzungsstand (2026-07-17)
+
+- **WP1 (Merge)**: DONE — PR #133 gemergt in `develop` (Commit `557a636`,
+  2026-07-17T11:48 UTC). Release/Deploy (`scripts/release.sh`) bewusst **nicht**
+  ausgeführt — bleibt Maintainer-Aktion.
+- **WP2 (DAY_1-E2E im Live-Service)**: OFFEN — operativ, braucht
+  Dashboard-Zugriff.
+- **WP3 + WP4**: DONE (fwbg Branch `fix/broker-timeframe-mapping`, unpushed) —
+  IG-Resolution-Vokabular-Widerspruch geklärt (die Map ist korrekt, nur der
+  Kommentar war falsch beschriftet und wurde korrigiert), `TIMEFRAME_TO_YF_INTERVAL`
+  um `M30→"30m"`/`W1→"1wk"` ergänzt (`H2` bewusst ungemappt), stille Fallbacks
+  in beiden IG-Adaptern durch `ValueError` ersetzt, `api/chart.py` reicht diese
+  als HTTP 400 durch. Neue Tests `test_broker_ig_timeframe_mapping.py` (6) +
+  `test_api_chart_timeframes.py` (6); volle Suite grün (2695 passed, 36 skipped),
+  `ruff check` clean.
+
+## Ist-Zustand (verifiziert am PR-Head, vor dem Merge)
 
 - **PR #133**: `mergeable: MERGEABLE`, `mergeStateStatus: CLEAN`, CI
   „Run Tests" SUCCESS. Base `develop`. Volle Suite im Worktree: 2604 passed,
@@ -144,9 +160,13 @@ prüfen (`*_DAY_1.csv` vorhanden? Bars gezählt?) und berichten — **nicht**
    nicht unterstützten Timeframe machen (kein 500). Prüfen, wie die
    Endpunkte Adapter-Fehler heute behandeln, und minimal ergänzen.
 
-**Verify**: neue Unit-Tests — unbekannter Timeframe am Adapter wirft; H2 via
-yfinance-Pfad wirft; `/chart/ohlcv` mit `timeframe="HOUR_2"` +
-Broker-Credentials-Stub → 400 (nicht 500, nicht stillschweigend HOUR-Daten).
+**Verify**: neue Unit-Tests — unbekannter Timeframe am Adapter wirft; `H2` ist
+**ausschließlich auf dem yfinance-Pfad** ungemappt und wirft dort (die
+IG-Resolution-Map deckt `HOUR_2` ab → auf dem IG-Pfad kein Fehler). Der
+Broker-Pfad-400-Test verwendet einen Stub-Adapter, der den fail-loud
+`ValueError` wirft, und prüft, dass `/chart/ohlcv` daraus **400** macht (nicht
+500, nicht stillschweigend HOUR-Daten) — er testet die `ValueError`→400-
+Durchreichung in `chart.py`, nicht das reale IG-Mapping.
 
 ### WP4: Chart-API-Timeframe-Tests
 
@@ -167,13 +187,13 @@ danach `uv run ruff check src/ packages/` und volle Suite.
 
 ## Done-Kriterien
 
-- [ ] PR #133 gemergt, Release getaggt, Service deployt (WP1)
-- [ ] Mindestens ein DAY_1-Index-Run (DAX oder EURUSD) im Live-Service mit erstellten Folds, kein `insufficient_data_for_folds` (WP2)
-- [ ] Kein `.get(timeframe, "HOUR")`/`.get(timeframe, "1h")` mehr in beiden IG-Adaptern; unbekannte Timeframes → Exception → HTTP 400 (WP3)
-- [ ] IG-Resolution-Vokabular-Widerspruch geklärt und dokumentiert (WP3 Schritt 1)
-- [ ] Chart-Timeframe-Tests vorhanden und grün (WP4)
-- [ ] `uv run pytest -q` + `ruff check` exit 0 in fwbg
-- [ ] Statuszeile in `plans/README.md` aktualisiert
+- [x] PR #133 gemergt (WP1) — ⏳ Release getaggt + Service deployt bleibt Maintainer-Aktion (offen)
+- [ ] Mindestens ein DAY_1-Index-Run (DAX oder EURUSD) im Live-Service mit erstellten Folds, kein `insufficient_data_for_folds` (WP2, operativ, offen)
+- [x] Kein `.get(timeframe, "HOUR")`/`.get(timeframe, "1h")` mehr in beiden IG-Adaptern; unbekannte Timeframes → Exception → HTTP 400 (WP3)
+- [x] IG-Resolution-Vokabular-Widerspruch geklärt und dokumentiert (WP3 Schritt 1)
+- [x] Chart-Timeframe-Tests vorhanden und grün (WP4)
+- [x] `uv run pytest -q` + `ruff check` exit 0 in fwbg (2695 passed, 36 skipped)
+- [x] Statuszeile in `plans/README.md` aktualisiert
 
 ## STOP-Bedingungen
 

@@ -18,7 +18,10 @@
 - **Effort**: M
 - **Risk**: LOW–MED (touches credential handling and connection logic in the
   IG adapter; no production behavior change expected, but verify carefully)
-- **Depends on**: none
+- **Depends on**: 020 (testpaths/CI fix) — operativ: diese Fehler treten erst
+  auf, seit Plan 020 `src/fwbg/adapters/broker/ig` in `testpaths` aufgenommen
+  und CI die `ig`-Extra installiert hat. Keine *Implementierungs*-Abhängigkeit
+  darüber hinaus (matcht `plans/README.md`).
 - **Category**: test-debt / correctness
 - **Planned at**: `fwbg` branch `fix/broker-timeframe-mapping`, commit adding
   `src/fwbg/adapters/broker/ig` to `testpaths` (2026-07-17)
@@ -133,12 +136,17 @@ plan so CI stays green; this plan is the actual repair.
 
 ### Step 1: Fix credential attribute access (`test_init_with_required_params`)
 
-Decide: either restore plain `.username`/`.password`/`.api_key` properties on
-`IGBrokerAdapter` that read through to `self._credentials` (least invasive —
-keeps the leak-prevention wrapper, adds a thin read-only property layer), or
-update the test to use dict-style/attribute access matching `_IGCredentials`.
-Prefer the property approach unless something else in the codebase already
-depends on `_credentials` being opaque.
+The adapter deliberately wraps credentials in `_IGCredentials` to prevent
+plain-attribute secret access. **Prefer updating the test** to the supported
+dict-style `_IGCredentials` interface, matching current production behavior —
+do **not** default to re-widening secret exposure.
+
+Only restore public read-only `.username`/`.password`/`.api_key` properties on
+`IGBrokerAdapter` (a thin read-through property layer) if a **repository-wide
+caller audit** shows production code — not just this test — still depends on
+plain-attribute access. In that case, document the security trade-off (why
+re-exposing credential fields is acceptable) in the commit message before doing
+it.
 
 **Verify**: `uv run pytest -q src/fwbg/adapters/broker/ig/test_adapter.py::TestIGBrokerAdapterInit -v` all green; remove the `xfail` marker.
 
@@ -159,10 +167,13 @@ remove the `skip` marker.
 ### Step 3: Root-cause the Position/AccountInfo/BarData identity mismatch
 
 This is the one with a real unknown — investigate before changing anything:
-- Reproduce with `python -m pytest --runxfail` on a single test and add a
-  temporary debug print of `id(AccountInfo)` (test-side) vs.
-  `id(type(info))` (returned instance) plus `sys.modules['fwbg.adapters.broker']`
-  identity, to confirm which import path diverges.
+- Reproduce with `uv run python -m pytest --runxfail` (or `uv run pytest`) on a
+  single test — run it through `uv` so it resolves the same editable install as
+  the rest of the plan, not a stray interpreter — and add a temporary debug
+  print of `id(AccountInfo)` (test-side) vs. `id(type(info))` (returned
+  instance), plus `sys.executable`, `fwbg.__file__`, and
+  `sys.modules['fwbg.adapters.broker']` identity, to confirm which import path
+  diverges.
 - Check `pyproject.toml`'s `[tool.pytest.ini_options]` for any `pythonpath`
   entry, and whether `fwbg` is installed editable (`pip show -f fwbg` /
   `uv pip show fwbg`) pointing at the same `src/` this worktree uses — a
