@@ -451,6 +451,48 @@ def test_inline_pipeline_names_lax_without_catalog():
     validate_strategy_json(dict(INLINE_FIXTURE), catalog=None)
 
 
+_DEPENDS_ON_CATALOG = PluginCatalog(
+    by_category={
+        "indicators": {
+            "adx": _manifest("adx", "indicators"),
+            "sweep_signal": PluginManifest(
+                name="sweep_signal",
+                category="indicators",
+                provenance="agent-authored",
+                version="0.1.0",
+                source_path=Path("/tmp/x"),
+                depends_on=["adx"],
+            ),
+        },
+        "preprocessing": {"fractional_diff": _manifest("fractional_diff", "preprocessing")},
+        "models": {"xgboost": _manifest("xgboost", "models")},
+        "exit_strategies": {"orb_based": _manifest("orb_based", "exit_strategies")},
+    }
+)
+
+
+def test_inline_pipeline_rejects_missing_dependency():
+    bad = {
+        **INLINE_FIXTURE,
+        "pipeline": {"indicators": [{"name": "sweep_signal", "params": {}}]},
+    }
+    with pytest.raises(StrategyValidationError, match="depends on"):
+        validate_strategy_json(bad, catalog=_DEPENDS_ON_CATALOG)
+
+
+def test_inline_pipeline_accepts_satisfied_dependency():
+    good = {
+        **INLINE_FIXTURE,
+        "pipeline": {
+            "indicators": [
+                {"name": "sweep_signal", "params": {}},
+                {"name": "adx", "params": {}},
+            ]
+        },
+    }
+    validate_strategy_json(good, catalog=_DEPENDS_ON_CATALOG)
+
+
 def test_inline_model_rejects_unknown_type():
     bad = {**INLINE_FIXTURE, "model": {"type": "phantom_model"}}
     with pytest.raises(StrategyValidationError, match="phantom_model"):
