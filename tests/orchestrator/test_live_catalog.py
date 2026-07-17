@@ -19,6 +19,7 @@ class _FakeFwbg:
                 "phase": "indicators",
                 "description": "trend strength",
                 "defaults": {"period": 14},
+                "depends_on": ["regime"],
             },
             {
                 "name": "xgboost",
@@ -131,6 +132,14 @@ async def test_fetch_builds_catalog_from_api(session):
     assert atr is not None and atr.param_schema["tp_mode"]["choices"] == ["atr", "range"]
     adx = live.catalog.get("indicators", "adx")
     assert adx is not None and adx.param_schema == {}
+    # depends_on is carried into the manifest and, since non-empty, into the
+    # prompt-facing detail too (the Translator must see it to resolve the
+    # dependency in the same pipeline phase, rather than one at a time).
+    assert adx.depends_on == ["regime"]
+    assert live.plugin_details["indicators"][0]["depends_on"] == ["regime"]
+    xgboost = live.catalog.get("models", "xgboost")
+    assert xgboost is not None and xgboost.depends_on == []
+    assert "depends_on" not in live.plugin_details["models"][0]
     # fwbg has no `filters` phase — risk_management plugins route to `filters`,
     # the category the validator queries for extra_filters.
     assert live.catalog.all_slugs_for("filters") == ["kelly"]

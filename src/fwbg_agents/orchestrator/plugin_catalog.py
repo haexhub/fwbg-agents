@@ -30,6 +30,10 @@ class PluginManifest(BaseModel):
     # default/choices/...). Empty when fwbg didn't provide one; validation
     # is then lax for this plugin.
     param_schema: dict[str, Any] = Field(default_factory=dict)
+    # Other plugin short-names this plugin requires in the same pipeline phase
+    # (fwbg's PipelineRunner._topological_sort resolves these). Empty when
+    # fwbg didn't provide the field (older fwbg) or the plugin has none.
+    depends_on: list[str] = Field(default_factory=list)
 
 
 class PluginCatalog(BaseModel):

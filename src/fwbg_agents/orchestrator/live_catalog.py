@@ -122,7 +122,7 @@ def researcher_summary(live: LiveCatalog) -> dict[str, Any]:
 
 def _detail(entry: dict[str, Any]) -> dict[str, Any]:
     """Extract name, fqn, description, and default params from a catalog entry dict."""
-    return {
+    detail = {
         "name": entry.get("name", ""),
         # fqn is the API's stable plugin id; carried so the PluginPlanner can
         # fetch example source via GET /api/plugins/{fqn}/source. Empty for
@@ -131,6 +131,14 @@ def _detail(entry: dict[str, Any]) -> dict[str, Any]:
         "description": entry.get("description", ""),
         "default_params": entry.get("defaults", {}) or {},
     }
+    # Only surface depends_on when non-empty — most plugins have none, and a
+    # bare `[]` on every entry would just be prompt noise. When present, the
+    # Translator must add every listed short name to the same pipeline phase
+    # (fwbg's PipelineRunner rejects a pipeline missing any of them).
+    depends_on = entry.get("depends_on") or []
+    if depends_on:
+        detail["depends_on"] = depends_on
+    return detail
 
 
 async def fetch_live_catalog(session: AsyncSession, fwbg: FwbgClient | None) -> LiveCatalog:
@@ -166,6 +174,7 @@ async def _fetch_from_api(session: AsyncSession, fwbg: FwbgClient) -> LiveCatalo
             version=str(p.get("version", "")),
             source_path=Path("."),
             param_schema=p.get("param_schema") or {},
+            depends_on=p.get("depends_on") or [],
         )
         details.setdefault(category, []).append(_detail(p))
 
