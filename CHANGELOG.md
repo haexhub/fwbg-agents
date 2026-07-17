@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.26.2](https://github.com/haexhub/fwbg-agents/compare/v0.26.1...v0.26.2) (2026-07-16)
+
+
+### Bug Fixes
+
+* **types:** drop fwbg_sdk import ignores — the SDK now ships py.typed ([#217](https://github.com/haexhub/fwbg-agents/issues/217)) ([fc96c3c](https://github.com/haexhub/fwbg-agents/commit/fc96c3cac33d085df4854d3b780b2439134e7733))
+* **types:** drop fwbg_sdk import ignores (SDK ships py.typed) ([05e46d7](https://github.com/haexhub/fwbg-agents/commit/05e46d7dd819b53e419703552e7e204db516d8a3))
+
 ## [0.26.1](https://github.com/haexhub/fwbg-agents/compare/v0.26.0...v0.26.1) (2026-07-16)
 
 
