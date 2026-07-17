@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.26.3](https://github.com/haexhub/fwbg-agents/compare/v0.26.2...v0.26.3) (2026-07-17)
+
+
+### Bug Fixes
+
+* **plugin-authoring:** reject depends_on on unregistered plugins at plan time ([c4bc5ec](https://github.com/haexhub/fwbg-agents/commit/c4bc5ec3659b9803093e44d8f27ebdfd72705224))
+* **plugin-authoring:** reject depends_on on unregistered plugins at plan time ([5ee35eb](https://github.com/haexhub/fwbg-agents/commit/5ee35ebfdfdfb2caa39560340149bc830ea131b3))
+
+
+### Documentation
+
+* **plans:** add plans 020/021 and record their status ([a06b615](https://github.com/haexhub/fwbg-agents/commit/a06b61527de5ded61a747ea82cc980750fa1d251))
+* **plans:** add plans 020/021, record timeframe-rollout follow-up status ([707b6fb](https://github.com/haexhub/fwbg-agents/commit/707b6fb29984746bbd34f46ecb9d2cf2637451c7))
+* **plans:** address review — sync plan-020 to merged state, harden plan-021 guidance ([7c1625e](https://github.com/haexhub/fwbg-agents/commit/7c1625e218e5d0575268e28b1d426535c91dc42a))
+
 ## [0.26.2](https://github.com/haexhub/fwbg-agents/compare/v0.26.1...v0.26.2) (2026-07-16)
 
 
