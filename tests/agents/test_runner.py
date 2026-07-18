@@ -717,14 +717,7 @@ async def test_runner_reserves_holdout_window(runner_env):
 
 
 def _write_strategy_json(tmp_path, slug: str, data: dict) -> None:
-    sj = (
-        tmp_path
-        / "agents_data"
-        / "strategies"
-        / slug
-        / "iteration_001"
-        / "strategy.json"
-    )
+    sj = tmp_path / "agents_data" / "strategies" / slug / "iteration_001" / "strategy.json"
     sj.write_text(json.dumps(data))
 
 
