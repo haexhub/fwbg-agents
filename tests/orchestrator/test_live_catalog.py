@@ -20,6 +20,8 @@ class _FakeFwbg:
                 "description": "trend strength",
                 "defaults": {"period": 14},
                 "depends_on": ["regime"],
+                "signal_columns": ["adx_strong"],
+                "feature_columns": ["adx_14", "adx_pos", "adx_neg"],
             },
             {
                 "name": "xgboost",
@@ -149,6 +151,13 @@ async def test_fetch_builds_catalog_from_api(session):
     assert live.plugin_details["indicators"][0]["default_params"] == {"period": 14}
     # fqn is carried through so the PluginPlanner can fetch example source
     assert live.plugin_details["indicators"][0]["fqn"] == "fwbg-core.indicators.adx"
+    # signal_columns are surfaced (non-empty) so the Translator can reference
+    # them in signal_rules; feature_columns are deliberately NOT surfaced
+    # (they would bloat the prompt many-fold).
+    assert live.plugin_details["indicators"][0]["signal_columns"] == ["adx_strong"]
+    assert "feature_columns" not in live.plugin_details["indicators"][0]
+    # a plugin with no signal_columns omits the key entirely (no prompt noise)
+    assert "signal_columns" not in live.plugin_details["models"][0]
     assert live.presets["validations"] == ["validations_preset_v1"]
     assert live.exit_modifiers[0]["name"] == "trailing_stop"
     # datasources carry their actual data availability

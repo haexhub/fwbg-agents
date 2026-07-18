@@ -138,6 +138,14 @@ def _detail(entry: dict[str, Any]) -> dict[str, Any]:
     depends_on = entry.get("depends_on") or []
     if depends_on:
         detail["depends_on"] = depends_on
+    # Surface the plugin's boolean signal columns so the Translator can wire a
+    # signal model's entry via signal_rules (a signal plugin in the pipeline
+    # produces these columns but trades nothing unless they are referenced).
+    # Only signal_columns, not the (often huge) feature_columns, to keep the
+    # prompt lean — feature_columns would bloat the catalog many-fold.
+    signal_columns = entry.get("signal_columns") or []
+    if signal_columns:
+        detail["signal_columns"] = signal_columns
     return detail
 
 
