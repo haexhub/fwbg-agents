@@ -352,9 +352,12 @@ def signal_model_has_source(data: dict) -> bool:
     if isinstance(model, dict) and model.get("required_features"):
         return True
     filters = data.get("filters")
-    if not isinstance(filters, dict):
-        # Preset string / unknown shape — cannot rule out a time filter.
+    if isinstance(filters, str):
+        # Opaque preset string — cannot rule out a time filter. Stay lax.
         return True
+    if not isinstance(filters, dict):
+        # No (or null) filters section: no time-filter source here.
+        return False
     return bool(filters.get("allowed_hours") or filters.get("allowed_days"))
 
 

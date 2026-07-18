@@ -611,6 +611,13 @@ def test_signal_model_with_preset_filters_is_lenient():
     validate_strategy_json(fx)  # no catalog: preset strings via frozen fallback
 
 
+def test_signal_model_with_null_filters_is_rejected():
+    """filters: null is not a preset string — it carries no time-filter source."""
+    fx = _signal_fixture(filters=None)
+    with pytest.raises(StrategyValidationError, match="entry-signal source"):
+        validate_strategy_json(fx, catalog=_INLINE_CATALOG)
+
+
 def test_preset_signal_model_is_not_gated():
     """A preset-string model carries its source in the preset — not gated."""
     validate_strategy_json(dict(VALID_FIXTURE))
