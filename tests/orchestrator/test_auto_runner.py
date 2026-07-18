@@ -702,13 +702,7 @@ def _seed_plugin_request(slug: str) -> None:
     """Write an add_indicator_request.json sidecar for a PROPOSED draft."""
     from fwbg_agents.config import settings
 
-    p = (
-        settings.data_dir
-        / "strategies"
-        / slug
-        / "iteration_001"
-        / "add_indicator_request.json"
-    )
+    p = settings.data_dir / "strategies" / slug / "iteration_001" / "add_indicator_request.json"
     p.parent.mkdir(parents=True, exist_ok=True)
     p.write_text(
         json.dumps(

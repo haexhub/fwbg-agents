@@ -909,9 +909,7 @@ async def tick() -> int | None:
     async with SessionLocal() as session:
         needs_plugin = await pick_next_proposed_needs_plugin(session)
     if needs_plugin is not None:
-        log.info(
-            "runner auto mode: authoring pre-backtest plugin for strategy %s", needs_plugin
-        )
+        log.info("runner auto mode: authoring pre-backtest plugin for strategy %s", needs_plugin)
         async with SessionLocal() as session:
             await _author_and_retranslate(session, needs_plugin)
         return needs_plugin

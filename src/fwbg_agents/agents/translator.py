@@ -540,9 +540,7 @@ class Translator:
             # clear a stale one when the (re-)translation needs no new plugin.
             # The auto_runner routes a PROPOSED strategy that has this sidecar
             # to plugin authoring before any backtest.
-            _reconcile_plugin_request_sidecar(
-                iteration_dir, strategy, plugin_requests
-            )
+            _reconcile_plugin_request_sidecar(iteration_dir, strategy, plugin_requests)
 
             spec_path = iteration_dir / "spec.md"
             _write_spec_md(
