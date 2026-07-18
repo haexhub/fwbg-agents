@@ -1,5 +1,35 @@
 # Changelog
 
+## [0.27.0](https://github.com/haexhub/fwbg-agents/compare/v0.26.3...v0.27.0) (2026-07-18)
+
+
+### Features
+
+* **translator:** expose plugin signal_columns and teach signal_rules wiring ([f8b20cb](https://github.com/haexhub/fwbg-agents/commit/f8b20cba8fb64bf5d48b58fb222936bb8035bc40))
+* **translator:** expose plugin signal_columns and teach signal_rules wiring ([922949e](https://github.com/haexhub/fwbg-agents/commit/922949e91c4deee6af3f8c03dd72887ce00e2563))
+
+
+### Bug Fixes
+
+* **runner,validator:** reject signal strategies without an entry-signal source ([f23a00c](https://github.com/haexhub/fwbg-agents/commit/f23a00cf8432dc8bfd11bc760ad9e32c80546c4a))
+* **runner,validator:** reject signal strategies without an entry-signal source ([c281c9a](https://github.com/haexhub/fwbg-agents/commit/c281c9acead0772d2f880a40e5c2d7cfa0f963b2))
+* **validator:** treat null/missing filters as no source, stay lax only for preset strings ([b78bb2e](https://github.com/haexhub/fwbg-agents/commit/b78bb2e89d1ff9c3c294ee759e3f5a4963178471))
+
+## [0.26.3](https://github.com/haexhub/fwbg-agents/compare/v0.26.2...v0.26.3) (2026-07-17)
+
+
+### Bug Fixes
+
+* **plugin-authoring:** reject depends_on on unregistered plugins at plan time ([c4bc5ec](https://github.com/haexhub/fwbg-agents/commit/c4bc5ec3659b9803093e44d8f27ebdfd72705224))
+* **plugin-authoring:** reject depends_on on unregistered plugins at plan time ([5ee35eb](https://github.com/haexhub/fwbg-agents/commit/5ee35ebfdfdfb2caa39560340149bc830ea131b3))
+
+
+### Documentation
+
+* **plans:** add plans 020/021 and record their status ([a06b615](https://github.com/haexhub/fwbg-agents/commit/a06b61527de5ded61a747ea82cc980750fa1d251))
+* **plans:** add plans 020/021, record timeframe-rollout follow-up status ([707b6fb](https://github.com/haexhub/fwbg-agents/commit/707b6fb29984746bbd34f46ecb9d2cf2637451c7))
+* **plans:** address review — sync plan-020 to merged state, harden plan-021 guidance ([7c1625e](https://github.com/haexhub/fwbg-agents/commit/7c1625e218e5d0575268e28b1d426535c91dc42a))
+
 ## [0.26.2](https://github.com/haexhub/fwbg-agents/compare/v0.26.1...v0.26.2) (2026-07-16)
 
 
