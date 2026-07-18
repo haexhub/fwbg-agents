@@ -455,18 +455,21 @@ def validate_strategy_json(
     # fold with an empty feature pool and the run silently "completes" in
     # seconds. Reject it here, at translation time, the same way depends_on
     # rejects references to plugins that don't exist.
-    if isinstance(data["model"], dict) and data["model"].get("type") == "signal":
-        if not signal_model_has_source(data):
-            raise StrategyValidationError(
-                "model.type='signal' has no entry-signal source. Add signal_rules "
-                "with conditions, a non-empty model.required_features, or a "
-                "filters.allowed_hours/allowed_days time filter. NOTE: a "
-                "signal-emitting plugin in pipeline.indicators is not a source on "
-                "its own unless its output column is listed in "
-                "model.required_features. If the required capability has no "
-                "plugin yet, keep the strategy in PROPOSED with a needs_plugin "
-                "note instead of emitting an unrunnable signal model."
-            )
+    if (
+        isinstance(data["model"], dict)
+        and data["model"].get("type") == "signal"
+        and not signal_model_has_source(data)
+    ):
+        raise StrategyValidationError(
+            "model.type='signal' has no entry-signal source. Add signal_rules "
+            "with conditions, a non-empty model.required_features, or a "
+            "filters.allowed_hours/allowed_days time filter. NOTE: a "
+            "signal-emitting plugin in pipeline.indicators is not a source on "
+            "its own unless its output column is listed in "
+            "model.required_features. If the required capability has no "
+            "plugin yet, keep the strategy in PROPOSED with a needs_plugin "
+            "note instead of emitting an unrunnable signal model."
+        )
 
     if isinstance(data["filters"], str):
         _check_preset_string(
