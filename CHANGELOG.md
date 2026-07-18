@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.27.0](https://github.com/haexhub/fwbg-agents/compare/v0.26.3...v0.27.0) (2026-07-18)
+
+
+### Features
+
+* **translator:** expose plugin signal_columns and teach signal_rules wiring ([f8b20cb](https://github.com/haexhub/fwbg-agents/commit/f8b20cba8fb64bf5d48b58fb222936bb8035bc40))
+* **translator:** expose plugin signal_columns and teach signal_rules wiring ([922949e](https://github.com/haexhub/fwbg-agents/commit/922949e91c4deee6af3f8c03dd72887ce00e2563))
+
+
+### Bug Fixes
+
+* **runner,validator:** reject signal strategies without an entry-signal source ([f23a00c](https://github.com/haexhub/fwbg-agents/commit/f23a00cf8432dc8bfd11bc760ad9e32c80546c4a))
+* **runner,validator:** reject signal strategies without an entry-signal source ([c281c9a](https://github.com/haexhub/fwbg-agents/commit/c281c9acead0772d2f880a40e5c2d7cfa0f963b2))
+* **validator:** treat null/missing filters as no source, stay lax only for preset strings ([b78bb2e](https://github.com/haexhub/fwbg-agents/commit/b78bb2e89d1ff9c3c294ee759e3f5a4963178471))
+
 ## [0.26.3](https://github.com/haexhub/fwbg-agents/compare/v0.26.2...v0.26.3) (2026-07-17)
 
 
