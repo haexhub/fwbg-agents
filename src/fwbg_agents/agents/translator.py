@@ -21,6 +21,7 @@ import logging
 import time
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Any, cast
 
 from fwbg_sdk.base import PluginPhase
 from pydantic import BaseModel, ConfigDict, ValidationError
@@ -401,8 +402,8 @@ def _reconcile_plugin_request_sidecar(
     req = plugin_requests[0]
     try:
         rec = AddIndicator(
-            phase=req.get("phase"),
-            category=req.get("category"),
+            phase=cast(Any, req.get("phase")),
+            category=cast(Any, req.get("category")),
             capability=req.get("capability", ""),
             reasoning=req.get("reasoning", ""),
             confidence=1.0,
