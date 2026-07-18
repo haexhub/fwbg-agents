@@ -55,6 +55,7 @@ from fwbg_agents.orchestrator.lifecycle import strategy_dir, transition_strategy
 from fwbg_agents.orchestrator.metrics import (
     median_metrics_across_assets as _median_metrics_across_assets,
 )
+from fwbg_agents.orchestrator.strategy_validator import signal_model_has_source
 from fwbg_agents.orchestrator.trade_diagnostics import compute_trade_diagnostics
 from fwbg_agents.orchestrator.universe import (
     UniverseAttempt,
@@ -79,6 +80,17 @@ log = logging.getLogger(__name__)
 
 class RunnerError(RuntimeError):
     """Raised when every universe attempt fails (fwbg errors / no results)."""
+
+
+class UnrunnableStrategyError(RunnerError):
+    """The strategy cannot produce a meaningful backtest and must not be
+    dispatched — e.g. a signal model with no entry-signal source (no
+    signal_rules, no model.required_features, no allowed_hours/allowed_days).
+
+    Broadening the universe or retrying cannot help; fwbg would skip every fold
+    with an empty feature pool and "complete" in seconds. We short-circuit
+    before creating the run so no wasted backtest is dispatched.
+    """
 
 
 class RunnerConfigError(RunnerError):
@@ -216,6 +228,25 @@ class Runner:
             if not src.is_file():
                 raise FileNotFoundError(f"missing strategy.json at {src}")
             ar.input_artifact_path = str(src)
+
+            # Pre-flight: refuse to dispatch a signal model with no entry-signal
+            # source. fwbg would skip every fold with an empty pool and the run
+            # would "complete" in seconds with zero results. Covers strategies
+            # created before the translation-time validator gate, plus the manual
+            # dispatch path. (The validator blocks new ones at creation.)
+            strategy_data = json.loads(src.read_text())
+            model = strategy_data.get("model")
+            if (
+                isinstance(model, dict)
+                and model.get("type") == "signal"
+                and not signal_model_has_source(strategy_data)
+            ):
+                raise UnrunnableStrategyError(
+                    f"strategy {strategy.slug!r} is a signal model with no "
+                    "entry-signal source (no signal_rules, model.required_features, "
+                    "or allowed_hours/allowed_days) — not dispatching a backtest "
+                    "that would produce zero results."
+                )
 
             # Ensure the strategy exists in fwbg (once for all attempts). The
             # research flow normally publishes it right after translation; a

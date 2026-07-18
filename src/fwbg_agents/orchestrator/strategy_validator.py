@@ -322,6 +322,45 @@ def _check_inline_model(value: dict, *, catalog: PluginCatalog | None) -> None:
         raise StrategyValidationError("model.hyperparameters must be an object")
 
 
+def signal_model_has_source(data: dict) -> bool:
+    """Whether an inline `type: "signal"` model has a usable entry-signal source.
+
+    Callers MUST only apply this to inline signal models (model is a dict with
+    type == "signal"); it is meaningless for preset-string models whose source
+    is baked into the preset.
+
+    Mirrors fwbg's signal-fold pool logic: a signal model only ever trades when
+    it has signal_rules with conditions, a non-empty model.required_features, or
+    an allowed_hours/allowed_days time filter — those are the only things that
+    populate the feature pool the model reads its entry column from. A
+    signal-emitting plugin in pipeline.indicators is NOT a source on its own
+    unless its output column is named in model.required_features.
+
+    Without any of these the backtest skips every walk-forward fold with an
+    empty pool and "completes" in seconds as no_successful_folds (the exact bug
+    that plagues index/seasonality strategies).
+
+    Returns True (lax) when a section is a preset string we cannot introspect —
+    fwbg's own pre-flight guard stays the ultimate validator.
+    """
+    signal_rules = data.get("signal_rules")
+    if isinstance(signal_rules, dict) and any(
+        (signal_rules.get(d) or {}).get("conditions") for d in ("long", "short")
+    ):
+        return True
+    model = data.get("model")
+    if isinstance(model, dict) and model.get("required_features"):
+        return True
+    filters = data.get("filters")
+    if isinstance(filters, str):
+        # Opaque preset string — cannot rule out a time filter. Stay lax.
+        return True
+    if not isinstance(filters, dict):
+        # No (or null) filters section: no time-filter source here.
+        return False
+    return bool(filters.get("allowed_hours") or filters.get("allowed_days"))
+
+
 def _check_tags(tags: Any) -> None:
     """Validate that tags is a non-empty list of strings."""
     if not isinstance(tags, list) or not tags:
@@ -411,6 +450,26 @@ def validate_strategy_json(
             )
     else:
         raise StrategyValidationError("model must be an object or a preset name")
+
+    # A signal model with no entry-signal source is unrunnable: fwbg skips every
+    # fold with an empty feature pool and the run silently "completes" in
+    # seconds. Reject it here, at translation time, the same way depends_on
+    # rejects references to plugins that don't exist.
+    if (
+        isinstance(data["model"], dict)
+        and data["model"].get("type") == "signal"
+        and not signal_model_has_source(data)
+    ):
+        raise StrategyValidationError(
+            "model.type='signal' has no entry-signal source. Add signal_rules "
+            "with conditions, a non-empty model.required_features, or a "
+            "filters.allowed_hours/allowed_days time filter. NOTE: a "
+            "signal-emitting plugin in pipeline.indicators is not a source on "
+            "its own unless its output column is listed in "
+            "model.required_features. If the required capability has no "
+            "plugin yet, keep the strategy in PROPOSED with a needs_plugin "
+            "note instead of emitting an unrunnable signal model."
+        )
 
     if isinstance(data["filters"], str):
         _check_preset_string(
