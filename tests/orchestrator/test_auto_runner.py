@@ -691,3 +691,83 @@ def test_dependent_pipeline_section_resolves_from_parent_pipeline():
     # Unknown dependent / non-inline pipeline → safe default.
     assert auto_runner._dependent_pipeline_section(strategy_json, "mystery") == "indicators"
     assert auto_runner._dependent_pipeline_section({}, "regime_cluster") == "indicators"
+
+
+# ──────────────────────────────────────────────
+# Pre-backtest plugin authoring (Ebene 2)
+# ──────────────────────────────────────────────
+
+
+def _seed_plugin_request(slug: str) -> None:
+    """Write an add_indicator_request.json sidecar for a PROPOSED draft."""
+    from fwbg_agents.config import settings
+
+    p = (
+        settings.data_dir
+        / "strategies"
+        / slug
+        / "iteration_001"
+        / "add_indicator_request.json"
+    )
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(
+        json.dumps(
+            {
+                "kind": "add_indicator",
+                "phase": "indicators",
+                "category": "indicator",
+                "capability": "turn-of-month entry signal",
+                "reasoning": "hypothesis needs a calendar entry the catalog lacks",
+            }
+        )
+    )
+
+
+async def test_pick_next_proposed_needs_plugin_selects_sidecar_strategy(env):
+    Session, make_strategy, _ = env
+    sid = await make_strategy("sig__forex__001")
+    _seed_plugin_request("sig__forex__001")
+
+    async with Session() as session:
+        assert await auto_runner.pick_next_proposed_needs_plugin(session) == sid
+        # The draft must NOT be dispatched to a backtest while its request is open.
+        assert await auto_runner.pick_next_strategy_id(session) is None
+
+
+async def test_backtest_selector_skips_sidecar_prefers_ready(env):
+    Session, make_strategy, _ = env
+    await make_strategy("sig__forex__001")  # older, but has an open plugin request
+    _seed_plugin_request("sig__forex__001")
+    ready = await make_strategy("orb__forex__002")  # no request → backtest-ready
+
+    async with Session() as session:
+        assert await auto_runner.pick_next_strategy_id(session) == ready
+
+
+async def test_prebacktest_author_cap_then_abandon(env):
+    Session, make_strategy, add_run = env
+    sid = await make_strategy("sig__forex__001")
+    _seed_plugin_request("sig__forex__001")
+    # plugin_author_auto_max_attempts=2 → two genuine planner failures exhaust it.
+    await add_run("plugin_planner", AgentRunStatus.FAILED, strategy_id=sid, error="boom")
+    await add_run("plugin_planner", AgentRunStatus.FAILED, strategy_id=sid, error="boom")
+
+    async with Session() as session:
+        assert await auto_runner.pick_next_proposed_needs_plugin(session) is None  # capped
+        assert await auto_runner.abandon_capped_proposed(session) == 1
+
+    async with Session() as session:
+        row = (await session.execute(select(Strategy).where(Strategy.id == sid))).scalar_one()
+    assert row.current_state == StrategyState.ABANDONED.value
+
+
+async def test_prebacktest_author_budget_allows_under_cap(env):
+    Session, make_strategy, add_run = env
+    sid = await make_strategy("sig__forex__001")
+    _seed_plugin_request("sig__forex__001")
+    # One genuine failure is under the cap (2) → still selectable, not abandoned.
+    await add_run("plugin_planner", AgentRunStatus.FAILED, strategy_id=sid, error="boom")
+
+    async with Session() as session:
+        assert await auto_runner.pick_next_proposed_needs_plugin(session) == sid
+        assert await auto_runner.abandon_capped_proposed(session) == 0

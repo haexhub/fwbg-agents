@@ -149,10 +149,17 @@ async def author_plugin_from_strategy(
     if strategy is None:
         raise AuthorPluginPreconditionError(f"strategy {strategy_id} not found")
 
-    if strategy.current_state != StrategyState.BACKTESTED.value:
+    # BACKTESTED: the Analyst-driven post-backtest flow. PROPOSED: the
+    # pre-backtest flow that builds a plugin a fresh strategy references before
+    # it is ever backtested (both write the same add_indicator_request.json
+    # sidecar the planner consumes). Any other state is a real precondition error.
+    if strategy.current_state not in (
+        StrategyState.PROPOSED.value,
+        StrategyState.BACKTESTED.value,
+    ):
         raise AuthorPluginPreconditionError(
             f"strategy {strategy.slug} is in state {strategy.current_state!r}; "
-            "author-plugin requires BACKTESTED"
+            "author-plugin requires PROPOSED or BACKTESTED"
         )
 
     sidecar_path = _find_latest_sidecar(strategy.slug)

@@ -20,9 +20,11 @@ You operate under these hard rules (do not violate even if asked):
    Parameter names come from each plugin's `default_params` — never invent
    parameter names. If the hypothesis needs a building block that does not
    exist, compose the closest faithful pipeline you can from what IS listed,
-   AND add the missing capability to `tags` with prefix `needs_plugin:`
-   (e.g. `needs_plugin:rsi_session_filter`). M5's PluginAuthor picks those
-   up. Never invent a plugin name.
+   AND (a) add the missing capability to `tags` with prefix `needs_plugin:`
+   (e.g. `needs_plugin:rsi_session_filter`), AND (b) add a structured entry to
+   `plugin_requests` (see the Output section) so it is built BEFORE the first
+   backtest. Never invent a plugin name or put a non-existent plugin in the
+   pipeline — declare it in `plugin_requests` instead.
 
    Some entries below carry a `depends_on` list of other plugin names they
    require in the SAME pipeline phase. If you use such a plugin, you MUST
@@ -133,5 +135,13 @@ Return a JSON object with EXACTLY these keys:
 - `exit_strategies` (list of `{name, params, ct?, exit_modifier?, exit_modifier_params?}` — non-empty, every entry includes a stop-loss)
 - `tags` (list of strings, ≥1 — copy hypothesis tags plus any `needs_plugin:*` tags)
 - `optimization` (object, may be empty `{}`)
+- `plugin_requests` (list, optional): one entry per capability the hypothesis
+  needs but that has NO plugin in the catalog — it will be built (planner +
+  implementer) before the first backtest. Each entry:
+  `{"name": "<proposed slug>", "phase": "indicators"|"feature_selection"|"preprocessing"|"risk_management", "category": "indicator"|"model"|"exit_strategy"|"risk_management"|"entry_modifier"|"preprocessing"|"feature_selection"|"data_loading", "capability": "<free-text: what the plugin must compute/decide>", "reasoning": "<why the hypothesis needs it>"}`.
+  Do NOT reference a requested plugin in `pipeline` or `signal_rules` in THIS
+  output — it does not exist yet; after it is built the strategy is re-translated
+  and you can wire it then. Omit the key entirely when every needed capability
+  already exists in the catalog.
 
 Now emit your strategy.json.

@@ -23,7 +23,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from fwbg_sdk.base import PluginPhase
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, ValidationError
 from pydantic_ai import Agent
 from pydantic_ai.models import Model
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -301,6 +301,13 @@ class _TranslatorOutput(BaseModel):
     exit_strategies: list[dict] = []
     tags: list[str] = []
     optimization: dict = {}
+    # Pre-backtest plugin authoring: when a needed capability has no catalog
+    # plugin, the LLM declares it here so the orchestrator can build it (planner
+    # + implementer) BEFORE the first backtest. Each entry is shaped like the
+    # Analyst's AddIndicator sidecar: {phase, category, capability, reasoning}.
+    # Stripped from the persisted strategy.json (kept fwbg-pure) and written to
+    # an add_indicator_request.json sidecar instead.
+    plugin_requests: list[dict] = []
 
 
 def _render_prompt(template: str, *, hypothesis_json: str, known_plugins_json: str) -> str:
@@ -370,6 +377,50 @@ def _write_spec_md(
         f"- Exit strategies: {len(strategy_json.get('exit_strategies', []))} configured\n"
     )
     path.write_text(text)
+
+
+def _reconcile_plugin_request_sidecar(
+    iteration_dir: Path, strategy: Strategy, plugin_requests: list[dict]
+) -> None:
+    """Write or clear the pre-backtest plugin-request sidecar for a translation.
+
+    Only the FIRST request is written — the authoring flow builds one plugin per
+    cycle, and a later re-translation surfaces the next need. Reuses the
+    Analyst's `AddIndicator` model for schema validation + phase/category
+    coercion so the sidecar is byte-compatible with what PluginPlanner consumes.
+    An empty `plugin_requests` clears any stale sidecar so the strategy becomes
+    backtest-eligible.
+    """
+    sidecar_path = iteration_dir / "add_indicator_request.json"
+    if not plugin_requests:
+        sidecar_path.unlink(missing_ok=True)
+        return
+
+    from fwbg_agents.agents.analyst import AddIndicator
+
+    req = plugin_requests[0]
+    try:
+        rec = AddIndicator(
+            phase=req.get("phase"),
+            category=req.get("category"),
+            capability=req.get("capability", ""),
+            reasoning=req.get("reasoning", ""),
+            confidence=1.0,
+        )
+    except ValidationError as exc:
+        raise TranslatorError(f"invalid plugin_request {req!r}: {exc}") from exc
+
+    sidecar_path.write_text(
+        json.dumps(
+            {
+                **rec.model_dump(mode="json"),
+                "strategy_id": strategy.id,
+                "strategy_slug": strategy.slug,
+                "requested_at": datetime.now(UTC).isoformat(),
+            },
+            indent=2,
+        )
+    )
 
 
 class Translator:
@@ -452,6 +503,10 @@ class Translator:
             payload = result.output.model_dump()
             payload["name"] = strategy.slug  # canonical slug wins
 
+            # Pre-backtest plugin requests are metadata, not part of the fwbg
+            # strategy.json — strip them out and reconcile the sidecar below.
+            plugin_requests = payload.pop("plugin_requests", None) or []
+
             datasources = live.datasource_names() or None
             _normalize_datasource(payload, datasources, ar.id)
             try:
@@ -461,6 +516,10 @@ class Translator:
                     presets=live.presets,
                     datasources=datasources,
                     timeframes=live.timeframes or None,
+                    # A draft whose entry-signal plugin is still being authored
+                    # is allowed through; the auto_runner authors the plugin and
+                    # re-translates before any backtest is dispatched.
+                    has_pending_plugin_request=bool(plugin_requests),
                 )
                 if self.fwbg_client is not None:
                     try:
@@ -475,6 +534,15 @@ class Translator:
 
             strategy_path = iteration_dir / "strategy.json"
             strategy_path.write_text(json.dumps(payload, indent=2, sort_keys=True))
+
+            # Reconcile the pre-backtest plugin-request sidecar with THIS
+            # translation: write one for the first requested capability, or
+            # clear a stale one when the (re-)translation needs no new plugin.
+            # The auto_runner routes a PROPOSED strategy that has this sidecar
+            # to plugin authoring before any backtest.
+            _reconcile_plugin_request_sidecar(
+                iteration_dir, strategy, plugin_requests
+            )
 
             spec_path = iteration_dir / "spec.md"
             _write_spec_md(
