@@ -626,3 +626,14 @@ def test_preset_signal_model_is_not_gated():
 def test_non_signal_inline_model_without_source_passes():
     """A non-signal (xgboost) inline model needs no signal source."""
     validate_strategy_json(dict(INLINE_FIXTURE), catalog=_INLINE_CATALOG)
+
+
+def test_signal_model_pending_plugin_request_skips_source_check():
+    """A draft whose entry-signal plugin is still being authored pre-backtest is
+    allowed through — the source is wired in by the re-translation that follows
+    authoring, and the auto_runner never backtests it while the request is open."""
+    fx = _signal_fixture()  # signal model, no source
+    with pytest.raises(StrategyValidationError, match="entry-signal source"):
+        validate_strategy_json(fx, catalog=_INLINE_CATALOG)
+    # With a pending plugin request the source check is deferred (no raise).
+    validate_strategy_json(fx, catalog=_INLINE_CATALOG, has_pending_plugin_request=True)

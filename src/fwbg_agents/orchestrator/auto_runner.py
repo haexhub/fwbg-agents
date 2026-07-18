@@ -48,6 +48,7 @@ from fwbg_agents.orchestrator.lineage import (
     has_metric_improvement,
 )
 from fwbg_agents.orchestrator.plugin_flow import (
+    AuthorPluginPreconditionError,
     PluginAuthorError,
     _find_latest_sidecar,
     author_plugin_from_strategy,
@@ -140,15 +141,19 @@ async def _count_runs(
     *,
     strategy_id: int | None = None,
     statuses: tuple[str, ...] | None = None,
+    min_run_id: int | None = None,
 ) -> int:
     """Count AgentRun rows for the given agent name(s), optionally scoped to a
-    strategy and/or a set of statuses."""
+    strategy, a set of statuses, and/or only runs newer than `min_run_id`
+    (exclusive — used to ignore a strategy's pre-backtest authoring history)."""
     names = (agent_name,) if isinstance(agent_name, str) else agent_name
     stmt = select(func.count()).select_from(AgentRun).where(AgentRun.agent_name.in_(names))
     if strategy_id is not None:
         stmt = stmt.where(AgentRun.strategy_id == strategy_id)
     if statuses is not None:
         stmt = stmt.where(AgentRun.status.in_(statuses))
+    if min_run_id is not None:
+        stmt = stmt.where(AgentRun.id > min_run_id)
     return (await session.execute(stmt)).scalar_one()
 
 
@@ -177,6 +182,11 @@ async def pick_next_strategy_id(session: AsyncSession) -> int | None:
     for s in proposed:
         if not (strategy_dir(s.slug) / "iteration_001" / "strategy.json").is_file():
             continue  # not translated yet
+        if _find_latest_sidecar(s.slug) is not None:
+            # Open pre-backtest plugin request → the plugin it needs must be
+            # built (and the draft re-translated) first. pick_next_proposed_
+            # needs_plugin handles it; never dispatch the draft to a backtest.
+            continue
         attempts = await _genuine_failed_attempts(session, "runner", s.id)
         if attempts >= settings.runner_auto_max_attempts:
             continue
@@ -184,10 +194,18 @@ async def pick_next_strategy_id(session: AsyncSession) -> int | None:
     return None
 
 
-async def _genuine_failed_attempts(session: AsyncSession, agent_name: str, strategy_id: int) -> int:
+async def _genuine_failed_attempts(
+    session: AsyncSession,
+    agent_name: str,
+    strategy_id: int,
+    *,
+    min_run_id: int | None = None,
+) -> int:
     """Failed attempts that count against a retry cap. Orphaned and
     transient-network failures were not the strategy's fault, so they are
-    excluded."""
+    excluded. `min_run_id` (exclusive) limits the count to runs newer than a
+    given AgentRun, so pre-backtest authoring failures don't count against the
+    post-backtest budget."""
     return (
         await session.execute(
             select(func.count())
@@ -203,6 +221,7 @@ async def _genuine_failed_attempts(session: AsyncSession, agent_name: str, strat
                         not_(AgentRun.error.like(f"{TRANSIENT_ERROR}%")),
                     ),
                 ),
+                *([AgentRun.id > min_run_id] if min_run_id is not None else []),
             )
         )
     ).scalar_one()
@@ -238,6 +257,23 @@ async def pick_next_backtested_unanalyzed(session: AsyncSession) -> int | None:
     return None
 
 
+async def _latest_backtest_run_id(session: AsyncSession, strategy_id: int) -> int | None:
+    """Highest AgentRun.id of a completed backtest ("runner" DONE) for a
+    strategy, or None if it was never backtested. Marks the boundary between a
+    strategy's pre-backtest plugin authoring (before the first backtest) and
+    the post-backtest add_indicator flow, so the two budgets never contaminate
+    each other when the same strategy uses both."""
+    return (
+        await session.execute(
+            select(func.max(AgentRun.id)).where(
+                AgentRun.agent_name == "runner",
+                AgentRun.strategy_id == strategy_id,
+                AgentRun.status == AgentRunStatus.DONE.value,
+            )
+        )
+    ).scalar_one_or_none()
+
+
 async def pick_next_add_indicator_pending(session: AsyncSession) -> int | None:
     """Oldest BACKTESTED strategy with an add_indicator sidecar and remaining
     auto plugin-author budget.
@@ -252,6 +288,11 @@ async def pick_next_add_indicator_pending(session: AsyncSession) -> int | None:
     is currently in flight (RUNNING/PENDING run, e.g. a manual API attempt) is
     skipped so two chains never race on the same sidecar. Manual API attempts
     are never blocked here, but their planner runs consume the same budget.
+
+    Only authoring runs newer than the strategy's latest backtest count: a
+    strategy that built a plugin PRE-backtest carries plugin_planner/
+    plugin_implementer runs from that flow, and those must not close this
+    (post-backtest) budget.
     """
     rows = (
         (
@@ -267,11 +308,13 @@ async def pick_next_add_indicator_pending(session: AsyncSession) -> int | None:
     for s in rows:
         if _find_latest_sidecar(s.slug) is None:
             continue
+        backtest_boundary = await _latest_backtest_run_id(session, s.id)
         implementer_done = await _count_runs(
             session,
             "plugin_implementer",
             strategy_id=s.id,
             statuses=(AgentRunStatus.DONE.value,),
+            min_run_id=backtest_boundary,
         )
         if implementer_done > 0:
             continue
@@ -280,8 +323,11 @@ async def pick_next_add_indicator_pending(session: AsyncSession) -> int | None:
             "plugin_planner",
             strategy_id=s.id,
             statuses=(AgentRunStatus.DONE.value,),
+            min_run_id=backtest_boundary,
         )
-        planner_failed = await _genuine_failed_attempts(session, "plugin_planner", s.id)
+        planner_failed = await _genuine_failed_attempts(
+            session, "plugin_planner", s.id, min_run_id=backtest_boundary
+        )
         if planner_done + planner_failed >= settings.plugin_author_auto_max_attempts:
             continue
         in_flight = await _count_runs(
@@ -356,6 +402,117 @@ async def _author_and_reiterate(session: AsyncSession, sid: int) -> None:
         log.exception("runner auto mode: reiterate-with-plugin failed for strategy %s", sid)
 
 
+async def _prebacktest_author_attempts(session: AsyncSession, strategy_id: int) -> int:
+    """Authoring cycles spent on a PROPOSED strategy: successful plans plus
+    genuine planner failures. Bounds pre-backtest plugin authoring so a draft
+    whose plugin can't be built is abandoned instead of looping forever.
+
+    For a PROPOSED strategy every plugin_planner run is pre-backtest (it was
+    never backtested), so the count is unambiguous."""
+    planner_done = await _count_runs(
+        session,
+        "plugin_planner",
+        strategy_id=strategy_id,
+        statuses=(AgentRunStatus.DONE.value,),
+    )
+    planner_failed = await _genuine_failed_attempts(session, "plugin_planner", strategy_id)
+    return planner_done + planner_failed
+
+
+async def pick_next_proposed_needs_plugin(session: AsyncSession) -> int | None:
+    """Oldest PROPOSED strategy with an open pre-backtest plugin request and
+    remaining authoring budget.
+
+    These are drafts whose entry-signal plugin does not exist yet: the
+    Translator declared it in an add_indicator_request.json sidecar. Build it
+    (planner → implementer → evaluator → fwbg registration) and re-translate
+    BEFORE any backtest, so the strategy is never dispatched to an empty run.
+    Budget = successful plans + genuine planner failures vs
+    plugin_author_auto_max_attempts; an in-flight chain is skipped."""
+    rows = (
+        (
+            await session.execute(
+                select(Strategy)
+                .where(Strategy.current_state == StrategyState.PROPOSED.value)
+                .order_by(nulls_last(Strategy.queue_position), Strategy.created_at)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    for s in rows:
+        if _find_latest_sidecar(s.slug) is None:
+            continue
+        spent = await _prebacktest_author_attempts(session, s.id)
+        if spent >= settings.plugin_author_auto_max_attempts:
+            continue  # abandon_capped_proposed retires it
+        in_flight = await _count_runs(
+            session,
+            ("plugin_planner", "plugin_implementer", "plugin_author_flow"),
+            strategy_id=s.id,
+            statuses=_IN_FLIGHT_STATUSES,
+        )
+        if in_flight:
+            continue
+        return s.id
+    return None
+
+
+async def _author_and_retranslate(session: AsyncSession, sid: int) -> None:
+    """Pre-backtest counterpart of `_author_and_reiterate`: build the plugin a
+    PROPOSED draft requested, then re-translate so the draft is rebuilt using
+    it — all before the first backtest.
+
+    author (PROPOSED) → evaluate → on VERIFIED: the plugin is registered in
+    fwbg (inside evaluate) and the strategy is re-translated. run_fresh
+    reconciles the sidecar — cleared once no plugin is still needed, which makes
+    the strategy backtest-eligible; rewritten if another capability is missing
+    (the next tick authors that one). A failed or non-verifying attempt leaves
+    the sidecar in place and charges the budget; abandon_capped_proposed retires
+    the strategy once the budget is spent."""
+    try:
+        plugin_id = await author_plugin_from_strategy(session, sid)
+    except (PluginAuthorError, AuthorPluginPreconditionError) as exc:
+        log.warning(
+            "runner auto mode: pre-backtest plugin author failed for strategy %s: %s", sid, exc
+        )
+        return
+    except Exception:
+        log.exception("runner auto mode: pre-backtest plugin author crashed for strategy %s", sid)
+        return
+
+    eval_ar = await start_agent_run(session, agent_name="plugin_evaluator", plugin_id=plugin_id)
+    try:
+        await evaluate_plugin(session, plugin_id, agent_run_id=eval_ar.id)
+    except Exception as exc:
+        log.exception("runner auto mode: plugin evaluation crashed for plugin %s", plugin_id)
+        await fail_agent_run(session, eval_ar, exc)
+        return
+    plugin = (await session.execute(select(Plugin).where(Plugin.id == plugin_id))).scalar_one()
+    verified = plugin.current_state == PluginState.VERIFIED.value
+    await finish_agent_run(
+        session,
+        eval_ar,
+        status=AgentRunStatus.DONE if verified else AgentRunStatus.FAILED,
+        plugin_id=plugin_id,
+        error=None if verified else f"plugin did not verify (state={plugin.current_state})",
+    )
+    if not verified:
+        log.warning(
+            "runner auto mode: pre-backtest plugin %s did not verify (state=%s); "
+            "strategy %s keeps its request",
+            plugin.slug,
+            plugin.current_state,
+            sid,
+        )
+        return
+
+    # The plugin is now in the live catalog: re-translate so the Translator
+    # wires it (signal_rules from the catalog's signal_columns) and reconciles
+    # the sidecar. _retranslate handles the Translator + fwbg publish + client.
+    await _retranslate(session, sid)
+
+
 async def abandon_capped_proposed(session: AsyncSession) -> int:
     """Abandon PROPOSED strategies that have exhausted their backtest retry
     budget. They can never be auto-picked again, so leaving them PROPOSED
@@ -373,8 +530,22 @@ async def abandon_capped_proposed(session: AsyncSession) -> int:
     abandoned = 0
     for s in proposed:
         has_strategy_json = (strategy_dir(s.slug) / "iteration_001" / "strategy.json").is_file()
+        has_plugin_request = _find_latest_sidecar(s.slug) is not None
 
-        if has_strategy_json:
+        if has_plugin_request:
+            # Open pre-backtest plugin request: never backtested (the backtest
+            # selector skips it), so it can only progress via authoring. Retire
+            # it once the authoring budget is spent, else it is stuck forever.
+            spent = await _prebacktest_author_attempts(session, s.id)
+            cap = settings.plugin_author_auto_max_attempts
+            if spent < cap:
+                continue
+            reason = f"auto: exceeded pre-backtest plugin-author cap ({spent} attempts)"
+            summary = (
+                f"Auto-abandoned: could not author the requested plugin after "
+                f"{spent} attempts (cap={cap}); strategy never became runnable."
+            )
+        elif has_strategy_json:
             failed = await _genuine_failed_attempts(session, "runner", s.id)
             cap = settings.runner_auto_max_attempts
             if failed < cap:
@@ -771,6 +942,17 @@ async def tick() -> int | None:
     # fresh research can start.
     async with SessionLocal() as session:
         await abandon_capped_proposed(session)
+
+    # Highest priority: a PROPOSED draft that references a plugin which does not
+    # exist yet. Build it (planner → implementer → evaluator → register) and
+    # re-translate BEFORE any backtest, so no empty run is ever dispatched.
+    async with SessionLocal() as session:
+        needs_plugin = await pick_next_proposed_needs_plugin(session)
+    if needs_plugin is not None:
+        log.info("runner auto mode: authoring pre-backtest plugin for strategy %s", needs_plugin)
+        async with SessionLocal() as session:
+            await _author_and_retranslate(session, needs_plugin)
+        return needs_plugin
 
     async with SessionLocal() as session:
         sid = await pick_next_strategy_id(session)
