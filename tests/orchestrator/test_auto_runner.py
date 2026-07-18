@@ -298,6 +298,34 @@ async def test_pick_next_add_indicator_requires_sidecar(env):
         assert await auto_runner.pick_next_add_indicator_pending(session) is None
 
 
+async def test_pick_next_add_indicator_ignores_prebacktest_authoring(env):
+    """A strategy that built a plugin PRE-backtest carries plugin_planner /
+    plugin_implementer DONE runs from that flow. Those predate the backtest and
+    must NOT close the post-backtest add_indicator budget (regression: the
+    implementer-DONE guard and the planner budget only count runs newer than
+    the strategy's latest completed backtest)."""
+    Session, make_strategy, add_run = env
+    sid = await make_strategy("sig__forex__pb1", state=StrategyState.BACKTESTED)
+
+    # Pre-backtest authoring history (lower AgentRun ids), then the backtest.
+    await add_run("plugin_planner", AgentRunStatus.DONE, sid)
+    await add_run("plugin_implementer", AgentRunStatus.DONE, sid)
+    await add_run("runner", AgentRunStatus.DONE, sid)
+
+    # Post-backtest the Analyst requests a new indicator.
+    _seed_sidecar("sig__forex__pb1")
+
+    async with Session() as session:
+        # Not blocked by the pre-backtest implementer-DONE / planner-DONE rows.
+        assert await auto_runner.pick_next_add_indicator_pending(session) == sid
+
+    # A post-backtest planner failure still consumes budget as before.
+    await add_run("plugin_planner", AgentRunStatus.FAILED, sid)
+    await add_run("plugin_planner", AgentRunStatus.FAILED, sid)
+    async with Session() as session:
+        assert await auto_runner.pick_next_add_indicator_pending(session) is None
+
+
 async def test_author_and_reiterate_happy_path(env, monkeypatch):
     from fwbg_agents.persistence.models import Plugin, PluginState
 

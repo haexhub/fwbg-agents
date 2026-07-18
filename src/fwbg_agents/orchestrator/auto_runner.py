@@ -141,15 +141,19 @@ async def _count_runs(
     *,
     strategy_id: int | None = None,
     statuses: tuple[str, ...] | None = None,
+    min_run_id: int | None = None,
 ) -> int:
     """Count AgentRun rows for the given agent name(s), optionally scoped to a
-    strategy and/or a set of statuses."""
+    strategy, a set of statuses, and/or only runs newer than `min_run_id`
+    (exclusive — used to ignore a strategy's pre-backtest authoring history)."""
     names = (agent_name,) if isinstance(agent_name, str) else agent_name
     stmt = select(func.count()).select_from(AgentRun).where(AgentRun.agent_name.in_(names))
     if strategy_id is not None:
         stmt = stmt.where(AgentRun.strategy_id == strategy_id)
     if statuses is not None:
         stmt = stmt.where(AgentRun.status.in_(statuses))
+    if min_run_id is not None:
+        stmt = stmt.where(AgentRun.id > min_run_id)
     return (await session.execute(stmt)).scalar_one()
 
 
@@ -190,10 +194,18 @@ async def pick_next_strategy_id(session: AsyncSession) -> int | None:
     return None
 
 
-async def _genuine_failed_attempts(session: AsyncSession, agent_name: str, strategy_id: int) -> int:
+async def _genuine_failed_attempts(
+    session: AsyncSession,
+    agent_name: str,
+    strategy_id: int,
+    *,
+    min_run_id: int | None = None,
+) -> int:
     """Failed attempts that count against a retry cap. Orphaned and
     transient-network failures were not the strategy's fault, so they are
-    excluded."""
+    excluded. `min_run_id` (exclusive) limits the count to runs newer than a
+    given AgentRun, so pre-backtest authoring failures don't count against the
+    post-backtest budget."""
     return (
         await session.execute(
             select(func.count())
@@ -209,6 +221,7 @@ async def _genuine_failed_attempts(session: AsyncSession, agent_name: str, strat
                         not_(AgentRun.error.like(f"{TRANSIENT_ERROR}%")),
                     ),
                 ),
+                *([AgentRun.id > min_run_id] if min_run_id is not None else []),
             )
         )
     ).scalar_one()
@@ -244,6 +257,23 @@ async def pick_next_backtested_unanalyzed(session: AsyncSession) -> int | None:
     return None
 
 
+async def _latest_backtest_run_id(session: AsyncSession, strategy_id: int) -> int | None:
+    """Highest AgentRun.id of a completed backtest ("runner" DONE) for a
+    strategy, or None if it was never backtested. Marks the boundary between a
+    strategy's pre-backtest plugin authoring (before the first backtest) and
+    the post-backtest add_indicator flow, so the two budgets never contaminate
+    each other when the same strategy uses both."""
+    return (
+        await session.execute(
+            select(func.max(AgentRun.id)).where(
+                AgentRun.agent_name == "runner",
+                AgentRun.strategy_id == strategy_id,
+                AgentRun.status == AgentRunStatus.DONE.value,
+            )
+        )
+    ).scalar_one_or_none()
+
+
 async def pick_next_add_indicator_pending(session: AsyncSession) -> int | None:
     """Oldest BACKTESTED strategy with an add_indicator sidecar and remaining
     auto plugin-author budget.
@@ -258,6 +288,11 @@ async def pick_next_add_indicator_pending(session: AsyncSession) -> int | None:
     is currently in flight (RUNNING/PENDING run, e.g. a manual API attempt) is
     skipped so two chains never race on the same sidecar. Manual API attempts
     are never blocked here, but their planner runs consume the same budget.
+
+    Only authoring runs newer than the strategy's latest backtest count: a
+    strategy that built a plugin PRE-backtest carries plugin_planner/
+    plugin_implementer runs from that flow, and those must not close this
+    (post-backtest) budget.
     """
     rows = (
         (
@@ -273,11 +308,13 @@ async def pick_next_add_indicator_pending(session: AsyncSession) -> int | None:
     for s in rows:
         if _find_latest_sidecar(s.slug) is None:
             continue
+        backtest_boundary = await _latest_backtest_run_id(session, s.id)
         implementer_done = await _count_runs(
             session,
             "plugin_implementer",
             strategy_id=s.id,
             statuses=(AgentRunStatus.DONE.value,),
+            min_run_id=backtest_boundary,
         )
         if implementer_done > 0:
             continue
@@ -286,8 +323,11 @@ async def pick_next_add_indicator_pending(session: AsyncSession) -> int | None:
             "plugin_planner",
             strategy_id=s.id,
             statuses=(AgentRunStatus.DONE.value,),
+            min_run_id=backtest_boundary,
         )
-        planner_failed = await _genuine_failed_attempts(session, "plugin_planner", s.id)
+        planner_failed = await _genuine_failed_attempts(
+            session, "plugin_planner", s.id, min_run_id=backtest_boundary
+        )
         if planner_done + planner_failed >= settings.plugin_author_auto_max_attempts:
             continue
         in_flight = await _count_runs(
