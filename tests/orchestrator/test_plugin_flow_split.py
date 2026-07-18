@@ -357,11 +357,12 @@ async def test_implementer_failure_marks_both_runs_and_stores_last_code(author_e
 
 
 async def test_precondition_blocks_before_any_agent_run(author_env):
-    """Strategy in non-BACKTESTED state → 422 raised, no ARs persisted."""
+    """A strategy in a state that is neither PROPOSED nor BACKTESTED (e.g.
+    PAPER_TRADING) → precondition error, no ARs persisted."""
     Session, parent_id, _ = author_env
     async with Session() as session:
         s = (await session.execute(select(Strategy).where(Strategy.id == parent_id))).scalar_one()
-        s.current_state = StrategyState.PROPOSED.value
+        s.current_state = StrategyState.PAPER_TRADING.value
         await session.commit()
 
     async with Session() as session:
@@ -376,6 +377,28 @@ async def test_precondition_blocks_before_any_agent_run(author_env):
     async with Session() as session:
         runs = (await session.execute(select(AgentRun))).scalars().all()
     assert runs == []
+
+
+async def test_proposed_strategy_is_allowed_prebacktest(author_env):
+    """PROPOSED is a valid entry state now: the pre-backtest flow authors a
+    plugin a fresh draft references before it is ever backtested."""
+    Session, parent_id, _ = author_env
+    async with Session() as session:
+        s = (await session.execute(select(Strategy).where(Strategy.id == parent_id))).scalar_one()
+        s.current_state = StrategyState.PROPOSED.value
+        await session.commit()
+
+    async with Session() as session:
+        plugin_id = await author_plugin_from_strategy(
+            session,
+            parent_id,
+            planner_model=_stub_model(_PLAN_ARGS),
+            implementer_model=_stub_model(_author_result()),
+        )
+
+    async with Session() as session:
+        plugin = (await session.execute(select(Plugin).where(Plugin.id == plugin_id))).scalar_one()
+    assert plugin.current_state == PluginState.AUTHORED.value
 
 
 async def test_precondition_strategy_not_found(author_env):

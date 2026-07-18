@@ -377,12 +377,20 @@ def validate_strategy_json(
     presets: dict[str, list[str]] | None = None,
     datasources: list[str] | None = None,
     timeframes: list[str] | None = None,
+    has_pending_plugin_request: bool = False,
 ) -> None:
     """Structural validation. Pass `catalog` to route plugin-name lookups
     through the runtime PluginCatalog, `presets` (section → names, from the
     fwbg workspace) for preset-string refs, and `datasources` (names actually
     configured in fwbg) for the datasource ref; without them the M4 frozenset
     fallbacks apply.
+
+    Pass `has_pending_plugin_request=True` for a draft strategy that has an
+    open plugin request (its entry-signal plugin is still being authored
+    pre-backtest): the signal-source check is skipped, because the source will
+    be wired in by the re-translation that follows authoring. The strategy is
+    NOT dispatched to a backtest while the request is open (the auto_runner
+    routes it to authoring first), so no empty run can result.
     """
     if not isinstance(data, dict):
         raise StrategyValidationError("payload must be a JSON object")
@@ -458,6 +466,7 @@ def validate_strategy_json(
     if (
         isinstance(data["model"], dict)
         and data["model"].get("type") == "signal"
+        and not has_pending_plugin_request
         and not signal_model_has_source(data)
     ):
         raise StrategyValidationError(
