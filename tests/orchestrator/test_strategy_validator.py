@@ -545,3 +545,77 @@ def test_datasource_unchecked_without_live_list():
     list) the ref passes unchecked — the Runner is the ultimate validator."""
     any_name = {**INLINE_FIXTURE, "datasource": "whatever-source"}
     validate_strategy_json(any_name, catalog=_INLINE_CATALOG, datasources=None)
+
+
+# ──────────────────────────────────────────────
+# Signal-source guard: an inline signal model must have an entry-signal source
+# ──────────────────────────────────────────────
+
+_SIGNAL_MODEL = {
+    "type": "signal",
+    "architecture": "unified",
+    "trade_directions": ["long"],
+    "hyperparameters": {},
+}
+
+
+def _signal_fixture(**overrides):
+    """INLINE_FIXTURE with a signal model and, by default, NO signal source."""
+    fx = {
+        **INLINE_FIXTURE,
+        "model": dict(_SIGNAL_MODEL),
+        "filters": {"min_trades": 50, "min_sharpe": 0.5},  # no allowed_hours/days
+    }
+    fx.update(overrides)
+    return fx
+
+
+def test_signal_model_without_source_is_rejected():
+    with pytest.raises(StrategyValidationError, match="entry-signal source"):
+        validate_strategy_json(_signal_fixture(), catalog=_INLINE_CATALOG)
+
+
+def test_signal_model_with_allowed_hours_passes():
+    fx = _signal_fixture(filters={"min_trades": 50, "allowed_hours": [8, 9, 10]})
+    validate_strategy_json(fx, catalog=_INLINE_CATALOG)
+
+
+def test_signal_model_with_allowed_days_passes():
+    fx = _signal_fixture(filters={"min_trades": 50, "allowed_days": [0, 1, 2]})
+    validate_strategy_json(fx, catalog=_INLINE_CATALOG)
+
+
+def test_signal_model_with_required_features_passes():
+    fx = _signal_fixture()
+    fx["model"] = {**_SIGNAL_MODEL, "required_features": ["_composed_signal_long"]}
+    validate_strategy_json(fx, catalog=_INLINE_CATALOG)
+
+
+def test_signal_model_with_signal_rules_passes():
+    fx = _signal_fixture()
+    fx["signal_rules"] = {"long": {"conditions": [{"lhs": "rsi", "op": "<", "rhs": 30}]}}
+    validate_strategy_json(fx, catalog=_INLINE_CATALOG)
+
+
+def test_signal_model_with_empty_signal_rules_is_rejected():
+    """signal_rules present but with no conditions is not a real source."""
+    fx = _signal_fixture()
+    fx["signal_rules"] = {"long": {"conditions": []}, "short": {}}
+    with pytest.raises(StrategyValidationError, match="entry-signal source"):
+        validate_strategy_json(fx, catalog=_INLINE_CATALOG)
+
+
+def test_signal_model_with_preset_filters_is_lenient():
+    """Opaque preset filters may provide a time filter — don't false-reject."""
+    fx = _signal_fixture(filters="orb_scalping_v1")
+    validate_strategy_json(fx)  # no catalog: preset strings via frozen fallback
+
+
+def test_preset_signal_model_is_not_gated():
+    """A preset-string model carries its source in the preset — not gated."""
+    validate_strategy_json(dict(VALID_FIXTURE))
+
+
+def test_non_signal_inline_model_without_source_passes():
+    """A non-signal (xgboost) inline model needs no signal source."""
+    validate_strategy_json(dict(INLINE_FIXTURE), catalog=_INLINE_CATALOG)

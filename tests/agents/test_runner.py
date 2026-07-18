@@ -27,6 +27,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from fwbg_agents.agents.runner import (
     Runner,
     RunnerError,
+    UnrunnableStrategyError,
     _median_metrics_across_assets,
     _months_ago_iso,
 )
@@ -713,3 +714,63 @@ async def test_runner_reserves_holdout_window(runner_env):
     end_date = fake.calls_of("start_run")[0][2]["end_date"]
     assert end_date is not None
     assert date.fromisoformat(end_date) < date.today()
+
+
+def _write_strategy_json(tmp_path, slug: str, data: dict) -> None:
+    sj = (
+        tmp_path
+        / "agents_data"
+        / "strategies"
+        / slug
+        / "iteration_001"
+        / "strategy.json"
+    )
+    sj.write_text(json.dumps(data))
+
+
+async def test_runner_rejects_signal_model_without_source(runner_env):
+    """A signal model with no entry-signal source must not be dispatched: the
+    backtest would skip every fold and 'complete' in seconds with zero results.
+    """
+    SessionMaker, make_strategy, tmp_path = runner_env
+    sid = await make_strategy(slug="sig_nosrc_v1")
+    _write_strategy_json(
+        tmp_path,
+        "sig_nosrc_v1",
+        {
+            "name": "sig_nosrc_v1",
+            "model": {"type": "signal", "trade_directions": ["long"]},
+            "filters": {"min_trades": 50},  # no allowed_hours/days
+            "pipeline": {"indicators": [{"name": "computed_signal", "params": {}}]},
+        },
+    )
+    fake = FakeFwbgClient()
+
+    with pytest.raises(UnrunnableStrategyError):
+        await _run(SessionMaker, sid, fake)
+
+    # Never dispatched: no fwbg strategy created, no run started.
+    assert fake.calls_of("create_strategy") == []
+    assert fake.calls_of("start_run") == []
+
+
+async def test_runner_dispatches_signal_model_with_time_filter(runner_env):
+    """A signal model whose source is a time filter runs normally."""
+    SessionMaker, make_strategy, tmp_path = runner_env
+    sid = await make_strategy(slug="sig_ok_v1")
+    _write_strategy_json(
+        tmp_path,
+        "sig_ok_v1",
+        {
+            "name": "sig_ok_v1",
+            "model": {"type": "signal", "trade_directions": ["long"]},
+            "filters": {"min_trades": 50, "allowed_hours": [8, 9, 10]},
+            "pipeline": {"indicators": [{"name": "computed_signal", "params": {}}]},
+        },
+    )
+    fake = FakeFwbgClient()
+
+    result = await _run(SessionMaker, sid, fake)
+
+    assert result.fwbg_run_id == "job_test_42"
+    assert fake.calls_of("start_run")  # dispatched
