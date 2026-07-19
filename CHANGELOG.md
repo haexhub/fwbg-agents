@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.28.0](https://github.com/haexhub/fwbg-agents/compare/v0.27.0...v0.28.0) (2026-07-18)
+
+
+### Features
+
+* **orchestrator:** build a referenced plugin before the first backtest ([a11f71f](https://github.com/haexhub/fwbg-agents/commit/a11f71f68d24182117bf601ae00dc3d9e69e4acf))
+* **orchestrator:** build a referenced plugin before the first backtest ([2a52af2](https://github.com/haexhub/fwbg-agents/commit/2a52af29163dc474e726d0bd8e700e8907d5957f))
+
+
+### Bug Fixes
+
+* **orchestrator:** scope post-backtest plugin-author budget to post-backtest runs ([47dd4be](https://github.com/haexhub/fwbg-agents/commit/47dd4be36a79f5b8c2dff69ea9d74ab9c866ade3))
+* **translator:** satisfy mypy on optional plugin_request fields ([af381da](https://github.com/haexhub/fwbg-agents/commit/af381dafc5287bacbf5cff4fd0b9b391199edf60))
+
 ## [0.27.0](https://github.com/haexhub/fwbg-agents/compare/v0.26.3...v0.27.0) (2026-07-18)
 
 
