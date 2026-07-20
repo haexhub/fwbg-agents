@@ -1,5 +1,24 @@
 # Changelog
 
+## [0.29.0](https://github.com/haexhub/fwbg-agents/compare/v0.28.0...v0.29.0) (2026-07-20)
+
+
+### Features
+
+* add claude-sonnet-5 and switch agents to it by default ([84f2ec4](https://github.com/haexhub/fwbg-agents/commit/84f2ec463808968a6b5df473fe5889abab2fd0d5))
+
+
+### Bug Fixes
+
+* **promote-gate:** freeze holdout boundary per lineage and budget attempts ([#235](https://github.com/haexhub/fwbg-agents/issues/235)) ([da61ee5](https://github.com/haexhub/fwbg-agents/commit/da61ee5483e4bafb319187f18c04ddbffc90827c))
+* **trials:** persist census and fail closed on invalid DSR ([#239](https://github.com/haexhub/fwbg-agents/issues/239)) ([2c1381c](https://github.com/haexhub/fwbg-agents/commit/2c1381c7dcfee6d46790c323771e2fef3ff148cf))
+
+
+### Documentation
+
+* **plans:** add completion designs for blocked plans 022-024 ([#238](https://github.com/haexhub/fwbg-agents/issues/238)) ([88cbc30](https://github.com/haexhub/fwbg-agents/commit/88cbc3089c8322f6854b9a96c3b793dcf9b58029))
+* **plans:** record security and validation follow-ups ([#237](https://github.com/haexhub/fwbg-agents/issues/237)) ([12a2524](https://github.com/haexhub/fwbg-agents/commit/12a2524a2d2c009b1651a30e5f3f8e6100646f34))
+
 ## [0.28.0](https://github.com/haexhub/fwbg-agents/compare/v0.27.0...v0.28.0) (2026-07-18)
 
 
