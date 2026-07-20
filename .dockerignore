@@ -10,7 +10,8 @@ __pycache__
 graphify-out
 data
 tests
-scripts
+scripts/*
+!scripts/backfill_trial_stats.py
 .pytest_cache
 .mypy_cache
 .ruff_cache

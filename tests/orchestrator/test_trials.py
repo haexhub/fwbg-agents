@@ -118,7 +118,8 @@ async def trials_env(tmp_path, monkeypatch):
     monkeypatch.setattr(settings, "data_dir", tmp_path / "agents_data")
     monkeypatch.setattr(settings, "fwbg_test_results_dir", tmp_path / "test_results")
 
-    db_url = f"sqlite+aiosqlite:///{tmp_path}/trials.db"
+    settings.data_dir.mkdir(parents=True)
+    db_url = f"sqlite+aiosqlite:///{settings.data_dir}/state.db"
     engine = create_async_engine(db_url, future=True)
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
@@ -292,12 +293,11 @@ async def test_record_trial_stat_filters_nan_only_series(trials_env):
 
 
 @pytest.mark.asyncio
-async def test_backfill_trial_stats_is_idempotent(trials_env, monkeypatch):
+async def test_backfill_trial_stats_is_idempotent(trials_env):
     from scripts import backfill_trial_stats as backfill_module
 
     Session, settings = trials_env
     await _seed_strategy(Session, "orb__forex__001", "ORB")
-    monkeypatch.setattr(backfill_module, "SessionLocal", Session)
     for index in (1, 2):
         iteration = settings.data_dir / "strategies" / "orb__forex__001" / f"iteration_{index:03d}"
         iteration.mkdir(parents=True, exist_ok=True)
@@ -319,3 +319,38 @@ async def test_backfill_trial_stats_is_idempotent(trials_env, monkeypatch):
     )
     assert first == (2, 0)
     assert second == (0, 2)
+
+
+@pytest.mark.asyncio
+async def test_backfill_data_dir_selects_exact_target_database(tmp_path):
+    from scripts import backfill_trial_stats as backfill_module
+
+    target_dir = tmp_path / "target"
+    decoy_dir = tmp_path / "decoy"
+    for data_dir in (target_dir, decoy_dir):
+        data_dir.mkdir()
+        engine = create_async_engine(f"sqlite+aiosqlite:///{data_dir}/state.db")
+        async with engine.begin() as conn:
+            await conn.run_sync(Base.metadata.create_all)
+        await engine.dispose()
+
+    iteration = target_dir / "strategies" / "unknown_strategy" / "iteration_001"
+    iteration.mkdir(parents=True)
+    (iteration / "fwbg_results.json").write_text(
+        json.dumps({"run_id": "target_run", "assets": {"EURUSD": {}}})
+    )
+    assert await backfill_module.backfill(
+        data_dir=target_dir,
+        test_results_dir=tmp_path / "test_results",
+    ) == (1, 0)
+
+    async def run_ids(data_dir):
+        engine = create_async_engine(f"sqlite+aiosqlite:///{data_dir}/state.db")
+        Session = async_sessionmaker(engine, expire_on_commit=False)
+        async with Session() as session:
+            ids = list(await session.scalars(select(TrialStat.run_id)))
+        await engine.dispose()
+        return ids
+
+    assert await run_ids(target_dir) == ["target_run"]
+    assert await run_ids(decoy_dir) == []

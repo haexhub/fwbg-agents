@@ -39,10 +39,13 @@ COPY src/ src/
 # /agents/config 500s and plugin authoring cannot start.
 COPY prompts/ prompts/
 COPY alembic.ini ./
+# Migration 0011 seeds its durable DSR census from existing run artifacts.
+# Keep the idempotent deploy-time backfill available in the runtime image.
+COPY scripts/backfill_trial_stats.py scripts/backfill_trial_stats.py
 
 # Persisted via the agents-data volume (sqlite state.db + criteria files)
 RUN mkdir -p data
 
 EXPOSE 8421
 
-CMD ["sh", "-c", "alembic upgrade head && uvicorn fwbg_agents.main:app --host 0.0.0.0 --port 8421"]
+CMD ["sh", "-c", "alembic upgrade head && python scripts/backfill_trial_stats.py && uvicorn fwbg_agents.main:app --host 0.0.0.0 --port 8421"]
