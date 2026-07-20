@@ -3,10 +3,11 @@
 Before a BACKTESTED strategy may advance to paper trading it must clear two
 extra sequential backtests (one fwbg run at a time — no fan-out):
 
-1. **Holdout** — the same universe on ``[today - holdout_months, today]``, a
-   window no iteration ever saw (iteration backtests end at
-   ``today - holdout_months``). Catches in-sample overfitting from the
-   iteration chain that the in-sample metrics cannot.
+1. **Holdout** — the same universe on ``[B, today)``, where ``B`` is the
+   lineage's frozen data boundary (see ``orchestrator/lineage_boundary.py``) —
+   a window no iteration of this lineage ever saw (iteration backtests end at
+   ``B``, frozen once for the whole family). Catches in-sample overfitting
+   from the iteration chain that the in-sample metrics cannot.
 2. **Cost stress** — the full window at 2x spread/slippage. Catches an edge
    that only survives unrealistically low transaction costs.
 3. **Deflated Sharpe Ratio** (Plan 010 WP2) — the holdout run's per-trade
@@ -19,9 +20,15 @@ Both are checked against deliberately milder thresholds than the main
 ``backtest_to_paper`` gate (they run on shorter / harder windows), stored in the
 criteria YAML as ``promote_holdout`` / ``promote_cost_stress`` sections.
 
+Gate attempts are budgeted per lineage (``settings.promote_max_attempts``):
+the cumulative ``fail_count`` lives at the lineage root's sidecar, shared by
+every child strategy, and once the budget is exhausted further Promote
+recommendations fail the gate without running a backtest.
+
 On failure the strategy stays BACKTESTED and the result is persisted as a
-``promote_gate_results.json`` sidecar (with a cumulative ``fail_count``) so the
-next Analyst pass can see it and decide iterate vs. abandon.
+``promote_gate_results.json`` sidecar at the lineage root's directory (with
+the cumulative ``fail_count``) so the next Analyst pass can see it and decide
+iterate vs. abandon.
 """
 
 from __future__ import annotations
@@ -30,15 +37,17 @@ import json
 import logging
 import statistics
 from datetime import date
+from pathlib import Path
 from typing import Any
 
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from fwbg_agents.agents.analyst import _median_metrics_across_assets
-from fwbg_agents.agents.runner import Runner, RunnerError, _months_ago_iso
+from fwbg_agents.agents.runner import Runner, RunnerError
 from fwbg_agents.config import settings
 from fwbg_agents.orchestrator.lifecycle import check_criteria_section, strategy_dir
+from fwbg_agents.orchestrator.lineage_boundary import get_or_freeze_boundary, lineage_root
 from fwbg_agents.orchestrator.trials import (
     count_trials,
     deflated_sharpe_ratio,
@@ -141,8 +150,14 @@ async def _run_dsr_check(
     return True, dsr, counts.global_trials, []
 
 
-def _fail_count(strategy: Strategy) -> int:
-    sidecar = strategy_dir(strategy.slug) / "promote_gate_results.json"
+def _gate_sidecar_path(root_slug: str) -> Path:
+    """Sidecar path for the lineage-shared gate result — lives at the root."""
+    return strategy_dir(root_slug) / "promote_gate_results.json"
+
+
+def _fail_count(root: Strategy) -> int:
+    """Cumulative promote-gate failures for `root`'s whole lineage."""
+    sidecar = _gate_sidecar_path(root.slug)
     if not sidecar.is_file():
         return 0
     try:
@@ -161,11 +176,21 @@ async def run_promote_gate(
     """
     ar = await start_agent_run(session, agent_name="promote_gate", strategy_id=strategy.id)
     try:
+        root = await lineage_root(session, strategy)
+        fail_count_so_far = _fail_count(root)
+        if fail_count_so_far >= settings.promote_max_attempts:
+            emit_run_event(ar.id, "promote_gate_failed", reason="attempt budget exhausted")
+            result = PromoteGateResult(
+                passed=False, runs=[], fail_count=fail_count_so_far, dsr=None, n_trials=None
+            )
+            await finish_agent_run(session, ar, status=AgentRunStatus.DONE)
+            return result
+
         runner = Runner(fwbg_client, session)
         fwbg_name = _fwbg_name(strategy)
         assets = _universe_assets(strategy) or None
         today = date.today().isoformat()
-        holdout_start = _months_ago_iso(settings.holdout_months)
+        holdout_start = await get_or_freeze_boundary(session, strategy)
 
         specs: list[tuple[str, str, dict[str, Any]]] = [
             ("holdout", "promote_holdout", {"start_date": holdout_start, "end_date": today}),
@@ -230,12 +255,12 @@ async def run_promote_gate(
         )
 
         passed = bool(runs) and all(r.passed for r in runs)
-        fail_count = _fail_count(strategy) + (0 if passed else 1)
+        fail_count = fail_count_so_far + (0 if passed else 1)
         result = PromoteGateResult(
             passed=passed, runs=runs, fail_count=fail_count, dsr=dsr, n_trials=n_trials
         )
 
-        sidecar = strategy_dir(strategy.slug) / "promote_gate_results.json"
+        sidecar = _gate_sidecar_path(root.slug)
         sidecar.parent.mkdir(parents=True, exist_ok=True)
         sidecar.write_text(result.model_dump_json(indent=2))
         await finish_agent_run(

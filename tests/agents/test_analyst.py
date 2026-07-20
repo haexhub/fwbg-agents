@@ -15,6 +15,7 @@ Plus: missing fwbg_results.json → AgentRun status=failed + exception bubbles.
 from __future__ import annotations
 
 import json
+import re
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -36,6 +37,7 @@ from fwbg_agents.agents.analyst import (
     _best_symbol_metrics_from_results,
     _median_metrics_across_assets,
     _render_catalog_snapshot,
+    _render_promote_gate_summary,
 )
 from fwbg_agents.orchestrator.plugin_catalog import (
     PluginCatalog,
@@ -300,6 +302,62 @@ def test_render_catalog_snapshot_lists_categories_and_slugs():
 def test_render_catalog_snapshot_empty():
     snap = _render_catalog_snapshot(PluginCatalog(by_category={}))
     assert "catalog empty" in snap.lower()
+
+
+def test_render_promote_gate_summary_redacts_metrics():
+    """The Analyst must see pass/fail + attempt count only — never the
+    holdout Sharpe, DSR value, or failure strings that could let the
+    iteration loop learn to fit the holdout window (Plan 014)."""
+    data = {
+        "passed": False,
+        "fail_count": 2,
+        "dsr": 0.421,
+        "n_trials": 17,
+        "runs": [
+            {
+                "label": "holdout",
+                "passed": False,
+                "metrics": {"sharpe": 0.732, "profit_factor": 1.05},
+                "failures": ["sharpe=0.732 < sharpe_min=1.0"],
+            },
+            {"label": "cost_stress", "passed": True, "metrics": {}, "failures": []},
+            {
+                "label": "dsr",
+                "passed": False,
+                "metrics": {"dsr": 0.421},
+                "failures": ["dsr=0.421 < dsr_min=0.95 (n_trials=17)"],
+            },
+        ],
+    }
+    rendered = _render_promote_gate_summary(data, max_attempts=3)
+
+    assert "holdout" in rendered
+    assert "failed" in rendered
+    assert "attempt 2 of 3" in rendered
+    assert "cost_stress" in rendered
+    assert "passed" in rendered
+    # No metric values must leak: no "dsr=" / "sharpe=" style key-value, and
+    # no decimal number anywhere in the rendered text.
+    assert "dsr=" not in rendered
+    assert "sharpe=" not in rendered
+    assert not re.search(r"\d+\.\d+", rendered)
+
+
+def test_render_promote_gate_summary_passed():
+    data = {
+        "passed": True,
+        "fail_count": 0,
+        "dsr": 0.99,
+        "n_trials": 5,
+        "runs": [
+            {"label": "holdout", "passed": True, "metrics": {}, "failures": []},
+            {"label": "cost_stress", "passed": True, "metrics": {}, "failures": []},
+            {"label": "dsr", "passed": True, "metrics": {}, "failures": []},
+        ],
+    }
+    rendered = _render_promote_gate_summary(data, max_attempts=3)
+    assert "PASSED" in rendered
+    assert not re.search(r"\d+\.\d+", rendered)
 
 
 def test_add_indicator_coerces_plural_category_and_bad_phase():
