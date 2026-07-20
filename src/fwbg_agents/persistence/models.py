@@ -17,6 +17,7 @@ from sqlalchemy import (
     JSON,
     Boolean,
     DateTime,
+    Float,
     ForeignKey,
     Integer,
     Numeric,
@@ -150,6 +151,23 @@ class CalibrationRun(Base):
     runs_with_elite: Mapped[int] = mapped_column(Integer, nullable=False)
     asset_classes_processed: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
     baseline_path: Mapped[str] = mapped_column(String(512), nullable=False)
+
+
+class TrialStat(Base):
+    """Durable per-backtest search-breadth snapshot (survives run-dir pruning)."""
+
+    __tablename__ = "trial_stat"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    run_id: Mapped[str] = mapped_column(String(128), unique=True, nullable=False)
+    strategy_id: Mapped[int | None] = mapped_column(
+        Integer, ForeignKey("strategy.id"), nullable=True, index=True
+    )
+    strategy_family: Mapped[str] = mapped_column(String(64), nullable=False, default="unknown")
+    n_trials: Mapped[int] = mapped_column(Integer, nullable=False)
+    trade_sharpe: Mapped[float | None] = mapped_column(Float, nullable=True)
+    n_trades: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    created_at: Mapped[datetime] = mapped_column(UtcDateTime(), nullable=False)
 
 
 class Strategy(Base):

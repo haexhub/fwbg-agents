@@ -204,6 +204,14 @@ class Settings(BaseSettings):
             "probability; below it, promote is blocked like a holdout fail."
         ),
     )
+    promote_max_attempts: int = Field(
+        default=3,
+        description=(
+            "Maximum promote-gate attempts per lineage; once reached, further "
+            "Promote recommendations fail the gate without running and the "
+            "Analyst is told the budget is exhausted."
+        ),
+    )
     min_iterations_before_abandon: int = Field(
         default=3,
         ge=1,

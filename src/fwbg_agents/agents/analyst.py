@@ -48,6 +48,7 @@ from fwbg_agents.orchestrator.interventions import (
 )
 from fwbg_agents.orchestrator.lifecycle import check_backtest_criteria, strategy_dir
 from fwbg_agents.orchestrator.lineage import render_family_history
+from fwbg_agents.orchestrator.lineage_boundary import lineage_root
 from fwbg_agents.orchestrator.live_catalog import LiveCatalog, fetch_live_catalog
 from fwbg_agents.orchestrator.metrics import (
     median_metrics_across_assets as _median_metrics_across_assets,
@@ -454,6 +455,25 @@ def _render_catalog_details(live: LiveCatalog) -> str:
     return "\n".join(lines)
 
 
+def _render_promote_gate_summary(data: dict, max_attempts: int) -> str:
+    """Redacted promote-gate summary for the Analyst prompt (Plan 014).
+
+    Only per-run ``label`` + ``passed`` and the attempt count are shown — no
+    metric values, no failure strings, no DSR number. A lineage may reiterate
+    many times; if the Analyst saw exactly how it failed the holdout, it
+    could optimize the iteration loop against the holdout itself, silently
+    turning "unseen data" into a validation set.
+    """
+    status = "PASSED" if data.get("passed") else "FAILED"
+    fail_count = data.get("fail_count", 0)
+    lines = [f"promote gate: {status} (attempt {fail_count} of {max_attempts})"]
+    for run in data.get("runs") or []:
+        label = run.get("label", "?")
+        run_passed = "passed" if run.get("passed") else "failed"
+        lines.append(f"  {label}: {run_passed}")
+    return "\n".join(lines)
+
+
 class Analyst:
     """LLM-driven agent that reads backtest results and emits a typed recommendation."""
 
@@ -501,12 +521,21 @@ class Analyst:
                 else "(no trade diagnostics available)"
             )
 
-            gate_path = strategy_dir(strategy.slug) / "promote_gate_results.json"
-            promote_gate = (
-                gate_path.read_text()
-                if gate_path.is_file()
-                else "(promote gate not yet run — no prior failure)"
-            )
+            gate_root = await lineage_root(self.session, strategy)
+            gate_path = strategy_dir(gate_root.slug) / "promote_gate_results.json"
+            promote_gate = "(promote gate not yet run — no prior failure)"
+            if gate_path.is_file():
+                try:
+                    gate_data = json.loads(gate_path.read_text())
+                    promote_gate = _render_promote_gate_summary(
+                        gate_data, settings.promote_max_attempts
+                    )
+                except (OSError, json.JSONDecodeError):
+                    log.warning(
+                        "analyst: unreadable promote_gate_results.json at %s",
+                        gate_path,
+                        exc_info=True,
+                    )
 
             live = await fetch_live_catalog(self.session, self.fwbg_client)
             catalog_snapshot = _render_catalog_details(live)

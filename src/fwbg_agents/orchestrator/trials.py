@@ -6,39 +6,32 @@ therefore benchmarks a candidate's Sharpe not against 0 but against the
 Sharpe the *best of N random trials* would be expected to show
 (Bailey & López de Prado 2014, "The Deflated Sharpe Ratio").
 
-Trial counting is filesystem-based: every completed backtest left an
-``iteration_*/fwbg_results.json`` sidecar, and each asset in it records its
-grid-search breadth (``total_combinations``). Grid combinations count as
-trials where readable; assets that don't expose them (``0``/missing) count
-conservatively as one trial each — that undercounts true search breadth, so
-the resulting DSR is an *upper* bound and the gate stays honest-or-stricter
-as artifacts improve.
+Trial counting is persisted at run completion. Undercounting ``n_trials``
+lowers E[max SR] and therefore weakens the gate; the durable census prevents
+silent undercounting when retention prunes run artifacts. Assets that don't
+expose ``total_combinations`` still count as 1 — a known, explicit undercount.
 
 Unit discipline: the DSR inputs must share one unit system. Everything here
 is **per-trade**: the candidate SR is mean/std of the trade-P&L series, skew
 and kurtosis come from the same series, ``n_obs`` is its length, and the
-across-trials SR variance is estimated from per-trade SRs of historical runs
-whose fwbg run dirs still exist (retention may have pruned older ones — the
-variance sample is a subset of the trials, which is the best available
-estimate, not a fabricated one).
+across-trials SR variance is estimated from durable per-run snapshots.
 """
 
 from __future__ import annotations
 
-import json
 import logging
 import math
 import statistics
+from datetime import UTC, datetime
 from pathlib import Path
 from statistics import NormalDist
 
 from pydantic import BaseModel
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from fwbg_agents.config import settings
 from fwbg_agents.orchestrator.trade_diagnostics import _load_symbol_trades
-from fwbg_agents.persistence.models import Strategy
+from fwbg_agents.persistence.models import Strategy, TrialStat
 
 log = logging.getLogger(__name__)
 
@@ -91,35 +84,22 @@ def per_trade_sharpe(pnls: list[float]) -> float | None:
 
 
 async def count_trials(session: AsyncSession) -> TrialCounts:
-    """Census over ``data/strategies/*/iteration_*/fwbg_results.json``."""
-    rows = await session.execute(select(Strategy.slug, Strategy.strategy_family))
-    family_by_slug = {slug: family for slug, family in rows}
-
-    strategies_root = settings.data_dir / "strategies"
-    global_runs = 0
-    global_trials = 0
-    by_family: dict[str, int] = {}
-    trade_sharpes: list[float] = []
-
-    if strategies_root.is_dir():
-        for results_path in sorted(strategies_root.glob("*/iteration_*/fwbg_results.json")):
-            try:
-                run_data = json.loads(results_path.read_text())
-            except (OSError, json.JSONDecodeError) as exc:
-                log.warning("count_trials: skipping %s (%s)", results_path, exc)
-                continue
-            slug = results_path.parent.parent.name
-            trials = _trials_in_run(run_data)
-            global_runs += 1
-            global_trials += trials
-            family = family_by_slug.get(slug) or "unknown"
-            by_family[family] = by_family.get(family, 0) + trials
-
-            run_id = run_data.get("run_id")
-            if isinstance(run_id, str) and run_id:
-                sr = per_trade_sharpe(pnl_series(settings.fwbg_test_results_dir / run_id))
-                if sr is not None:
-                    trade_sharpes.append(sr)
+    """DB-backed census of durable completed-backtest snapshots."""
+    totals = (
+        await session.execute(select(func.count(TrialStat.id), func.sum(TrialStat.n_trials)))
+    ).one()
+    global_runs = int(totals[0] or 0)
+    global_trials = int(totals[1] or 0)
+    family_rows = await session.execute(
+        select(TrialStat.strategy_family, func.sum(TrialStat.n_trials)).group_by(
+            TrialStat.strategy_family
+        )
+    )
+    by_family = {family: int(trials) for family, trials in family_rows}
+    sharpe_rows = await session.scalars(
+        select(TrialStat.trade_sharpe).where(TrialStat.trade_sharpe.is_not(None))
+    )
+    trade_sharpes = [float(sr) for sr in sharpe_rows if sr is not None and math.isfinite(sr)]
 
     return TrialCounts(
         global_runs=global_runs,
@@ -127,6 +107,37 @@ async def count_trials(session: AsyncSession) -> TrialCounts:
         by_family=by_family,
         trade_sharpes=trade_sharpes,
     )
+
+
+async def record_trial_stat(
+    session: AsyncSession,
+    *,
+    run_id: str,
+    strategy: Strategy,
+    run_data: dict,
+    run_dir: Path,
+) -> None:
+    """Insert one durable run snapshot; failures never fail the backtest."""
+    try:
+        async with session.begin_nested():
+            existing = await session.scalar(select(TrialStat.id).where(TrialStat.run_id == run_id))
+            if existing is not None:
+                return
+            pnls = [value for value in pnl_series(run_dir) if math.isfinite(value)]
+            session.add(
+                TrialStat(
+                    run_id=run_id,
+                    strategy_id=strategy.id,
+                    strategy_family=strategy.strategy_family or "unknown",
+                    n_trials=_trials_in_run(run_data),
+                    trade_sharpe=per_trade_sharpe(pnls),
+                    n_trades=len(pnls),
+                    created_at=datetime.now(UTC),
+                )
+            )
+            await session.flush()
+    except Exception:
+        log.exception("record_trial_stat: failed for run %s", run_id)
 
 
 def expected_max_sharpe(sr_variance_across_trials: float, n_trials: int) -> float:
@@ -171,6 +182,8 @@ def deflated_sharpe_ratio(
 
 def series_moments(pnls: list[float]) -> tuple[float, float, float] | None:
     """(per-trade SR, skew, raw kurtosis) of a P&L series; None if undefined."""
+    if not all(math.isfinite(x) for x in pnls):
+        return None
     n = len(pnls)
     if n < 2:
         return None
