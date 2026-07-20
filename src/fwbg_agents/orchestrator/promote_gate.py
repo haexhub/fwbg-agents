@@ -35,6 +35,7 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 import statistics
 from datetime import date
 from pathlib import Path
@@ -52,6 +53,7 @@ from fwbg_agents.orchestrator.trials import (
     count_trials,
     deflated_sharpe_ratio,
     pnl_series,
+    record_trial_stat,
     series_moments,
 )
 from fwbg_agents.persistence.agent_runs import (
@@ -112,16 +114,17 @@ async def _run_dsr_check(
 ) -> tuple[bool, float | None, int | None, list[str]]:
     """Deflated-Sharpe check on the holdout run's trade-P&L series.
 
-    Returns (passed, dsr, n_trials, failures). Passes trivially (no data to
-    judge) when the holdout run produced no readable trades or fewer than 2
-    historical trial-Sharpes exist to estimate cross-trial variance from —
-    an unproven DSR must never block a strategy that otherwise cleared
-    holdout + cost-stress; it can only ever add a stricter check once there
-    is enough history to compute one.
+    Returns (passed, dsr, n_trials, failures). Missing trade data passes, and
+    the visible cold-start branch passes with fewer than two historical
+    Sharpes. Non-finite computed inputs fail closed.
     """
     if not holdout_job_id:
         return True, None, None, []
-    pnls = pnl_series(settings.fwbg_test_results_dir / holdout_job_id)
+    raw_pnls = pnl_series(settings.fwbg_test_results_dir / holdout_job_id)
+    if any(not math.isfinite(value) for value in raw_pnls):
+        counts = await count_trials(session)
+        return False, None, counts.global_trials, ["dsr is NaN — non-finite inputs; failing closed"]
+    pnls = [value for value in raw_pnls if math.isfinite(value)]
     moments = series_moments(pnls)
     if moments is None:
         return True, None, None, []
@@ -129,8 +132,15 @@ async def _run_dsr_check(
 
     counts = await count_trials(session)
     if len(counts.trade_sharpes) < 2:
-        return True, None, counts.global_trials, []
+        return (
+            True,
+            None,
+            counts.global_trials,
+            ["dsr skipped: <2 historical trial sharpes (pass-open)"],
+        )
     sr_variance = statistics.variance(counts.trade_sharpes)
+    if not math.isfinite(sr_variance):
+        return False, None, counts.global_trials, ["dsr variance is non-finite; failing closed"]
 
     dsr = deflated_sharpe_ratio(
         sr,
@@ -140,6 +150,8 @@ async def _run_dsr_check(
         skew=skew,
         kurtosis=kurtosis,
     )
+    if math.isnan(dsr):
+        return False, None, counts.global_trials, ["dsr is NaN — non-finite inputs; failing closed"]
     if dsr < settings.dsr_min:
         return (
             False,
@@ -218,6 +230,13 @@ async def run_promote_gate(
                 continue
             if label == "holdout":
                 holdout_job_id = job_id
+            await record_trial_stat(
+                session,
+                run_id=job_id,
+                strategy=strategy,
+                run_data=run_data,
+                run_dir=settings.fwbg_test_results_dir / job_id,
+            )
             metrics = _median_metrics_across_assets(run_data)
             ok, failures = check_criteria_section(
                 asset_class=strategy.asset_class,  # type: ignore[arg-type]  # set for any BACKTESTED strategy

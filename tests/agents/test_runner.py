@@ -38,6 +38,7 @@ from fwbg_agents.persistence.models import (
     Strategy,
     StrategyState,
     Transition,
+    TrialStat,
 )
 from fwbg_agents.tools.fwbg_client import FwbgClientError
 
@@ -196,6 +197,7 @@ async def runner_env(tmp_path, monkeypatch):
     from fwbg_agents.config import settings
 
     monkeypatch.setattr(settings, "data_dir", tmp_path / "agents_data")
+    monkeypatch.setattr(settings, "fwbg_test_results_dir", tmp_path / "test_results")
     # Make poll loops fast so tests take ~ms.
     monkeypatch.setattr(settings, "runner_poll_interval_seconds", 0.001)
     monkeypatch.setattr(settings, "runner_poll_timeout_seconds", 5.0)
@@ -273,6 +275,11 @@ async def test_runner_happy_path_transitions_to_backtested(runner_env):
         / "fwbg_results.json"
     )
     assert json.loads(results_path.read_text())["status"] == "completed"
+    async with SessionMaker() as session:
+        stat = await session.scalar(select(TrialStat).where(TrialStat.run_id == "job_test_42"))
+    assert stat is not None
+    assert stat.n_trials == 1
+    assert stat.n_trades == 0
 
 
 async def test_runner_leaves_existing_fwbg_strategy_untouched(runner_env):

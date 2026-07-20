@@ -21,7 +21,7 @@ from fwbg_agents.agents.analyst import Promote
 from fwbg_agents.orchestrator.promote_gate import run_promote_gate
 from fwbg_agents.orchestrator.recommendations import validate_and_apply
 from fwbg_agents.persistence.database import Base
-from fwbg_agents.persistence.models import Strategy, StrategyState
+from fwbg_agents.persistence.models import Strategy, StrategyState, TrialStat
 
 
 def _run(sharpe=1.5, pf=1.5, annual=20.0, trades=120):
@@ -72,6 +72,7 @@ async def gate_env(tmp_path, monkeypatch):
     from fwbg_agents.config import settings
 
     monkeypatch.setattr(settings, "data_dir", tmp_path / "agents_data")
+    monkeypatch.setattr(settings, "fwbg_test_results_dir", tmp_path / "test_results")
     monkeypatch.setattr(settings, "runner_poll_interval_seconds", 0.001)
     monkeypatch.setattr(settings, "runner_poll_timeout_seconds", 5.0)
     monkeypatch.setattr(settings, "holdout_months", 24)
@@ -363,6 +364,26 @@ async def test_gate_fails_on_low_dsr_despite_clean_holdout_and_cost_stress(gate_
                     updated_at=now,
                 )
             )
+        session.add_all(
+            [
+                TrialStat(
+                    run_id="hist_run_a",
+                    strategy_family="ORB",
+                    n_trials=1,
+                    trade_sharpe=0.1,
+                    n_trades=10,
+                    created_at=now,
+                ),
+                TrialStat(
+                    run_id="hist_run_b",
+                    strategy_family="ORB",
+                    n_trials=1,
+                    trade_sharpe=-0.1,
+                    n_trades=10,
+                    created_at=now,
+                ),
+            ]
+        )
         await session.commit()
 
     for slug, run_id, pnls in [
@@ -413,6 +434,44 @@ async def test_gate_fails_on_low_dsr_despite_clean_holdout_and_cost_stress(gate_
     assert dsr.metrics["dsr"] < settings.dsr_min
     assert result.dsr == dsr.metrics["dsr"]
     assert result.n_trials is not None and result.n_trials >= 2
+
+
+async def test_gate_fails_closed_on_literal_nan_holdout_trade(gate_env):
+    Session, sid, settings = gate_env
+    now = datetime.now(UTC)
+    async with Session() as session:
+        session.add_all(
+            [
+                TrialStat(
+                    run_id="prior_1",
+                    strategy_family="ORB",
+                    n_trials=1,
+                    trade_sharpe=0.1,
+                    n_trades=10,
+                    created_at=now,
+                ),
+                TrialStat(
+                    run_id="prior_2",
+                    strategy_family="ORB",
+                    n_trials=1,
+                    trade_sharpe=-0.1,
+                    n_trades=10,
+                    created_at=now,
+                ),
+            ]
+        )
+        await session.commit()
+    _write_run_trades(settings, "job_1", "EURUSD", [1.0, float("nan"), -1.0])
+
+    async with Session() as session:
+        strategy = await session.get(Strategy, sid)
+        assert strategy is not None
+        result = await run_promote_gate(session, strategy, fwbg_client=_GateFake([_run(), _run()]))
+
+    dsr_run = next(run for run in result.runs if run.label == "dsr")
+    assert result.passed is False
+    assert dsr_run.passed is False
+    assert dsr_run.failures == ["dsr is NaN — non-finite inputs; failing closed"]
 
 
 async def test_validate_and_apply_promote_passes_gate_and_transitions(gate_env):

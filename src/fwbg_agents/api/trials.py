@@ -22,9 +22,7 @@ router = APIRouter(tags=["trials"])
 
 
 class TrialsSummary(BaseModel):
-    """Global search-breadth census as of now (recomputed on every call —
-    it's a filesystem scan, not a cached snapshot, so it reflects the latest
-    completed backtests)."""
+    """Global search-breadth census from durable completed-run snapshots."""
 
     n_trials: int
     sr_variance_across_trials: float | None  # None below 2 historical samples
