@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-import json
+from datetime import UTC, datetime
 
 import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from fwbg_agents.main import app
 from fwbg_agents.persistence.database import Base, get_session
+from fwbg_agents.persistence.models import TrialStat
 
 
 @pytest_asyncio.fixture
@@ -53,37 +54,18 @@ async def test_trials_summary_empty_when_no_backtests(client_with_db):
 
 
 async def test_trials_summary_counts_trials_and_variance(client_with_db):
-    client, _session, _tmp_path = client_with_db
-    from fwbg_agents.config import settings
-
-    it_dir = settings.data_dir / "strategies" / "demo__forex__001" / "iteration_001"
-    it_dir.mkdir(parents=True, exist_ok=True)
-    (it_dir / "fwbg_results.json").write_text(
-        json.dumps(
-            {
-                "run_id": "run_a",
-                "assets": {"EURUSD": {"unified_metrics": {}, "total_combinations": 4}},
-            }
+    client, session, _tmp_path = client_with_db
+    session.add(
+        TrialStat(
+            run_id="run_a",
+            strategy_family="ORB",
+            n_trials=4,
+            trade_sharpe=0.2,
+            n_trades=5,
+            created_at=datetime.now(UTC),
         )
     )
-    sym_dir = settings.fwbg_test_results_dir / "run_a" / "grid_details" / "EURUSD"
-    sym_dir.mkdir(parents=True, exist_ok=True)
-    (sym_dir / "fold_results.json").write_text(
-        json.dumps(
-            {
-                "walk_forward": {
-                    "fold_details": [
-                        {
-                            "test_trades_detail": [
-                                {"pnl_raw": p, "entry_time": "2024-01-01T00:00:00"}
-                                for p in [5, -4, 6, -5, 4]
-                            ]
-                        }
-                    ]
-                }
-            }
-        )
-    )
+    await session.commit()
 
     resp = await client.get("/trials/summary")
     assert resp.status_code == 200
