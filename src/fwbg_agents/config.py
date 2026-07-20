@@ -24,7 +24,7 @@ class Settings(BaseSettings):
         default="proxy-not-used",
         description="Required by SDK; proxy ignores it in favor of OAuth",
     )
-    anthropic_model: str = Field(default="claude-opus-4-7")
+    anthropic_model: str = Field(default="claude-sonnet-5")
     llm_price_table_json: str | None = Field(
         default=None,
         description=(
@@ -232,7 +232,7 @@ class Settings(BaseSettings):
         description="Stronger model for the PluginPlanner agent (reasoning-heavy plan emission).",
     )
     plugin_implementer_model: str = Field(
-        default="claude-opus-4-7",
+        default="claude-sonnet-5",
         description="Weaker model for the PluginImplementer agent (mechanical code generation).",
     )
     plugin_impl_max_rounds: int = Field(

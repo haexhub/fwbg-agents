@@ -15,7 +15,7 @@ def test_defaults_when_no_env(monkeypatch: pytest.MonkeyPatch) -> None:
 
     s = Settings(_env_file=None)
     assert s.plugin_planner_model == "claude-opus-4-8"
-    assert s.plugin_implementer_model == "claude-opus-4-7"
+    assert s.plugin_implementer_model == "claude-sonnet-5"
     assert s.plugin_impl_max_rounds == 5
 
 
