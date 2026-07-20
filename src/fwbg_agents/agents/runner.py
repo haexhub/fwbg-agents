@@ -58,6 +58,7 @@ from fwbg_agents.orchestrator.metrics import (
 )
 from fwbg_agents.orchestrator.strategy_validator import signal_model_has_source
 from fwbg_agents.orchestrator.trade_diagnostics import compute_trade_diagnostics
+from fwbg_agents.orchestrator.trials import record_trial_stat
 from fwbg_agents.orchestrator.universe import (
     UniverseAttempt,
     plan_universe_attempts,
@@ -346,6 +347,13 @@ class Runner:
                 # Success — persist and transition.
                 results_path = iteration_dir / "fwbg_results.json"
                 results_path.write_text(json.dumps(run_data, indent=2, sort_keys=True))
+                await record_trial_stat(
+                    self.session,
+                    run_id=job_id,
+                    strategy=strategy,
+                    run_data=run_data,
+                    run_dir=settings.fwbg_test_results_dir / job_id,
+                )
                 _write_trade_diagnostics(iteration_dir, job_id, run_data)
                 universe = {
                     "label": attempt.label,
