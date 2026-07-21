@@ -95,16 +95,21 @@ async def _stream_request_node(node: Any, ctx: Any, coalescer: _DeltaCoalescer) 
 
     Wrapped in a broad ``try`` by the caller: a model that cannot stream (the
     test ``FunctionModel``) raises here, and we fall back to the plain node walk.
+    The ``finally`` flushes whatever was buffered even when the stream raises
+    mid-way, so partial deltas are emitted and no stale buffer leaks into the
+    next request node.
     """
-    async with node.stream(ctx) as stream:
-        async for event in stream:
-            if isinstance(event, PartDeltaEvent):
-                delta = event.delta
-                if isinstance(delta, ThinkingPartDelta):
-                    coalescer.add("thinking", delta.content_delta or "")
-                elif isinstance(delta, TextPartDelta):
-                    coalescer.add("text", delta.content_delta or "")
-    coalescer.flush()
+    try:
+        async with node.stream(ctx) as stream:
+            async for event in stream:
+                if isinstance(event, PartDeltaEvent):
+                    delta = event.delta
+                    if isinstance(delta, ThinkingPartDelta):
+                        coalescer.add("thinking", delta.content_delta or "")
+                    elif isinstance(delta, TextPartDelta):
+                        coalescer.add("text", delta.content_delta or "")
+    finally:
+        coalescer.flush()
 
 
 def _truncate(text: str, limit: int = _TRUNC) -> str:
@@ -172,12 +177,18 @@ async def run_instrumented[OutputT](
             if Agent.is_model_request_node(node):
                 try:
                     await _stream_request_node(node, run.ctx, coalescer)
-                except Exception:
+                except Exception as exc:
+                    # Streaming is telemetry — it must never abort a live agent
+                    # run (same invariant as the tool-event block below). The
+                    # node still executes via the normal walk. Log the actual
+                    # error once so an unexpected failure is diagnosable, not
+                    # silently indistinguishable from the FunctionModel case.
                     if not _stream_unsupported_logged:
                         log.info(
-                            "run %s: model does not support streaming; "
+                            "run %s: token streaming unavailable (%s); "
                             "falling back to non-streaming node walk",
                             agent_run_id,
+                            exc,
                         )
                         _stream_unsupported_logged = True
             try:

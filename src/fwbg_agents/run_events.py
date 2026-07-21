@@ -64,9 +64,7 @@ def _next_seq(agent_run_id: int) -> int:
     return seq
 
 
-def emit_run_event(
-    agent_run_id: int, type: str, *, persist: bool = True, **payload: object
-) -> None:
+def emit_run_event(agent_run_id: int, type: str, **payload: object) -> None:
     """Append a timeline event to the run's JSONL log and broadcast it on SSE.
 
     ``type`` is the event kind (e.g. ``"research_search"``, ``"llm_tool_call"``).
@@ -79,7 +77,10 @@ def emit_run_event(
     for high-volume LLM token deltas (``llm_delta`` — Plan live-flow-overview
     WP-B3): persisting them would flood the log and the SSE queue drops at 200
     entries; a finished run replays its reasoning from the transcript instead.
+    (``persist`` is read out of ``payload`` rather than a typed keyword-only
+    param so callers can forward ``**dict[str, object]`` without a type clash.)
     """
+    persist = bool(payload.pop("persist", True))
     event: dict = {
         "seq": _next_seq(agent_run_id),
         "ts": datetime.now(UTC).isoformat(),
