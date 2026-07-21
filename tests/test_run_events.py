@@ -63,3 +63,29 @@ async def test_emit_broadcasts_on_sse_bus(run_events):
     assert evt["tool_name"] == "search_web"
     assert "seq" in evt
     await agen.aclose()
+
+
+def test_persist_false_does_not_write_jsonl(run_events):
+    """A live-only event (persist=False) must never touch events.jsonl."""
+    run_events.emit_run_event(5, "llm_delta", persist=False, kind="text", text="hi")
+
+    assert not (run_events.run_dir(5) / "events.jsonl").exists()
+    assert run_events.read_run_events(5) == []
+
+
+async def test_persist_false_still_broadcasts(run_events):
+    """A live-only event is still delivered on the SSE bus."""
+    from fwbg_agents import events as event_bus
+
+    agen = event_bus.subscribe()
+    task = asyncio.ensure_future(agen.__anext__())
+    await asyncio.sleep(0.05)
+
+    run_events.emit_run_event(6, "llm_delta", persist=False, kind="thinking", text="…")
+
+    evt = await asyncio.wait_for(task, timeout=1.0)
+    assert evt["type"] == "llm_delta"
+    assert evt["agent_run_id"] == 6
+    assert evt["kind"] == "thinking"
+    assert "seq" in evt
+    await agen.aclose()

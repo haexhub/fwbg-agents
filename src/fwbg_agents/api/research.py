@@ -41,6 +41,7 @@ from fwbg_agents.persistence.models import (
     Strategy,
     StrategyState,
 )
+from fwbg_agents.run_events import emit_run_event
 from fwbg_agents.tools.fwbg_client import FwbgClient, FwbgClientError
 from fwbg_agents.tools.search import BraveClient, FallbackSearchClient, TavilyClient
 from fwbg_agents.tools.secrets import get_secret
@@ -112,6 +113,12 @@ async def _run_research_background(input: ResearcherInput, agent_run_id: int) ->
                 strategy_id,
             )
             try:
+                # The envelope run is already DONE and the use_parent_run scope
+                # has exited, so emit the backtesting marker directly on the flow
+                # id — the auto-backtest runs as its own top-level runner run.
+                emit_run_event(
+                    agent_run_id, "flow_phase", phase="backtesting", strategy_id=strategy_id
+                )
                 async with SessionLocal() as runner_session:
                     s = (
                         await runner_session.execute(

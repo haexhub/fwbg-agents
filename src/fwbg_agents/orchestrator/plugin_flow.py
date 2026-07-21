@@ -35,6 +35,7 @@ from fwbg_agents.orchestrator.lifecycle import strategy_dir, transition_plugin
 from fwbg_agents.orchestrator.live_catalog import fetch_live_catalog
 from fwbg_agents.orchestrator.plugin_contract import dump_contract
 from fwbg_agents.persistence.agent_runs import (
+    emit_flow_phase,
     fail_agent_run,
 )
 from fwbg_agents.persistence.agent_runs import (
@@ -206,6 +207,9 @@ async def author_plugin_from_strategy(
             strategy_id=strategy.id,
             input_artifact_path=str(sidecar_path),
         )
+        emit_flow_phase(
+            "planning", strategy_id=strategy.id, slug=strategy.slug, child_run_id=planner_ar.id
+        )
         try:
             planner = PluginPlanner(model=planner_model)
             planner_result = await planner.run_plan(
@@ -239,6 +243,9 @@ async def author_plugin_from_strategy(
         agent_name="plugin_implementer",
         strategy_id=strategy.id,
         input_artifact_path=str(planner_result.plan_path),
+    )
+    emit_flow_phase(
+        "implementing", strategy_id=strategy.id, slug=strategy.slug, child_run_id=impl_ar.id
     )
     try:
         implementer = PluginImplementer(model=implementer_model)

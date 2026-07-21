@@ -26,7 +26,12 @@ from typing import Any
 
 from pydantic_ai import Agent
 from pydantic_ai.agent import AgentRunResult
-from pydantic_ai.messages import ModelMessagesTypeAdapter
+from pydantic_ai.messages import (
+    ModelMessagesTypeAdapter,
+    PartDeltaEvent,
+    TextPartDelta,
+    ThinkingPartDelta,
+)
 
 from fwbg_agents.run_events import emit_run_event, run_dir
 
@@ -39,6 +44,67 @@ _TRUNC = 2048
 # Default name pydantic-ai gives the structured-output tool. Skipped in the
 # timeline — the final answer is rendered from the transcript, not as a tool call.
 _OUTPUT_TOOL = "final_result"
+
+# Coalesce token deltas until the buffer reaches this many chars, then flush one
+# ``llm_delta`` event. Bounds SSE volume without making the stream feel laggy.
+_DELTA_FLUSH_CHARS = 120
+
+# Log the "model can't stream" fallback once per process (FunctionModel in tests
+# raises on .stream()); repeating it for every request node would be noise.
+_stream_unsupported_logged = False
+
+
+class _DeltaCoalescer:
+    """Buffer streamed reasoning/answer tokens and flush them as ``llm_delta``.
+
+    Deltas are grouped by ``kind`` ("thinking" | "text") and emitted live-only
+    (``persist=False``) once a buffer crosses :data:`_DELTA_FLUSH_CHARS` or at
+    part/stream end, so the dashboard shows reasoning as it streams without
+    flooding the SSE queue. Nothing is persisted — a finished run's reasoning is
+    replayed from the transcript.
+    """
+
+    def __init__(self, agent_run_id: int, round_idx: int) -> None:
+        self._id = agent_run_id
+        self._round = round_idx
+        self._buf: dict[str, str] = {"thinking": "", "text": ""}
+
+    def add(self, kind: str, text: str) -> None:
+        if not text:
+            return
+        self._buf[kind] += text
+        if len(self._buf[kind]) >= _DELTA_FLUSH_CHARS:
+            self.flush(kind)
+
+    def flush(self, kind: str | None = None) -> None:
+        for k in (kind,) if kind is not None else ("thinking", "text"):
+            if self._buf[k]:
+                emit_run_event(
+                    self._id,
+                    "llm_delta",
+                    persist=False,
+                    kind=k,
+                    round=self._round,
+                    text=self._buf[k],
+                )
+                self._buf[k] = ""
+
+
+async def _stream_request_node(node: Any, ctx: Any, coalescer: _DeltaCoalescer) -> None:
+    """Stream a ModelRequestNode, coalescing text/thinking deltas into events.
+
+    Wrapped in a broad ``try`` by the caller: a model that cannot stream (the
+    test ``FunctionModel``) raises here, and we fall back to the plain node walk.
+    """
+    async with node.stream(ctx) as stream:
+        async for event in stream:
+            if isinstance(event, PartDeltaEvent):
+                delta = event.delta
+                if isinstance(delta, ThinkingPartDelta):
+                    coalescer.add("thinking", delta.content_delta or "")
+                elif isinstance(delta, TextPartDelta):
+                    coalescer.add("text", delta.content_delta or "")
+    coalescer.flush()
 
 
 def _truncate(text: str, limit: int = _TRUNC) -> str:
@@ -96,8 +162,24 @@ async def run_instrumented[OutputT](
     with the model name + token usage. Exceptions from the run propagate
     unchanged; telemetry/transcript errors are logged, never raised.
     """
+    global _stream_unsupported_logged
+    coalescer = _DeltaCoalescer(agent_run_id, round_idx)
     async with agent.iter(user_prompt) as run:
         async for node in run:
+            # Stream token deltas for the model request — only if the model
+            # supports it (real AnthropicModels do; the test FunctionModel does
+            # not and raises, in which case we fall back to the plain node walk).
+            if Agent.is_model_request_node(node):
+                try:
+                    await _stream_request_node(node, run.ctx, coalescer)
+                except Exception:
+                    if not _stream_unsupported_logged:
+                        log.info(
+                            "run %s: model does not support streaming; "
+                            "falling back to non-streaming node walk",
+                            agent_run_id,
+                        )
+                        _stream_unsupported_logged = True
             try:
                 # Tool CALLS live on the model response of a CallToolsNode.
                 resp = getattr(node, "model_response", None)

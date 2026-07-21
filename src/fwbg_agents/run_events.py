@@ -64,13 +64,21 @@ def _next_seq(agent_run_id: int) -> int:
     return seq
 
 
-def emit_run_event(agent_run_id: int, type: str, **payload: object) -> None:
+def emit_run_event(
+    agent_run_id: int, type: str, *, persist: bool = True, **payload: object
+) -> None:
     """Append a timeline event to the run's JSONL log and broadcast it on SSE.
 
     ``type`` is the event kind (e.g. ``"research_search"``, ``"llm_tool_call"``).
     Extra keyword arguments become the event payload. Persistence failures are
     logged, never raised. The SSE broadcast always runs, even if the disk write
     failed, so a live dashboard is not starved by a transient disk error.
+
+    ``persist=False`` makes the event live-only: it is broadcast on SSE (with a
+    ``seq``/``ts`` like any other) but never written to ``events.jsonl``. Used
+    for high-volume LLM token deltas (``llm_delta`` — Plan live-flow-overview
+    WP-B3): persisting them would flood the log and the SSE queue drops at 200
+    entries; a finished run replays its reasoning from the transcript instead.
     """
     event: dict = {
         "seq": _next_seq(agent_run_id),
@@ -78,13 +86,14 @@ def emit_run_event(agent_run_id: int, type: str, **payload: object) -> None:
         "type": type,
         **payload,
     }
-    try:
-        d = run_dir(agent_run_id)
-        d.mkdir(parents=True, exist_ok=True)
-        with _events_file(agent_run_id).open("a", encoding="utf-8") as fh:
-            fh.write(json.dumps(event, default=str) + "\n")
-    except OSError as exc:
-        log.warning("run %s: failed to persist event %s: %s", agent_run_id, type, exc)
+    if persist:
+        try:
+            d = run_dir(agent_run_id)
+            d.mkdir(parents=True, exist_ok=True)
+            with _events_file(agent_run_id).open("a", encoding="utf-8") as fh:
+                fh.write(json.dumps(event, default=str) + "\n")
+        except OSError as exc:
+            log.warning("run %s: failed to persist event %s: %s", agent_run_id, type, exc)
     event_bus.emit({**event, "agent_run_id": agent_run_id})
 
 

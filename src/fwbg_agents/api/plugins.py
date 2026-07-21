@@ -43,6 +43,7 @@ from fwbg_agents.persistence.models import (
     Transition,
     VerificationRun,
 )
+from fwbg_agents.run_events import emit_run_event
 
 log = logging.getLogger(__name__)
 
@@ -206,7 +207,10 @@ async def _run_evaluator_background(plugin_id: int, agent_run_id: int) -> None:
         ar.status = AgentRunStatus.RUNNING.value
         await session.commit()
         try:
-            vr_id = await evaluate_plugin(session, plugin_id)
+            # Route the evaluator's timeline events onto this envelope run so the
+            # detail view is not empty (the auto-runner path already does this).
+            emit_run_event(agent_run_id, "flow_phase", phase="evaluating", plugin_id=plugin_id)
+            vr_id = await evaluate_plugin(session, plugin_id, agent_run_id=agent_run_id)
             vr = (
                 await session.execute(select(VerificationRun).where(VerificationRun.id == vr_id))
             ).scalar_one()
