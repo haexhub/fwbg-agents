@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.30.0](https://github.com/haexhub/fwbg-agents/compare/v0.29.0...v0.30.0) (2026-07-21)
+
+
+### Features
+
+* live flow-agent overview (envelope aggregation + reasoning stream) ([c29a5e7](https://github.com/haexhub/fwbg-agents/commit/c29a5e798ee202f12e6ab3e2f9d756166b083350))
+* live flow-agent overview (envelope aggregation + reasoning stream) ([f96be38](https://github.com/haexhub/fwbg-agents/commit/f96be381ce230aba201003f09481aa8106c7ea2c))
+
+
+### Bug Fixes
+
+* mypy on emit_run_event persist + robust stream coalescer flush ([ff9e3fb](https://github.com/haexhub/fwbg-agents/commit/ff9e3fbc3ac05fd3e4b01f9287ae537f83531419))
+
 ## [0.29.0](https://github.com/haexhub/fwbg-agents/compare/v0.28.0...v0.29.0) (2026-07-20)
 
 
