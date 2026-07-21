@@ -227,6 +227,105 @@ async def test_get_agent_run_exposes_parent_and_children(runs_client):
     assert child_body["children"] == []
 
 
+async def test_get_agent_run_descendants_recursive(runs_client):
+    """The detail endpoint returns the whole subtree, not just direct children
+    (Plan live-flow-overview WP-B2): flow → planner → (implementer under planner)."""
+    client, session, _, _, _ = runs_client
+    now = datetime.now(UTC)
+    flow = AgentRun(
+        agent_name="plugin_author_flow",
+        status=AgentRunStatus.RUNNING.value,
+        started_at=now,
+        created_at=now,
+    )
+    session.add(flow)
+    await session.commit()
+    await session.refresh(flow)
+
+    planner = AgentRun(
+        agent_name="plugin_planner",
+        status=AgentRunStatus.DONE.value,
+        parent_run_id=flow.id,
+        started_at=now,
+        created_at=now,
+    )
+    session.add(planner)
+    await session.commit()
+    await session.refresh(planner)
+
+    # A grandchild parented under the planner — must still surface via BFS.
+    grandchild = AgentRun(
+        agent_name="plugin_implementer",
+        status=AgentRunStatus.RUNNING.value,
+        parent_run_id=planner.id,
+        started_at=now,
+        created_at=now,
+    )
+    session.add(grandchild)
+    await session.commit()
+    await session.refresh(grandchild)
+
+    r = await client.get(f"/agents/runs/{flow.id}")
+    assert r.status_code == 200, r.text
+    body = r.json()
+    # children stays single-level; descendants is the full subtree.
+    assert [c["agent_name"] for c in body["children"]] == ["plugin_planner"]
+    names = {d["agent_name"] for d in body["descendants"]}
+    assert names == {"plugin_planner", "plugin_implementer"}
+    gc = next(d for d in body["descendants"] if d["agent_name"] == "plugin_implementer")
+    assert gc["parent_run_id"] == planner.id
+
+
+async def test_get_agent_run_events_include_descendants_merges(runs_client):
+    """include_descendants=true merges + tags events across the whole subtree,
+    sorted by ts (Plan live-flow-overview WP-B2)."""
+    from fwbg_agents import run_events
+
+    run_events._seq_cache.clear()
+    client, session, _, _, _ = runs_client
+    now = datetime.now(UTC)
+    flow = AgentRun(
+        agent_name="research_flow",
+        status=AgentRunStatus.RUNNING.value,
+        started_at=now,
+        created_at=now,
+    )
+    session.add(flow)
+    await session.commit()
+    await session.refresh(flow)
+    child = AgentRun(
+        agent_name="researcher",
+        status=AgentRunStatus.RUNNING.value,
+        parent_run_id=flow.id,
+        started_at=now,
+        created_at=now,
+    )
+    session.add(child)
+    await session.commit()
+    await session.refresh(child)
+
+    # Interleave emissions so the merge genuinely has to re-sort by ts.
+    run_events.emit_run_event(flow.id, "flow_phase", phase="researching")
+    run_events.emit_run_event(child.id, "research_search", query="orb")
+    run_events.emit_run_event(flow.id, "flow_phase", phase="translating")
+
+    # Default: only the envelope's own events, untagged.
+    r_default = await client.get(f"/agents/runs/{flow.id}/events")
+    assert [e["type"] for e in r_default.json()] == ["flow_phase", "flow_phase"]
+
+    # include_descendants: child events folded in, each tagged with its source.
+    r = await client.get(f"/agents/runs/{flow.id}/events?include_descendants=true")
+    assert r.status_code == 200, r.text
+    events = r.json()
+    assert len(events) == 3
+    assert all("agent_run_id" in e and "agent_name" in e for e in events)
+    search = next(e for e in events if e["type"] == "research_search")
+    assert search["agent_run_id"] == child.id
+    assert search["agent_name"] == "researcher"
+    # Chronological (ts) order preserved across runs.
+    assert [e["ts"] for e in events] == sorted(e["ts"] for e in events)
+
+
 async def test_get_agent_run_404(runs_client):
     client, _, _, _, _ = runs_client
     r = await client.get("/agents/runs/99999")

@@ -41,6 +41,7 @@ from fwbg_agents.orchestrator.hypotheses import (
 from fwbg_agents.orchestrator.lifecycle import strategy_dir
 from fwbg_agents.orchestrator.lineage import generation_depth
 from fwbg_agents.orchestrator.live_catalog import fetch_live_catalog, researcher_summary
+from fwbg_agents.persistence.agent_runs import emit_flow_phase
 from fwbg_agents.persistence.database import SessionLocal
 from fwbg_agents.persistence.models import (
     Strategy,
@@ -380,6 +381,7 @@ async def _research_and_translate(
     # CURRENT plugin set (it grows as plugins are adopted), not a frozen list.
     live = await fetch_live_catalog(session, fwbg_client)
     critic_report: CriticReport | None = None
+    emit_flow_phase("researching")
     if candidates_n <= 1:
         hypothesis = await _generate_valid_hypothesis(
             input,
@@ -397,6 +399,7 @@ async def _research_and_translate(
             candidates_n=candidates_n,
             available_plugins=researcher_summary(live),
         )
+        emit_flow_phase("critiquing")
         hypothesis, critic_report = await _select_hypothesis_via_critic(
             session, candidates, model=model
         )
@@ -455,6 +458,10 @@ async def _research_and_translate(
     )
     await session.commit()
     await session.refresh(strategy)
+
+    # Target strategy now exists → fill the envelope header early ("arbeitet an
+    # Strategie X") rather than only once the whole flow finishes.
+    emit_flow_phase("translating", strategy_id=strategy.id, slug=slug, title=hypothesis.title)
 
     translator = Translator(session, model=model, fwbg_client=fwbg_client)
     strategy_path = await translator.run_fresh(strategy)
@@ -519,6 +526,7 @@ async def reiterate(
         else FwbgClient(base_url=settings.fwbg_api_url, api_key=settings.fwbg_api_key)
     )
     try:
+        emit_flow_phase("translating", strategy_id=parent.id, slug=parent.slug)
         translator = Translator(session, model=model, fwbg_client=client)
         child = await translator.run_reiterate(parent)
 

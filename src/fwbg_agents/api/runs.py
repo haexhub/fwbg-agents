@@ -331,6 +331,39 @@ def _artifact_info(kind: str, path: str | None) -> dict[str, Any]:
     return info
 
 
+async def _descendant_runs(session: AsyncSession, root_id: int) -> list[AgentRun]:
+    """All AgentRuns transitively parented under ``root_id`` (root excluded).
+
+    Iterative BFS over ``parent_run_id`` so a whole flow subtree (research_flow →
+    researcher/critic/translator, plugin_author_flow → planner/implementer, …)
+    can be aggregated into one envelope view — Plan live-flow-overview WP-B2. The
+    ``seen`` set makes a malformed parent cycle terminate instead of looping.
+    """
+    out: list[AgentRun] = []
+    frontier = [root_id]
+    seen: set[int] = {root_id}
+    while frontier:
+        rows = (
+            (
+                await session.execute(
+                    select(AgentRun)
+                    .where(AgentRun.parent_run_id.in_(frontier))
+                    .order_by(asc(AgentRun.started_at))
+                )
+            )
+            .scalars()
+            .all()
+        )
+        frontier = []
+        for r in rows:
+            if r.id in seen:
+                continue
+            seen.add(r.id)
+            out.append(r)
+            frontier.append(r.id)
+    return out
+
+
 def _list_transcripts(agent_run_id: int) -> list[dict[str, Any]]:
     """Round number + size for each transcript_NNN.json on disk, ascending."""
     d = run_dir(agent_run_id)
@@ -397,6 +430,18 @@ async def get_agent_run(
     body["total_output_tokens"] = sum(c.output_tokens for c in calls)
     body["children"] = [
         {"id": c.id, "agent_name": c.agent_name, "status": c.status} for c in children
+    ]
+    # Whole subtree (recursive) — the frontend needs the full id set to filter
+    # the live SSE stream and to backfill events across all flow children.
+    descendants = await _descendant_runs(session, agent_run_id)
+    body["descendants"] = [
+        {
+            "id": d.id,
+            "agent_name": d.agent_name,
+            "status": d.status,
+            "parent_run_id": d.parent_run_id,
+        }
+        for d in descendants
     ]
     body["transcripts"] = _list_transcripts(agent_run_id)
     body["artifacts"] = [
@@ -485,17 +530,39 @@ async def get_agent_run_artifact(
 
 @router.get("/agents/runs/{agent_run_id}/events")
 async def get_agent_run_events(
-    agent_run_id: int, session: AsyncSession = Depends(get_session)
+    agent_run_id: int,
+    include_descendants: bool = False,
+    session: AsyncSession = Depends(get_session),
 ) -> list[dict[str, Any]]:
     """Return a run's persisted timeline events in sequence order (bare array).
 
     404 if the run does not exist; an empty list is valid (runs from before the
     timeline feature have no events file). Matches the dashboard proxy contract
     `server/api/agents/runs/[id]/events.get.ts` (Array<Record<string, unknown>>).
+
+    With ``include_descendants=true`` (Plan live-flow-overview WP-B2), the flow
+    envelope's own events are merged with every descendant run's events, each
+    row tagged with its source ``agent_run_id`` + ``agent_name`` and the whole
+    set re-sorted by ``ts`` — so one envelope view shows the entire flow. The
+    default (``false``) is byte-for-byte the previous behaviour (Runner path
+    unchanged).
     """
     ar = (
         await session.execute(select(AgentRun).where(AgentRun.id == agent_run_id))
     ).scalar_one_or_none()
     if ar is None:
         raise HTTPException(404, f"agent_run {agent_run_id} not found")
-    return read_run_events(agent_run_id)
+    if not include_descendants:
+        return read_run_events(agent_run_id)
+
+    id_to_name = {agent_run_id: ar.agent_name}
+    for d in await _descendant_runs(session, agent_run_id):
+        id_to_name[d.id] = d.agent_name
+    merged: list[dict[str, Any]] = []
+    for run_id, agent_name in id_to_name.items():
+        for ev in read_run_events(run_id):
+            merged.append({**ev, "agent_run_id": run_id, "agent_name": agent_name})
+    # ISO-8601 ts sorts chronologically as a plain string; fall back to "" so a
+    # malformed/absent ts never raises.
+    merged.sort(key=lambda e: str(e.get("ts") or ""))
+    return merged
