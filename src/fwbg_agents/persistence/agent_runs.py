@@ -35,6 +35,32 @@ _TERMINAL = (AgentRunStatus.DONE, AgentRunStatus.FAILED)
 _parent_run: ContextVar[int | None] = ContextVar("agent_run_parent_id", default=None)
 
 
+def current_parent_run() -> int | None:
+    """Return the flow run currently scoped via :func:`use_parent_run`.
+
+    ``None`` at top level (an agent running standalone, not under a flow
+    envelope). Flow orchestrators read this to emit ``flow_phase`` markers on
+    the envelope run without threading its id through every call — Plan
+    live-flow-overview WP-B1.
+    """
+    return _parent_run.get()
+
+
+def emit_flow_phase(phase: str, **payload: object) -> None:
+    """Emit a ``flow_phase`` timeline event on the currently-scoped flow run.
+
+    No-op when not inside a flow (``current_parent_run()`` is ``None``), so a
+    flow orchestrator invoked standalone (e.g. the auto-runner's inline analyst
+    pass) simply emits nothing. ``phase`` is one of ``researching | critiquing |
+    translating | backtesting | analyzing | planning | implementing |
+    evaluating``.
+    """
+    flow_id = _parent_run.get()
+    if flow_id is None:
+        return
+    emit_run_event(flow_id, "flow_phase", phase=phase, **payload)
+
+
 @contextmanager
 def use_parent_run(run_id: int) -> Iterator[None]:
     """Scope ``run_id`` as the parent for AgentRuns created inside the block.

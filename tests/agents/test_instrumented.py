@@ -55,3 +55,51 @@ async def test_run_instrumented_round_idx_names_transcript(data_dir):
     agent = Agent(TestModel(), system_prompt="s")
     await run_instrumented(agent, "go", agent_run_id=7, round_idx=3)
     assert (data_dir / "agent-runs" / "7" / "transcript_003.json").exists()
+
+
+def test_delta_coalescer_bundles_until_flush_threshold():
+    """Deltas accumulate per kind and only emit once the char threshold trips."""
+    from fwbg_agents.agents import instrumented
+
+    emitted: list[dict] = []
+    coalescer = instrumented._DeltaCoalescer(agent_run_id=1, round_idx=2)
+
+    def _capture(run_id, type, *, persist=True, **payload):
+        emitted.append({"run_id": run_id, "type": type, "persist": persist, **payload})
+
+    import unittest.mock
+
+    with unittest.mock.patch.object(instrumented, "emit_run_event", _capture):
+        coalescer.add("text", "short")  # below threshold → no emit yet
+        assert emitted == []
+        coalescer.add("text", "x" * instrumented._DELTA_FLUSH_CHARS)  # trips flush
+        assert len(emitted) == 1
+        assert emitted[0]["type"] == "llm_delta"
+        assert emitted[0]["persist"] is False
+        assert emitted[0]["kind"] == "text"
+        assert emitted[0]["round"] == 2
+        assert emitted[0]["text"].startswith("short")
+        # A trailing flush() empties whatever remains, grouped by kind.
+        coalescer.add("thinking", "leftover")
+        coalescer.flush()
+        assert emitted[-1]["kind"] == "thinking"
+        assert emitted[-1]["text"] == "leftover"
+
+
+async def test_run_instrumented_streams_llm_delta_live_only(data_dir, monkeypatch):
+    """A streaming model produces live-only llm_delta events (never persisted)."""
+    from fwbg_agents import events as event_bus
+
+    captured: list[dict] = []
+    real_emit = event_bus.emit
+    monkeypatch.setattr(event_bus, "emit", lambda e: (captured.append(e), real_emit(e))[1])
+
+    agent = Agent(TestModel(), system_prompt="s")
+    await run_instrumented(agent, "go", agent_run_id=99)
+
+    delta_types = [e for e in captured if e.get("type") == "llm_delta"]
+    assert delta_types, "expected at least one streamed llm_delta on the bus"
+    # llm_delta is live-only: broadcast but absent from the persisted log.
+    epath = data_dir / "agent-runs" / "99" / "events.jsonl"
+    persisted = [json.loads(x)["type"] for x in epath.read_text().splitlines() if x.strip()]
+    assert "llm_delta" not in persisted
