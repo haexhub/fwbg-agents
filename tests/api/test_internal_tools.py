@@ -8,6 +8,7 @@ fake tool closure registered via tool_registry.
 from __future__ import annotations
 
 import asyncio
+import time
 
 import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
@@ -160,6 +161,45 @@ async def test_ok_false_when_closure_exceeds_timeout(client, monkeypatch):
     assert resp.status_code == 200
     body = resp.json()
     assert body["ok"] is False
+
+
+async def test_sync_closure_exceeding_timeout_keeps_lock_until_it_finishes(client, monkeypatch):
+    from fwbg_agents.config import settings
+
+    monkeypatch.setattr(settings, "internal_tool_exec_key", "sekret")
+    monkeypatch.setattr(settings, "internal_tool_exec_timeout_seconds", 0.05)
+
+    finished_at = []
+
+    def slow() -> str:
+        time.sleep(0.3)
+        finished_at.append(time.monotonic())
+        return "too late"
+
+    with tool_registry.registered(107, {"slow": slow}):
+        start = time.monotonic()
+        resp = await client.post(
+            "/internal/tool-exec/107",
+            json={"tool_name": "slow", "args": {}},
+            headers={"X-Internal-Tool-Key": "sekret"},
+        )
+        response_at = time.monotonic()
+        assert resp.status_code == 200
+        assert resp.json()["ok"] is False
+
+        # the response came back well before the closure's time.sleep(0.3) is
+        # done — the still-running background thread must still hold the lock
+        assert response_at - start < 0.2
+        lock = tool_registry.get_lock(107)
+        assert lock.locked()
+        assert finished_at == []
+
+        for _ in range(50):
+            if not lock.locked():
+                break
+            await asyncio.sleep(0.02)
+        assert not lock.locked()
+        assert finished_at
 
 
 async def test_emits_llm_tool_call_and_result_events(client, monkeypatch, tmp_path):

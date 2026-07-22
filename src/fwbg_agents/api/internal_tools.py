@@ -16,9 +16,11 @@ defaulting open.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import inspect
 import json
 import logging
+import secrets
 
 from fastapi import APIRouter, Header, HTTPException
 from pydantic import BaseModel, Field
@@ -35,6 +37,10 @@ router = APIRouter(tags=["internal"])
 # / llm_tool_result truncation so the dashboard timeline stays consistent
 # regardless of which code path emitted the event.
 _TRUNC = 2048
+
+# Keeps a strong reference to fire-and-forget lock-release waiters (see
+# _release_when_done) so asyncio doesn't garbage-collect them mid-flight.
+_background_tasks: set[asyncio.Task] = set()
 
 
 def _truncate(text: str, limit: int = _TRUNC) -> str:
@@ -63,6 +69,20 @@ async def _invoke(fn, args: dict) -> object:
     return await loop.run_in_executor(None, lambda: fn(**args))
 
 
+async def _release_when_done(invocation: asyncio.Future, lock: asyncio.Lock) -> None:
+    """Release `lock` only once a timed-out `invocation` truly finishes.
+
+    A sync closure runs in a worker thread via `run_in_executor`, which
+    can't actually be interrupted once started — cancelling it just makes
+    asyncio stop waiting, while the thread keeps mutating this run's shared
+    state. Holding the lock until real completion keeps that from
+    overlapping a subsequent call for the same run.
+    """
+    with contextlib.suppress(BaseException):
+        await invocation
+    lock.release()
+
+
 @router.post("/internal/tool-exec/{agent_run_id}")
 async def post_tool_exec(
     agent_run_id: int,
@@ -80,7 +100,9 @@ async def post_tool_exec(
     """
     if settings.internal_tool_exec_key is None:
         raise HTTPException(503, "MCP tool bridge is not configured (internal_tool_exec_key unset)")
-    if x_internal_tool_key != settings.internal_tool_exec_key:
+    if not x_internal_tool_key or not secrets.compare_digest(
+        x_internal_tool_key, settings.internal_tool_exec_key
+    ):
         raise HTTPException(401, "invalid or missing X-Internal-Tool-Key")
 
     fn = tool_registry.get(agent_run_id, body.tool_name)
@@ -95,22 +117,31 @@ async def post_tool_exec(
         tool_name=body.tool_name,
         args=_truncate(json.dumps(body.args, default=str)),
     )
-    async with lock:
-        try:
-            result = await asyncio.wait_for(
-                _invoke(fn, body.args), timeout=settings.internal_tool_exec_timeout_seconds
-            )
-        except Exception as exc:
-            error = str(exc)
-            emit_run_event(
-                agent_run_id,
-                "llm_tool_result",
-                round=1,
-                tool_name=body.tool_name,
-                result=_truncate(f"ERROR: {error}"),
-            )
-            return {"ok": False, "error": error}
+    await lock.acquire()
+    invocation = asyncio.ensure_future(_invoke(fn, body.args))
+    try:
+        result = await asyncio.wait_for(
+            asyncio.shield(invocation), timeout=settings.internal_tool_exec_timeout_seconds
+        )
+    except Exception as exc:
+        error = str(exc)
+        emit_run_event(
+            agent_run_id,
+            "llm_tool_result",
+            round=1,
+            tool_name=body.tool_name,
+            result=_truncate(f"ERROR: {error}"),
+        )
+        # `shield` kept `invocation` running past this exception (e.g. a
+        # timeout) — hand off the lock to a background waiter instead of
+        # releasing it now, so a still-running sync closure can't overlap
+        # this run's next tool call.
+        release_task = asyncio.ensure_future(_release_when_done(invocation, lock))
+        _background_tasks.add(release_task)
+        release_task.add_done_callback(_background_tasks.discard)
+        return {"ok": False, "error": error}
 
+    lock.release()
     emit_run_event(
         agent_run_id,
         "llm_tool_result",
