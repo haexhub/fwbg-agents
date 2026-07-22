@@ -71,6 +71,24 @@ def model_for(agent_name: str) -> AnthropicModel:
     return _build_model(model_name_for(agent_name))
 
 
+def tool_callback_headers(agent_run_id: int) -> dict[str, str]:
+    """Extra headers that opt an LLM call into haex-claude-proxy's MCP tool
+    bridge (see api/internal_tools.py + orchestrator/tool_registry.py).
+
+    Returns `{}` — inert, byte-for-byte today's behavior — when
+    ``internal_tool_exec_key`` is unset (the default). When set, the proxy
+    forwards these as `X-Tool-Callback-Url` / `X-Tool-Callback-Token` to the
+    spawned MCP bridge, which POSTs tool calls back to
+    `{self_base_url}/internal/tool-exec/{agent_run_id}`.
+    """
+    if settings.internal_tool_exec_key is None:
+        return {}
+    return {
+        "X-Tool-Callback-Url": f"{settings.self_base_url}/internal/tool-exec/{agent_run_id}",
+        "X-Tool-Callback-Token": settings.internal_tool_exec_key,
+    }
+
+
 def prompt_path_for(agent_name: str, default_path: Path) -> Path:
     """Override persona file if one exists on disk, else the bundled default."""
     from fwbg_agents.tools import agent_config

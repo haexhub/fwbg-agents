@@ -27,9 +27,11 @@ from fwbg_sdk.base import PluginPhase
 from pydantic import BaseModel, ConfigDict, ValidationError
 from pydantic_ai import Agent
 from pydantic_ai.models import Model
+from pydantic_ai.models.anthropic import AnthropicModelSettings
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from fwbg_agents.agents.instrumented import run_instrumented
+from fwbg_agents.orchestrator import tool_registry
 from fwbg_agents.orchestrator.hypotheses import generate_child_slug
 from fwbg_agents.orchestrator.lifecycle import strategy_dir
 from fwbg_agents.orchestrator.live_catalog import LiveCatalog, fetch_live_catalog
@@ -54,7 +56,7 @@ from fwbg_agents.persistence.models import (
 )
 from fwbg_agents.run_events import emit_run_event
 from fwbg_agents.tools.fwbg_client import FwbgClient
-from fwbg_agents.tools.llm import model_for, prompt_path_for
+from fwbg_agents.tools.llm import model_for, prompt_path_for, tool_callback_headers
 from fwbg_agents.tools.llm_pricing import estimate_cost_usd
 
 log = logging.getLogger(__name__)
@@ -479,9 +481,15 @@ class Translator:
                 return catalog_prompt
 
             t0 = time.monotonic()
-            result = await run_instrumented(
-                agent, "Emit the strategy.json now.", agent_run_id=ar.id
-            )
+            with tool_registry.registered(ar.id, {"get_known_plugins": get_known_plugins}):
+                result = await run_instrumented(
+                    agent,
+                    "Emit the strategy.json now.",
+                    agent_run_id=ar.id,
+                    model_settings=AnthropicModelSettings(
+                        extra_headers=tool_callback_headers(ar.id)
+                    ),
+                )
             latency_ms = int((time.monotonic() - t0) * 1000)
 
             usage = result.usage
