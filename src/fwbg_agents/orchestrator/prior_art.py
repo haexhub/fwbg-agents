@@ -11,6 +11,7 @@ adding once the tag layer has been validated against real abandoned strategies.
 
 from __future__ import annotations
 
+import asyncio
 import json
 from pathlib import Path
 
@@ -134,6 +135,11 @@ async def lookup_prior_art(
         if jaccard < JACCARD_THRESHOLD and not same_family:
             continue
         overlap = sorted(input_tags & found_tags)
+        # File reads — off the event loop so a large candidate set (many
+        # qualifying matches) doesn't stall concurrent DB/network work while
+        # this async function blocks on disk I/O.
+        post_mortem_summary = await asyncio.to_thread(_load_summary, s.post_mortem_path)
+        edge_mechanism = await asyncio.to_thread(_load_edge_mechanism, s.slug)
         matches.append(
             PriorArtMatch(
                 slug=s.slug,
@@ -143,8 +149,8 @@ async def lookup_prior_art(
                 tags_overlap=overlap,
                 jaccard=jaccard,
                 post_mortem_path=s.post_mortem_path,
-                post_mortem_summary=_load_summary(s.post_mortem_path),
-                edge_mechanism=_load_edge_mechanism(s.slug),
+                post_mortem_summary=post_mortem_summary,
+                edge_mechanism=edge_mechanism,
             )
         )
 
