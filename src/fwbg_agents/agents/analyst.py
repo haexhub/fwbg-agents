@@ -38,10 +38,12 @@ from fwbg_sdk.base import PluginPhase
 from pydantic import BaseModel, Discriminator, Field, field_validator, model_validator
 from pydantic_ai import Agent
 from pydantic_ai.models import Model
+from pydantic_ai.models.anthropic import AnthropicModelSettings
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from fwbg_agents.agents.instrumented import run_instrumented
 from fwbg_agents.config import settings
+from fwbg_agents.orchestrator import tool_registry
 from fwbg_agents.orchestrator.interventions import (
     interventions_digest,
     regenerate_interventions_digest,
@@ -71,7 +73,7 @@ from fwbg_agents.persistence.models import (
 )
 from fwbg_agents.run_events import emit_run_event
 from fwbg_agents.tools.fwbg_client import FwbgClient
-from fwbg_agents.tools.llm import model_for, prompt_path_for
+from fwbg_agents.tools.llm import model_for, prompt_path_for, tool_callback_headers
 from fwbg_agents.tools.llm_pricing import estimate_cost_usd
 
 log = logging.getLogger(__name__)
@@ -606,9 +608,21 @@ class Analyst:
                     return describe_trades(trade_conn)
 
                 t0 = time.monotonic()
-                result = await run_instrumented(
-                    agent, "Emit your recommendation now.", agent_run_id=ar.id
-                )
+                with tool_registry.registered(
+                    ar.id,
+                    {
+                        "query_trades_tool": query_trades_tool,
+                        "describe_trades_tool": describe_trades_tool,
+                    },
+                ):
+                    result = await run_instrumented(
+                        agent,
+                        "Emit your recommendation now.",
+                        agent_run_id=ar.id,
+                        model_settings=AnthropicModelSettings(
+                            extra_headers=tool_callback_headers(ar.id)
+                        ),
+                    )
                 latency_ms = int((time.monotonic() - t0) * 1000)
             finally:
                 trade_conn.close()

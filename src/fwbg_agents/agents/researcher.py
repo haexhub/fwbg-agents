@@ -26,9 +26,11 @@ from pathlib import Path
 from pydantic import BaseModel
 from pydantic_ai import Agent
 from pydantic_ai.models import Model
+from pydantic_ai.models.anthropic import AnthropicModelSettings
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from fwbg_agents.agents.instrumented import run_instrumented
+from fwbg_agents.orchestrator import tool_registry
 from fwbg_agents.orchestrator.exploration_balance import exploration_balance_digest
 from fwbg_agents.orchestrator.hypotheses import (
     HypothesisRejectedError,
@@ -47,7 +49,7 @@ from fwbg_agents.persistence.models import (
     LlmCall,
 )
 from fwbg_agents.run_events import emit_run_event
-from fwbg_agents.tools.llm import model_for, prompt_path_for
+from fwbg_agents.tools.llm import model_for, prompt_path_for, tool_callback_headers
 from fwbg_agents.tools.llm_pricing import estimate_cost_usd
 from fwbg_agents.tools.search import SearchProvider, SearchResult, SearchUnavailableError
 
@@ -204,7 +206,21 @@ class Researcher:
                     f"Brief: {input.free_text_brief}\n\n"
                     "Research and emit your single hypothesis now."
                 )
-            result = await run_instrumented(agent, user_msg, agent_run_id=ar.id)
+            with tool_registry.registered(
+                ar.id,
+                {
+                    "lookup_prior_art_tool": lookup_prior_art_tool,
+                    "search_web_tool": search_web_tool,
+                },
+            ):
+                result = await run_instrumented(
+                    agent,
+                    user_msg,
+                    agent_run_id=ar.id,
+                    model_settings=AnthropicModelSettings(
+                        extra_headers=tool_callback_headers(ar.id)
+                    ),
+                )
             latency_ms = int((time.monotonic() - t0) * 1000)
 
             usage = result.usage
