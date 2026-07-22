@@ -118,6 +118,20 @@ def _truncate(text: str, limit: int = _TRUNC) -> str:
     return text[:limit] + f"… [{len(text) - limit} more chars]"
 
 
+def _write_transcript(
+    agent_run_id: int, round_idx: int, messages: list[Any], suffix: str = ""
+) -> None:
+    """Write a message-history transcript to disk. Errors are logged, never raised."""
+    try:
+        d = run_dir(agent_run_id)
+        d.mkdir(parents=True, exist_ok=True)
+        (d / f"transcript_{round_idx:03d}{suffix}.json").write_bytes(
+            ModelMessagesTypeAdapter.dump_json(messages)
+        )
+    except OSError as exc:
+        log.warning("run %s: failed to write transcript: %s", agent_run_id, exc)
+
+
 def persist_transcript(
     agent_run_id: int,
     result: Any,
@@ -132,14 +146,7 @@ def persist_transcript(
     ``transcript_<round>.json`` and emits ``llm_round_done``. Errors are logged,
     never raised.
     """
-    try:
-        d = run_dir(agent_run_id)
-        d.mkdir(parents=True, exist_ok=True)
-        (d / f"transcript_{round_idx:03d}.json").write_bytes(
-            ModelMessagesTypeAdapter.dump_json(result.all_messages())
-        )
-    except OSError as exc:
-        log.warning("run %s: failed to write transcript: %s", agent_run_id, exc)
+    _write_transcript(agent_run_id, round_idx, result.all_messages())
     usage = getattr(result, "usage", None)
     emit_run_event(
         agent_run_id,
@@ -149,6 +156,28 @@ def persist_transcript(
         input_tokens=int(getattr(usage, "input_tokens", 0) or 0),
         output_tokens=int(getattr(usage, "output_tokens", 0) or 0),
     )
+
+
+def persist_failed_transcript(
+    agent_run_id: int,
+    run: Any,
+    *,
+    round_idx: int = 1,
+) -> None:
+    """Persist whatever message history was accumulated before a run raised.
+
+    ``agent.iter()`` exceptions (e.g. ``UnexpectedModelBehavior: Exceeded
+    maximum output retries``) previously left no trace of what the model
+    actually returned — ``persist_transcript`` only ran on a clean finish.
+    ``run.ctx.state.message_history`` still holds every request/response up to
+    the failure point, so write it out as ``transcript_<round>_failed.json``
+    for post-mortem inspection. Errors are logged, never raised.
+    """
+    try:
+        messages = run.ctx.state.message_history
+    except AttributeError:
+        return
+    _write_transcript(agent_run_id, round_idx, messages, suffix="_failed")
 
 
 async def run_instrumented[OutputT](
@@ -165,62 +194,72 @@ async def run_instrumented[OutputT](
     Emits ``llm_tool_call`` / ``llm_tool_result`` per tool invocation, writes
     ``transcript_<round>.json`` after completion, then emits ``llm_round_done``
     with the model name + token usage. Exceptions from the run propagate
-    unchanged; telemetry/transcript errors are logged, never raised.
+    unchanged; telemetry/transcript errors are logged, never raised. On a
+    failure (e.g. ``UnexpectedModelBehavior: Exceeded maximum output
+    retries``), the message history accumulated so far is still persisted as
+    ``transcript_<round>_failed.json`` so the raw model output that broke
+    validation is inspectable afterwards.
     """
     global _stream_unsupported_logged
     coalescer = _DeltaCoalescer(agent_run_id, round_idx)
-    async with agent.iter(user_prompt) as run:
-        async for node in run:
-            # Stream token deltas for the model request — only if the model
-            # supports it (real AnthropicModels do; the test FunctionModel does
-            # not and raises, in which case we fall back to the plain node walk).
-            if Agent.is_model_request_node(node):
+    run: Any = None
+    try:
+        async with agent.iter(user_prompt) as run:
+            async for node in run:
+                # Stream token deltas for the model request — only if the model
+                # supports it (real AnthropicModels do; the test FunctionModel does
+                # not and raises, in which case we fall back to the plain node walk).
+                if Agent.is_model_request_node(node):
+                    try:
+                        await _stream_request_node(node, run.ctx, coalescer)
+                    except Exception as exc:
+                        # Streaming is telemetry — it must never abort a live agent
+                        # run (same invariant as the tool-event block below). The
+                        # node still executes via the normal walk. Log the actual
+                        # error once so an unexpected failure is diagnosable, not
+                        # silently indistinguishable from the FunctionModel case.
+                        if not _stream_unsupported_logged:
+                            log.info(
+                                "run %s: token streaming unavailable (%s); "
+                                "falling back to non-streaming node walk",
+                                agent_run_id,
+                                exc,
+                            )
+                            _stream_unsupported_logged = True
                 try:
-                    await _stream_request_node(node, run.ctx, coalescer)
-                except Exception as exc:
-                    # Streaming is telemetry — it must never abort a live agent
-                    # run (same invariant as the tool-event block below). The
-                    # node still executes via the normal walk. Log the actual
-                    # error once so an unexpected failure is diagnosable, not
-                    # silently indistinguishable from the FunctionModel case.
-                    if not _stream_unsupported_logged:
-                        log.info(
-                            "run %s: token streaming unavailable (%s); "
-                            "falling back to non-streaming node walk",
-                            agent_run_id,
-                            exc,
-                        )
-                        _stream_unsupported_logged = True
-            try:
-                # Tool CALLS live on the model response of a CallToolsNode.
-                resp = getattr(node, "model_response", None)
-                if resp is not None:
-                    for part in resp.parts:
-                        if (
-                            getattr(part, "part_kind", None) == "tool-call"
-                            and part.tool_name != _OUTPUT_TOOL
-                        ):
-                            emit_run_event(
-                                agent_run_id,
-                                "llm_tool_call",
-                                round=round_idx,
-                                tool_name=part.tool_name,
-                                args=_truncate(part.args_as_json_str()),
-                            )
-                # Tool RESULTS come back as request parts on the next ModelRequestNode.
-                req = getattr(node, "request", None)
-                if req is not None:
-                    for part in getattr(req, "parts", []):
-                        if getattr(part, "part_kind", None) == "tool-return":
-                            emit_run_event(
-                                agent_run_id,
-                                "llm_tool_result",
-                                round=round_idx,
-                                tool_name=part.tool_name,
-                                result=_truncate(str(part.content)),
-                            )
-            except Exception:  # telemetry must never abort a live agent run
-                log.exception("run %s: failed to emit tool event", agent_run_id)
+                    # Tool CALLS live on the model response of a CallToolsNode.
+                    resp = getattr(node, "model_response", None)
+                    if resp is not None:
+                        for part in resp.parts:
+                            if (
+                                getattr(part, "part_kind", None) == "tool-call"
+                                and part.tool_name != _OUTPUT_TOOL
+                            ):
+                                emit_run_event(
+                                    agent_run_id,
+                                    "llm_tool_call",
+                                    round=round_idx,
+                                    tool_name=part.tool_name,
+                                    args=_truncate(part.args_as_json_str()),
+                                )
+                    # Tool RESULTS come back as request parts on the next ModelRequestNode.
+                    req = getattr(node, "request", None)
+                    if req is not None:
+                        for part in getattr(req, "parts", []):
+                            if getattr(part, "part_kind", None) == "tool-return":
+                                emit_run_event(
+                                    agent_run_id,
+                                    "llm_tool_result",
+                                    round=round_idx,
+                                    tool_name=part.tool_name,
+                                    result=_truncate(str(part.content)),
+                                )
+                except Exception:  # telemetry must never abort a live agent run
+                    log.exception("run %s: failed to emit tool event", agent_run_id)
+    except Exception:
+        if run is not None:
+            persist_failed_transcript(agent_run_id, run, round_idx=round_idx)
+        raise
     result = run.result
     if result is None:  # defensive: a completed iter always sets .result
         raise RuntimeError(f"agent run {agent_run_id} produced no result")
