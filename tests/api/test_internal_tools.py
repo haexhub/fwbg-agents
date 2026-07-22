@@ -8,6 +8,7 @@ fake tool closure registered via tool_registry.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import time
 
 import pytest_asyncio
@@ -191,6 +192,44 @@ async def test_sync_closure_exceeding_timeout_keeps_lock_until_it_finishes(clien
         # done — the still-running background thread must still hold the lock
         assert response_at - start < 0.2
         lock = tool_registry.get_lock(107)
+        assert lock.locked()
+        assert finished_at == []
+
+        for _ in range(50):
+            if not lock.locked():
+                break
+            await asyncio.sleep(0.02)
+        assert not lock.locked()
+        assert finished_at
+
+
+async def test_cancelled_request_still_releases_lock_once_closure_finishes(client, monkeypatch):
+    from fwbg_agents.config import settings
+
+    monkeypatch.setattr(settings, "internal_tool_exec_key", "sekret")
+    monkeypatch.setattr(settings, "internal_tool_exec_timeout_seconds", 5)
+
+    finished_at = []
+
+    def slow() -> str:
+        time.sleep(0.3)
+        finished_at.append(time.monotonic())
+        return "too late"
+
+    with tool_registry.registered(108, {"slow": slow}):
+        request_task = asyncio.ensure_future(
+            client.post(
+                "/internal/tool-exec/108",
+                json={"tool_name": "slow", "args": {}},
+                headers={"X-Internal-Tool-Key": "sekret"},
+            )
+        )
+        await asyncio.sleep(0.05)  # let the handler start and acquire the lock
+        request_task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await request_task
+
+        lock = tool_registry.get_lock(108)
         assert lock.locked()
         assert finished_at == []
 

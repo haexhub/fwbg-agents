@@ -79,8 +79,15 @@ async def _release_when_done(invocation: asyncio.Future, lock: asyncio.Lock) -> 
     overlapping a subsequent call for the same run.
     """
     with contextlib.suppress(BaseException):
-        await invocation
+        await asyncio.shield(invocation)
     lock.release()
+
+
+def _schedule_release(invocation: asyncio.Future, lock: asyncio.Lock) -> None:
+    """Fire-and-forget `_release_when_done`, tracked so it can't be GC'd mid-flight."""
+    release_task = asyncio.ensure_future(_release_when_done(invocation, lock))
+    _background_tasks.add(release_task)
+    release_task.add_done_callback(_background_tasks.discard)
 
 
 @router.post("/internal/tool-exec/{agent_run_id}")
@@ -123,6 +130,14 @@ async def post_tool_exec(
         result = await asyncio.wait_for(
             asyncio.shield(invocation), timeout=settings.internal_tool_exec_timeout_seconds
         )
+    except asyncio.CancelledError:
+        # This request itself got cancelled (e.g. client disconnect, server
+        # shutdown) — `except Exception` below never sees this, so without
+        # handling it here the lock would stay held forever. `invocation`
+        # is shielded and still running; hand the lock off the same way a
+        # timeout does.
+        _schedule_release(invocation, lock)
+        raise
     except Exception as exc:
         error = str(exc)
         emit_run_event(
@@ -136,9 +151,7 @@ async def post_tool_exec(
         # timeout) — hand off the lock to a background waiter instead of
         # releasing it now, so a still-running sync closure can't overlap
         # this run's next tool call.
-        release_task = asyncio.ensure_future(_release_when_done(invocation, lock))
-        _background_tasks.add(release_task)
-        release_task.add_done_callback(_background_tasks.discard)
+        _schedule_release(invocation, lock)
         return {"ok": False, "error": error}
 
     lock.release()
