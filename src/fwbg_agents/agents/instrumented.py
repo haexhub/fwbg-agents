@@ -118,7 +118,9 @@ def _truncate(text: str, limit: int = _TRUNC) -> str:
     return text[:limit] + f"… [{len(text) - limit} more chars]"
 
 
-def _write_transcript(agent_run_id: int, round_idx: int, messages: list[Any], suffix: str = "") -> None:
+def _write_transcript(
+    agent_run_id: int, round_idx: int, messages: list[Any], suffix: str = ""
+) -> None:
     """Write a message-history transcript to disk. Errors are logged, never raised."""
     try:
         d = run_dir(agent_run_id)
