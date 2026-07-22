@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.30.1](https://github.com/haexhub/fwbg-agents/compare/v0.30.0...v0.30.1) (2026-07-22)
+
+
+### Bug Fixes
+
+* **researcher:** persist failed-run transcripts, unblock prior-art file I/O ([49baac0](https://github.com/haexhub/fwbg-agents/commit/49baac01a9f681c3075d36a9ca1dc36254f93698))
+* **researcher:** persist failed-run transcripts, unblock prior-art file I/O ([48b39b1](https://github.com/haexhub/fwbg-agents/commit/48b39b19b114967fd9034b2eb302fe452fe75a93))
+* wrap _write_transcript signature to satisfy ruff line-length ([df5972a](https://github.com/haexhub/fwbg-agents/commit/df5972ad38888c7e6b9b0fb63413a960682828a3))
+
 ## [0.30.0](https://github.com/haexhub/fwbg-agents/compare/v0.29.0...v0.30.0) (2026-07-21)
 
 
