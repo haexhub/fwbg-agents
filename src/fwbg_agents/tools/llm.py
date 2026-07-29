@@ -6,9 +6,12 @@ Gemini models are also selectable per-agent, called directly against Google's
 API (own billing, own GOOGLE_API_KEY) rather than through haex-claude-proxy.
 """
 
+import logging
+import time
 from pathlib import Path
 
 from anthropic import AsyncAnthropic
+from google import genai
 from pydantic_ai.models import Model
 from pydantic_ai.models.anthropic import AnthropicModel, AnthropicModelSettings
 from pydantic_ai.models.google import GoogleModel, GoogleModelSettings
@@ -17,6 +20,8 @@ from pydantic_ai.providers.google import GoogleProvider
 
 from fwbg_agents.config import settings
 from fwbg_agents.tools.secrets import get_secret
+
+log = logging.getLogger(__name__)
 
 # Claude models selectable per agent via /agents/config. All route through the
 # same haex-claude-proxy, so no extra API keys are needed to switch between them.
@@ -28,17 +33,45 @@ AVAILABLE_CLAUDE_MODELS: tuple[str, ...] = (
     "claude-haiku-4-5",
 )
 
-# Gemini models selectable per agent via /agents/config. Called directly
-# against Google's API — requires the "google" secret (GET/PUT /agents/secrets,
-# env fallback GOOGLE_API_KEY) to be set.
-AVAILABLE_GEMINI_MODELS: tuple[str, ...] = (
-    "gemini-3.5-flash",
-    "gemini-2.5-pro",
-    "gemini-2.5-flash",
-    "gemini-2.5-flash-lite",
-)
+# Gemini models are not hardcoded — listed live from Google's API (see
+# list_gemini_models) so newly released models show up without a code change.
+_GEMINI_MODELS_CACHE_TTL_SECONDS = 300
+_gemini_models_cache: tuple[float, str, list[str]] | None = None
 
-AVAILABLE_MODELS: tuple[str, ...] = AVAILABLE_CLAUDE_MODELS + AVAILABLE_GEMINI_MODELS
+
+def list_gemini_models() -> list[str]:
+    """Gemini models the configured API key can actually call right now.
+
+    Queries Google's ListModels endpoint directly instead of keeping a
+    hand-maintained list in sync with what Google ships. Returns `[]` if no
+    "google" secret is configured (GET/PUT /agents/secrets, env fallback
+    GOOGLE_API_KEY) or if the listing call fails. Cached briefly since this
+    runs on every GET /agents/config.
+    """
+    global _gemini_models_cache
+    api_key = get_secret("google")
+    if api_key is None:
+        return []
+
+    now = time.monotonic()
+    if _gemini_models_cache is not None:
+        cached_at, cached_key, cached_models = _gemini_models_cache
+        if cached_key == api_key and now - cached_at < _GEMINI_MODELS_CACHE_TTL_SECONDS:
+            return cached_models
+
+    try:
+        client = genai.Client(api_key=api_key)
+        models = []
+        for model in client.models.list():
+            if model.name and "generateContent" in (model.supported_actions or []):
+                models.append(model.name.removeprefix("models/"))
+        models.sort()
+    except Exception as exc:
+        log.warning("Gemini ListModels call failed: %s", exc)
+        return _gemini_models_cache[2] if _gemini_models_cache else []
+
+    _gemini_models_cache = (now, api_key, models)
+    return models
 
 
 def _build_model(model_name: str) -> AnthropicModel:
@@ -80,9 +113,9 @@ def _build_google_model(model_name: str) -> GoogleModel:
 
 def _build_model_for_name(model_name: str) -> Model:
     """Dispatch to the right provider's model factory based on the model name."""
-    if model_name in AVAILABLE_GEMINI_MODELS:
-        return _build_google_model(model_name)
-    return _build_model(model_name)
+    if model_name in AVAILABLE_CLAUDE_MODELS:
+        return _build_model(model_name)
+    return _build_google_model(model_name)
 
 
 def role_default_model(agent_name: str) -> str:
