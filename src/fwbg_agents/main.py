@@ -14,6 +14,7 @@ from fwbg_agents.api import (
     economics,
     events,
     health,
+    internal_tools,
     plugins,
     research,
     runs,
@@ -78,3 +79,4 @@ app.include_router(agents_config.router)
 app.include_router(secrets.router)
 app.include_router(trials.router)
 app.include_router(economics.router)
+app.include_router(internal_tools.router)

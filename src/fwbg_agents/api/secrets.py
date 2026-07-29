@@ -25,6 +25,7 @@ class SecretsUpdate(BaseModel):
 
     tavily: str | None = None
     brave: str | None = None
+    google: str | None = None
 
 
 @router.get("/agents/secrets", response_model=SecretsStatus)
@@ -41,9 +42,11 @@ def put_secrets(body: SecretsUpdate) -> SecretsStatus:
     """Store or clear one or more API keys.
 
     Pass an empty string or null to clear a key (restores env-var fallback).
+    Keys omitted from the request body are left untouched — this is a partial
+    update, e.g. `{"google": "..."}` alone must not clear tavily/brave.
     Changes take effect for the next agent run without a service restart.
     """
-    updates = body.model_dump(exclude_none=False)
+    updates = body.model_dump(exclude_unset=True)
     errors: list[str] = []
     for key, value in updates.items():
         if key not in KNOWN_KEYS:

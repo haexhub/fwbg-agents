@@ -55,6 +55,31 @@ class Settings(BaseSettings):
             "at 3 x llm_timeout_seconds for a wedged proxy."
         ),
     )
+    internal_tool_exec_key: str | None = Field(
+        default=None,
+        description=(
+            "Shared secret required on incoming POST /internal/tool-exec/{id} "
+            "calls (X-Internal-Tool-Key header), mirroring fwbg_api_key/"
+            "X-API-Key. None = the MCP tool-bridge feature is off: agents pass "
+            "no callback headers to haex-claude-proxy and it falls back to "
+            "today's exact behavior (function tools dropped)."
+        ),
+    )
+    self_base_url: str = Field(
+        default="http://fwbg-agents:8421",
+        description=(
+            "This service's own reachable base URL, used to build the "
+            "X-Tool-Callback-Url haex-claude-proxy calls back into for the "
+            "MCP tool bridge (see tools/llm.py's tool_callback_headers)."
+        ),
+    )
+    internal_tool_exec_timeout_seconds: float = Field(
+        default=60.0,
+        description=(
+            "Per-tool-call budget for the MCP bridge callback (POST "
+            "/internal/tool-exec/{id}) — well inside llm_timeout_seconds."
+        ),
+    )
 
     # Web research
     tavily_api_key: str | None = None

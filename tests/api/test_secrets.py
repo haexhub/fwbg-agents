@@ -22,12 +22,51 @@ async def secrets_client(tmp_path, monkeypatch):
 async def test_get_secrets_returns_all_known_keys_unset(secrets_client, monkeypatch):
     monkeypatch.delenv("TAVILY_API_KEY", raising=False)
     monkeypatch.delenv("BRAVE_API_KEY", raising=False)
+    monkeypatch.delenv("GOOGLE_API_KEY", raising=False)
 
     resp = await secrets_client.get("/agents/secrets")
     assert resp.status_code == 200
     keys = resp.json()["keys"]
     assert keys["tavily"] == {"set": False}
     assert keys["brave"] == {"set": False}
+    assert keys["google"] == {"set": False}
+
+
+async def test_put_secrets_is_partial_and_leaves_other_keys_untouched(
+    secrets_client, tmp_path, monkeypatch
+):
+    from fwbg_agents.config import settings
+    from fwbg_agents.tools.secrets import set_secret
+
+    monkeypatch.setattr(settings, "data_dir", tmp_path)
+    monkeypatch.delenv("BRAVE_API_KEY", raising=False)
+    set_secret("tavily", "tv-existing")
+
+    # Body only mentions "google" — tavily must survive untouched, even
+    # though SecretsUpdate has a `tavily: str | None = None` field default.
+    resp = await secrets_client.put("/agents/secrets", json={"google": "gm-new"})
+    assert resp.status_code == 200
+    keys = resp.json()["keys"]
+    assert keys["tavily"]["set"] is True
+    assert keys["google"]["set"] is True
+
+    data = json.loads((tmp_path / "secrets.json").read_text())
+    assert data["tavily"] == "tv-existing"
+    assert data["google"] == "gm-new"
+
+
+async def test_put_secrets_stores_google_key(secrets_client, tmp_path, monkeypatch):
+    from fwbg_agents.config import settings
+
+    monkeypatch.setattr(settings, "data_dir", tmp_path)
+    monkeypatch.delenv("GOOGLE_API_KEY", raising=False)
+
+    resp = await secrets_client.put("/agents/secrets", json={"google": "gm-abc123"})
+    assert resp.status_code == 200
+    assert resp.json()["keys"]["google"]["set"] is True
+
+    data = json.loads((tmp_path / "secrets.json").read_text())
+    assert data["google"] == "gm-abc123"
 
 
 async def test_get_secrets_reflects_env_fallback(secrets_client, monkeypatch):

@@ -32,6 +32,7 @@ from pydantic_ai.messages import (
     TextPartDelta,
     ThinkingPartDelta,
 )
+from pydantic_ai.models.anthropic import AnthropicModelSettings
 
 from fwbg_agents.run_events import emit_run_event, run_dir
 
@@ -186,6 +187,7 @@ async def run_instrumented[OutputT](
     *,
     agent_run_id: int,
     round_idx: int = 1,
+    model_settings: AnthropicModelSettings | None = None,
 ) -> AgentRunResult[OutputT]:
     # OutputT preserves the agent's structured output type through the wrapper
     # so callers keep `result.output: <their OutputType>` (not str).
@@ -199,12 +201,18 @@ async def run_instrumented[OutputT](
     retries``), the message history accumulated so far is still persisted as
     ``transcript_<round>_failed.json`` so the raw model output that broke
     validation is inspectable afterwards.
+
+    ``model_settings`` is forwarded to ``agent.iter()`` unchanged — e.g.
+    ``AnthropicModelSettings(extra_headers=tool_callback_headers(agent_run_id))``
+    to opt this call into haex-claude-proxy's MCP tool bridge (see
+    tools/llm.py's ``tool_callback_headers``). ``None`` (the default) is
+    today's exact behavior.
     """
     global _stream_unsupported_logged
     coalescer = _DeltaCoalescer(agent_run_id, round_idx)
     run: Any = None
     try:
-        async with agent.iter(user_prompt) as run:
+        async with agent.iter(user_prompt, model_settings=model_settings) as run:
             async for node in run:
                 # Stream token deltas for the model request — only if the model
                 # supports it (real AnthropicModels do; the test FunctionModel does

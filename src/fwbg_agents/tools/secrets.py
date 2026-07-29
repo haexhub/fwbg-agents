@@ -8,6 +8,7 @@ set/not-set status is exposed.
 Env-variable fallback mapping:
     tavily → TAVILY_API_KEY
     brave  → BRAVE_API_KEY
+    google → GOOGLE_API_KEY
 """
 
 from __future__ import annotations
@@ -19,11 +20,12 @@ from pathlib import Path
 
 from fwbg_agents.config import settings
 
-KNOWN_KEYS: tuple[str, ...] = ("tavily", "brave")
+KNOWN_KEYS: tuple[str, ...] = ("tavily", "brave", "google")
 
 _ENV_FALLBACK: dict[str, str] = {
     "tavily": "TAVILY_API_KEY",
     "brave": "BRAVE_API_KEY",
+    "google": "GOOGLE_API_KEY",
 }
 
 

@@ -2,17 +2,21 @@
 
 Uses pydantic-ai for provider-neutral agent definitions. The default model is
 Anthropic Claude routed through haex-claude-proxy (subscription pricing).
-Other providers (OpenAI, Gemini) can be plugged in per-agent when cost or
-capability tradeoffs justify it.
+Gemini models are also selectable per-agent, called directly against Google's
+API (own billing, own GOOGLE_API_KEY) rather than through haex-claude-proxy.
 """
 
 from pathlib import Path
 
 from anthropic import AsyncAnthropic
+from pydantic_ai.models import Model
 from pydantic_ai.models.anthropic import AnthropicModel, AnthropicModelSettings
+from pydantic_ai.models.google import GoogleModel, GoogleModelSettings
 from pydantic_ai.providers.anthropic import AnthropicProvider
+from pydantic_ai.providers.google import GoogleProvider
 
 from fwbg_agents.config import settings
+from fwbg_agents.tools.secrets import get_secret
 
 # Claude models selectable per agent via /agents/config. All route through the
 # same haex-claude-proxy, so no extra API keys are needed to switch between them.
@@ -23,6 +27,18 @@ AVAILABLE_CLAUDE_MODELS: tuple[str, ...] = (
     "claude-sonnet-4-6",
     "claude-haiku-4-5",
 )
+
+# Gemini models selectable per agent via /agents/config. Called directly
+# against Google's API — requires the "google" secret (GET/PUT /agents/secrets,
+# env fallback GOOGLE_API_KEY) to be set.
+AVAILABLE_GEMINI_MODELS: tuple[str, ...] = (
+    "gemini-3.5-flash",
+    "gemini-2.5-pro",
+    "gemini-2.5-flash",
+    "gemini-2.5-flash-lite",
+)
+
+AVAILABLE_MODELS: tuple[str, ...] = AVAILABLE_CLAUDE_MODELS + AVAILABLE_GEMINI_MODELS
 
 
 def _build_model(model_name: str) -> AnthropicModel:
@@ -46,6 +62,29 @@ def _build_model(model_name: str) -> AnthropicModel:
     )
 
 
+def _build_google_model(model_name: str) -> GoogleModel:
+    """Construct a GoogleModel calling Gemini's API directly (own API key, own billing)."""
+    api_key = get_secret("google")
+    if api_key is None:
+        raise RuntimeError(
+            "No Gemini API key configured; set it via PUT /agents/secrets "
+            "(key 'google') or the GOOGLE_API_KEY environment variable."
+        )
+    provider = GoogleProvider(api_key=api_key)
+    return GoogleModel(
+        model_name=model_name,
+        provider=provider,
+        settings=GoogleModelSettings(timeout=settings.llm_timeout_seconds),
+    )
+
+
+def _build_model_for_name(model_name: str) -> Model:
+    """Dispatch to the right provider's model factory based on the model name."""
+    if model_name in AVAILABLE_GEMINI_MODELS:
+        return _build_google_model(model_name)
+    return _build_model(model_name)
+
+
 def role_default_model(agent_name: str) -> str:
     """Built-in default model for an agent, before any runtime override.
 
@@ -66,9 +105,27 @@ def model_name_for(agent_name: str) -> str:
     return agent_config.get_model_override(agent_name) or role_default_model(agent_name)
 
 
-def model_for(agent_name: str) -> AnthropicModel:
-    """Anthropic model for a given agent, honoring its runtime override."""
-    return _build_model(model_name_for(agent_name))
+def model_for(agent_name: str) -> Model:
+    """Model for a given agent, honoring its runtime override (Claude or Gemini)."""
+    return _build_model_for_name(model_name_for(agent_name))
+
+
+def tool_callback_headers(agent_run_id: int) -> dict[str, str]:
+    """Extra headers that opt an LLM call into haex-claude-proxy's MCP tool
+    bridge (see api/internal_tools.py + orchestrator/tool_registry.py).
+
+    Returns `{}` — inert, byte-for-byte today's behavior — when
+    ``internal_tool_exec_key`` is unset (the default). When set, the proxy
+    forwards these as `X-Tool-Callback-Url` / `X-Tool-Callback-Token` to the
+    spawned MCP bridge, which POSTs tool calls back to
+    `{self_base_url}/internal/tool-exec/{agent_run_id}`.
+    """
+    if settings.internal_tool_exec_key is None:
+        return {}
+    return {
+        "X-Tool-Callback-Url": f"{settings.self_base_url}/internal/tool-exec/{agent_run_id}",
+        "X-Tool-Callback-Token": settings.internal_tool_exec_key,
+    }
 
 
 def prompt_path_for(agent_name: str, default_path: Path) -> Path:
