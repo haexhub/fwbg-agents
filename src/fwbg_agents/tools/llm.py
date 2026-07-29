@@ -47,7 +47,12 @@ def list_claude_models() -> list[str]:
             return cached_models
 
     try:
-        client = Anthropic(base_url=settings.anthropic_base_url, api_key=settings.anthropic_api_key)
+        client = Anthropic(
+            base_url=settings.anthropic_base_url,
+            api_key=settings.anthropic_api_key,
+            timeout=settings.llm_timeout_seconds,
+            max_retries=settings.llm_max_retries,
+        )
         models = sorted(m.id for m in client.models.list())
     except Exception as exc:
         log.warning("Claude ListModels call failed: %s", exc)

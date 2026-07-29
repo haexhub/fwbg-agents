@@ -22,6 +22,7 @@ from fwbg_agents.tools.llm import (
 
 def test_list_claude_models_maps_ids(monkeypatch):
     monkeypatch.setattr(llm, "_claude_models_cache", None)
+    init_kwargs = {}
 
     class FakeModels:
         def list(self):
@@ -31,12 +32,15 @@ def test_list_claude_models_maps_ids(monkeypatch):
             ]
 
     class FakeClient:
-        def __init__(self, base_url, api_key):
+        def __init__(self, **kwargs):
+            init_kwargs.update(kwargs)
             self.models = FakeModels()
 
     monkeypatch.setattr(llm, "Anthropic", FakeClient)
 
     assert list_claude_models() == ["claude-opus-5", "claude-sonnet-5"]
+    assert init_kwargs["timeout"] == settings.llm_timeout_seconds
+    assert init_kwargs["max_retries"] == settings.llm_max_retries
 
 
 def test_list_claude_models_caches_between_calls(monkeypatch):
@@ -50,7 +54,7 @@ def test_list_claude_models_caches_between_calls(monkeypatch):
             return [SimpleNamespace(id="claude-sonnet-5")]
 
     class FakeClient:
-        def __init__(self, base_url, api_key):
+        def __init__(self, **kwargs):
             self.models = FakeModels()
 
     monkeypatch.setattr(llm, "Anthropic", FakeClient)
@@ -68,7 +72,7 @@ def test_list_claude_models_falls_back_to_empty_on_error(monkeypatch):
             raise RuntimeError("boom")
 
     class FailingClient:
-        def __init__(self, base_url, api_key):
+        def __init__(self, **kwargs):
             self.models = FailingModels()
 
     monkeypatch.setattr(llm, "Anthropic", FailingClient)
