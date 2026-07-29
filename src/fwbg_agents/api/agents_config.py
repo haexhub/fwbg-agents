@@ -78,6 +78,17 @@ def put_agent_config(name: str, body: AgentConfigUpdate) -> dict[str, Any]:
     model = (body.model or "").strip()
     if model and model not in _available_models():
         raise HTTPException(422, f"unknown model: {model!r}")
+    if model:
+        # Neither provider's model list says whether *this* deployment can call
+        # a given model: Google advertises models whose free-tier allowance is
+        # zero, and it advertises ones that only speak its Interactions API.
+        # So try it with one word before storing the override, and hand the
+        # provider's own message to the operator — otherwise the model looks
+        # accepted and every later agent run fails instead.
+        try:
+            llm.probe_model(model)
+        except llm.ModelUnusableError as exc:
+            raise HTTPException(422, f"model {model!r} is not usable: {exc}") from exc
     agent_config.set_model_override(name, model or None)
 
     # Treat an empty prompt — or one identical to the bundled default — as a
