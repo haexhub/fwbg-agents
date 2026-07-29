@@ -25,6 +25,7 @@ dependencies = [
     # PluginEvaluator loads agent-authored plugin.py files that subclass the
     # fwbg plugin SDK (BaseIndicator etc.), so the SDK must be importable here.
     "fwbg-sdk",
+    "google-genai>=2.9.0",
 ]
 
 [dependency-groups]

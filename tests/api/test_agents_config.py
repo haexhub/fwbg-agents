@@ -28,7 +28,10 @@ async def test_gemini_models_hidden_without_google_key(config_client):
 
 
 async def test_gemini_models_shown_once_google_key_set(config_client, monkeypatch):
+    from fwbg_agents.tools import llm
+
     monkeypatch.setenv("GOOGLE_API_KEY", "test-key")
+    monkeypatch.setattr(llm, "list_gemini_models", lambda: ["gemini-2.5-pro"])
     resp = await config_client.get("/agents/config")
     assert resp.status_code == 200
     models = resp.json()["available_models"]
