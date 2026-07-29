@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.32.0](https://github.com/haexhub/fwbg-agents/compare/v0.31.0...v0.32.0) (2026-07-29)
+
+
+### Features
+
+* **llm:** list Claude models live from haex-claude-proxy too ([ca12d71](https://github.com/haexhub/fwbg-agents/commit/ca12d71faaeb486110d9035a9940003d7e891e0d))
+* **llm:** list Claude models live from haex-claude-proxy too ([a32d413](https://github.com/haexhub/fwbg-agents/commit/a32d413033b2313634c97b2061e42cb8ca817cdd))
+* **llm:** list Gemini models live from Google instead of a hardcoded set ([ee5ae18](https://github.com/haexhub/fwbg-agents/commit/ee5ae1852dfe6e5b8ba56adc6702c7d7ddcd0167))
+* **llm:** list Gemini models live from Google instead of a hardcoded set ([e9bcce4](https://github.com/haexhub/fwbg-agents/commit/e9bcce4f98ef5a0a35abd553a7815f97bb486c3d))
+
+
+### Bug Fixes
+
+* **llm:** apply timeout/retry settings to the Claude ListModels client ([d84f2d3](https://github.com/haexhub/fwbg-agents/commit/d84f2d30e44097027492b962059dbdc073b0b815))
+
 ## [0.31.0](https://github.com/haexhub/fwbg-agents/compare/v0.30.1...v0.31.0) (2026-07-29)
 
 
