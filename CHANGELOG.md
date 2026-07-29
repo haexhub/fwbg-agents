@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.31.0](https://github.com/haexhub/fwbg-agents/compare/v0.30.1...v0.31.0) (2026-07-29)
+
+
+### Features
+
+* add Gemini as a selectable LLM provider per agent ([5c4f145](https://github.com/haexhub/fwbg-agents/commit/5c4f1450b7ea5f8ff453aa6a46ed3d3594817757))
+* add Gemini as a selectable LLM provider per agent ([febe5e0](https://github.com/haexhub/fwbg-agents/commit/febe5e0dba8e8f78ea123213f6ccbe2c96f37caf))
+* bridge Researcher/Analyst/Translator tool calls through haex-claude-proxy's MCP bridge ([b1f93a0](https://github.com/haexhub/fwbg-agents/commit/b1f93a03387b0e17436c21099bc6cf92aac904f6))
+
+
+### Bug Fixes
+
+* address CodeRabbit findings on the MCP tool-exec endpoint ([28a9dfa](https://github.com/haexhub/fwbg-agents/commit/28a9dfa43b256de0f41dc38fe2e7da88da44a933))
+* close two more lock-leak paths in the MCP tool-exec endpoint ([62a40df](https://github.com/haexhub/fwbg-agents/commit/62a40df7a4efd29b0dd0807052f5bf3bc53f0a82))
+
 ## [0.30.1](https://github.com/haexhub/fwbg-agents/compare/v0.30.0...v0.30.1) (2026-07-22)
 
 
