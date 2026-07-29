@@ -67,6 +67,45 @@ def list_claude_models() -> list[str]:
 _GEMINI_MODELS_CACHE_TTL_SECONDS = 300
 _gemini_models_cache: tuple[float, str, list[str]] | None = None
 
+# Model-name prefixes Google's API serves. Not all of them start with "gemini-"
+# (Gemma, Deep Research, Antigravity, and the media generators are all listed by
+# the same ListModels call), and every one of them must be called against
+# Google's API directly — haex-claude-proxy only serves Claude, so routing a
+# Google name there fails with HTTP 404.
+_GOOGLE_MODEL_PREFIXES = (
+    "gemini-",
+    "gemma-",
+    "deep-research-",
+    "antigravity-",
+    "lyria-",
+    "nano-banana-",
+    "veo-",
+)
+
+# Google advertises `generateContent` for its image/video/music/speech
+# generators and its robotics/computer-use previews too, but none of them can
+# drive an agent (text in, structured text out). Excluded from the per-agent
+# model picker so an operator cannot select one.
+_NON_CHAT_MODEL_MARKERS = (
+    "-image",
+    "-tts",
+    "-computer-use",
+    "robotics",
+    "lyria-",
+    "nano-banana-",
+    "veo-",
+)
+
+
+def is_google_model(model_name: str) -> bool:
+    """True if Google's API serves this model (never haex-claude-proxy)."""
+    return model_name.startswith(_GOOGLE_MODEL_PREFIXES)
+
+
+def _is_chat_capable(model_name: str) -> bool:
+    """True if the model generates text, i.e. can back an agent."""
+    return not any(marker in model_name for marker in _NON_CHAT_MODEL_MARKERS)
+
 
 def list_gemini_models() -> list[str]:
     """Gemini models the configured API key can actually call right now.
@@ -76,6 +115,9 @@ def list_gemini_models() -> list[str]:
     "google" secret is configured (GET/PUT /agents/secrets, env fallback
     GOOGLE_API_KEY) or if the listing call fails. Cached briefly since this
     runs on every GET /agents/config.
+
+    Media generators and robotics/computer-use previews are dropped even though
+    Google advertises `generateContent` for them — see `_is_chat_capable`.
     """
     global _gemini_models_cache
     api_key = get_secret("google")
@@ -92,8 +134,11 @@ def list_gemini_models() -> list[str]:
         client = genai.Client(api_key=api_key)
         models = []
         for model in client.models.list():
-            if model.name and "generateContent" in (model.supported_actions or []):
-                models.append(model.name.removeprefix("models/"))
+            if not model.name or "generateContent" not in (model.supported_actions or []):
+                continue
+            model_id = model.name.removeprefix("models/")
+            if _is_chat_capable(model_id):
+                models.append(model_id)
         models.sort()
     except Exception as exc:
         log.warning("Gemini ListModels call failed: %s", exc)
@@ -142,7 +187,7 @@ def _build_google_model(model_name: str) -> GoogleModel:
 
 def _build_model_for_name(model_name: str) -> Model:
     """Dispatch to the right provider's model factory based on the model name."""
-    if model_name.startswith("gemini-"):
+    if is_google_model(model_name):
         return _build_google_model(model_name)
     return _build_model(model_name)
 
