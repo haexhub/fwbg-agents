@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.33.0](https://github.com/haexhub/fwbg-agents/compare/v0.32.1...v0.33.0) (2026-07-29)
+
+
+### Features
+
+* **config:** test a model with one prompt before accepting it ([4acd7cd](https://github.com/haexhub/fwbg-agents/commit/4acd7cda53d8647387429858ce5be7ce414c7211))
+* **config:** test a model with one prompt before accepting it ([7a16a3b](https://github.com/haexhub/fwbg-agents/commit/7a16a3b94ddd741c7c87dba67b4654e996e59a60))
+
 ## [0.32.1](https://github.com/haexhub/fwbg-agents/compare/v0.32.0...v0.32.1) (2026-07-29)
 
 
