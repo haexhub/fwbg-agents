@@ -203,11 +203,13 @@ def test_list_gemini_models_drops_non_chat_models(tmp_path, monkeypatch):
     class FakeModels:
         def list(self):
             # All of these advertise generateContent, but only the first two
-            # generate text and can therefore back an agent.
+            # can back an agent. deep-research-* is the subtle one: calling it
+            # returns HTTP 400 "This model only supports Interactions API".
             return [
                 SimpleNamespace(name=f"models/{name}", supported_actions=["generateContent"])
                 for name in (
                     "gemini-3-pro-preview",
+                    "gemma-4-31b-it",
                     "deep-research-max-preview-04-2026",
                     "gemini-3-pro-image",
                     "gemini-2.5-flash-preview-tts",
@@ -225,7 +227,7 @@ def test_list_gemini_models_drops_non_chat_models(tmp_path, monkeypatch):
 
     monkeypatch.setattr(llm.genai, "Client", FakeClient)
 
-    assert list_gemini_models() == ["deep-research-max-preview-04-2026", "gemini-3-pro-preview"]
+    assert list_gemini_models() == ["gemini-3-pro-preview", "gemma-4-31b-it"]
 
 
 def test_build_google_model_applies_timeout(tmp_path, monkeypatch):
