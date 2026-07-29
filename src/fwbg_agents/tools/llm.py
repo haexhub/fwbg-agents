@@ -86,6 +86,10 @@ _GOOGLE_MODEL_PREFIXES = (
 # generators and its robotics/computer-use previews too, but none of them can
 # drive an agent (text in, structured text out). Excluded from the per-agent
 # model picker so an operator cannot select one.
+#
+# `deep-research-*` is the same story with a different ending: ListModels
+# advertises `generateContent`, but calling it returns HTTP 400 "This model
+# only supports Interactions API" — an API pydantic-ai does not speak.
 _NON_CHAT_MODEL_MARKERS = (
     "-image",
     "-tts",
@@ -94,6 +98,7 @@ _NON_CHAT_MODEL_MARKERS = (
     "lyria-",
     "nano-banana-",
     "veo-",
+    "deep-research-",
 )
 
 
@@ -105,6 +110,37 @@ def is_google_model(model_name: str) -> bool:
 def _is_chat_capable(model_name: str) -> bool:
     """True if the model generates text, i.e. can back an agent."""
     return not any(marker in model_name for marker in _NON_CHAT_MODEL_MARKERS)
+
+
+class ModelUnusableError(RuntimeError):
+    """Raised when a model cannot actually be called with today's credentials."""
+
+
+# Seconds a probe may take. Deliberately short: it answers an interactive
+# "can I select this model?", so a wedged provider must fail fast rather than
+# hang the request for the generous per-run llm_timeout_seconds.
+_PROBE_TIMEOUT_SECONDS = 30.0
+
+
+def probe_model(model_name: str) -> None:
+    """Send a one-word prompt to ``model_name``, raising if it cannot be used.
+
+    Whether a model is actually callable is not derivable from either
+    provider's model listing: Google advertises `generateContent` for models
+    whose free-tier allowance is zero (HTTP 429, "limit: 0") and for ones that
+    only speak its Interactions API (HTTP 400), and haex-claude-proxy's list is
+    equally optimistic. Trying it is the only honest test — so the model picker
+    runs this before storing an override and surfaces the provider's own
+    message, instead of letting every later agent run fail.
+    """
+    from pydantic_ai import Agent
+    from pydantic_ai.settings import ModelSettings
+
+    agent = Agent(_build_model_for_name(model_name))
+    try:
+        agent.run_sync("hi", model_settings=ModelSettings(timeout=_PROBE_TIMEOUT_SECONDS))
+    except Exception as exc:
+        raise ModelUnusableError(str(exc)) from exc
 
 
 def list_gemini_models() -> list[str]:
