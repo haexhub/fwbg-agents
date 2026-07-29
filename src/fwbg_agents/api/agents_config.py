@@ -21,12 +21,13 @@ router = APIRouter(prefix="/agents/config", tags=["agents-config"])
 def _available_models() -> list[str]:
     """Models usable with the credentials configured right now.
 
-    Claude always qualifies (routed through haex-claude-proxy, no per-user
-    key). Gemini models are listed live from Google's API, and so only
-    appear once the "google" secret (GET/PUT /agents/secrets, env fallback
-    GOOGLE_API_KEY) is actually set and valid.
+    Claude models are listed live from haex-claude-proxy's own GET
+    /v1/models (routed through the proxy, no per-user key needed). Gemini
+    models are listed live from Google's API, and so only appear once the
+    "google" secret (GET/PUT /agents/secrets, env fallback GOOGLE_API_KEY)
+    is actually set and valid.
     """
-    return list(llm.AVAILABLE_CLAUDE_MODELS) + llm.list_gemini_models()
+    return llm.list_claude_models() + llm.list_gemini_models()
 
 
 class AgentConfigUpdate(BaseModel):
