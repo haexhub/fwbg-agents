@@ -1,6 +1,6 @@
-"""Provider dispatch: model_for/model_name_for must route gemini-* names to
-GoogleModel and everything else to AnthropicModel, without needing an API key
-unless a Gemini model is actually selected."""
+"""Provider dispatch: model_for/model_name_for must route every Google-served
+name to GoogleModel and everything else to AnthropicModel, without needing an
+API key unless a Google model is actually selected."""
 
 from __future__ import annotations
 
@@ -165,8 +165,8 @@ def test_dispatch_routes_claude_name_to_anthropic_model():
     assert isinstance(model, AnthropicModel)
 
 
-def test_dispatch_routes_non_gemini_name_to_anthropic_model():
-    # Dispatch keys off the "gemini-" prefix, not a maintained Claude name
+def test_dispatch_routes_non_google_name_to_anthropic_model():
+    # Dispatch keys off the Google prefix set, not a maintained Claude name
     # list (there is none — see list_claude_models) — any other name is
     # assumed Claude and left for haex-claude-proxy itself to validate.
     model = _build_model_for_name("claude-opus-5")
@@ -179,6 +179,53 @@ def test_dispatch_routes_gemini_name_to_google_model(tmp_path, monkeypatch):
     model = _build_model_for_name("gemini-2.5-pro")
     assert isinstance(model, GoogleModel)
     assert model.model_name == "gemini-2.5-pro"
+
+
+@pytest.mark.parametrize(
+    "model_name",
+    ["deep-research-max-preview-04-2026", "gemma-4-31b-it", "antigravity-preview-05-2026"],
+)
+def test_dispatch_routes_google_non_gemini_names_to_google_model(model_name, tmp_path, monkeypatch):
+    # Google's ListModels serves these alongside gemini-*; routing them to
+    # haex-claude-proxy (Claude-only) fails with HTTP 404.
+    monkeypatch.setattr(settings, "data_dir", tmp_path)
+    monkeypatch.setenv("GOOGLE_API_KEY", "test-key")
+    model = _build_model_for_name(model_name)
+    assert isinstance(model, GoogleModel)
+    assert model.model_name == model_name
+
+
+def test_list_gemini_models_drops_non_chat_models(tmp_path, monkeypatch):
+    monkeypatch.setattr(settings, "data_dir", tmp_path)
+    monkeypatch.setenv("GOOGLE_API_KEY", "test-key")
+    monkeypatch.setattr(llm, "_gemini_models_cache", None)
+
+    class FakeModels:
+        def list(self):
+            # All of these advertise generateContent, but only the first two
+            # generate text and can therefore back an agent.
+            return [
+                SimpleNamespace(name=f"models/{name}", supported_actions=["generateContent"])
+                for name in (
+                    "gemini-3-pro-preview",
+                    "deep-research-max-preview-04-2026",
+                    "gemini-3-pro-image",
+                    "gemini-2.5-flash-preview-tts",
+                    "gemini-2.5-computer-use-preview-10-2025",
+                    "gemini-robotics-er-1.6-preview",
+                    "lyria-3-pro-preview",
+                    "nano-banana-pro-preview",
+                    "veo-3.1-fast-generate-preview",
+                )
+            ]
+
+    class FakeClient:
+        def __init__(self, api_key):
+            self.models = FakeModels()
+
+    monkeypatch.setattr(llm.genai, "Client", FakeClient)
+
+    assert list_gemini_models() == ["deep-research-max-preview-04-2026", "gemini-3-pro-preview"]
 
 
 def test_build_google_model_applies_timeout(tmp_path, monkeypatch):
