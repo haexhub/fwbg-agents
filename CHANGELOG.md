@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.32.1](https://github.com/haexhub/fwbg-agents/compare/v0.32.0...v0.32.1) (2026-07-29)
+
+
+### Bug Fixes
+
+* **llm:** call every Google model directly instead of via haex-claude-proxy ([946878f](https://github.com/haexhub/fwbg-agents/commit/946878f6fd3cf10003e35cffe72ecbb9d03ab916))
+* **llm:** call every Google model directly instead of via haex-claude-proxy ([cb4eda4](https://github.com/haexhub/fwbg-agents/commit/cb4eda4b84250a5d5a6149669f0f329b2d4a2485))
+
 ## [0.32.0](https://github.com/haexhub/fwbg-agents/compare/v0.31.0...v0.32.0) (2026-07-29)
 
 
