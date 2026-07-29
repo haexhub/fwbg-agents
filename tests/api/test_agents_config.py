@@ -12,9 +12,13 @@ from fwbg_agents.main import app
 @pytest_asyncio.fixture
 async def config_client(tmp_path, monkeypatch):
     from fwbg_agents.config import settings
+    from fwbg_agents.tools import llm
 
     monkeypatch.setattr(settings, "data_dir", tmp_path)
     monkeypatch.delenv("GOOGLE_API_KEY", raising=False)
+    # Claude models are listed live from haex-claude-proxy — stub it out so
+    # tests don't make a real network call.
+    monkeypatch.setattr(llm, "list_claude_models", lambda: ["claude-sonnet-5"])
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as c:
         yield c
 
@@ -28,7 +32,10 @@ async def test_gemini_models_hidden_without_google_key(config_client):
 
 
 async def test_gemini_models_shown_once_google_key_set(config_client, monkeypatch):
+    from fwbg_agents.tools import llm
+
     monkeypatch.setenv("GOOGLE_API_KEY", "test-key")
+    monkeypatch.setattr(llm, "list_gemini_models", lambda: ["gemini-2.5-pro"])
     resp = await config_client.get("/agents/config")
     assert resp.status_code == 200
     models = resp.json()["available_models"]

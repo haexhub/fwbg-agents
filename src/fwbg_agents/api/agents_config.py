@@ -14,7 +14,6 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
 from fwbg_agents.tools import agent_config, llm
-from fwbg_agents.tools.secrets import get_secret
 
 router = APIRouter(prefix="/agents/config", tags=["agents-config"])
 
@@ -22,14 +21,13 @@ router = APIRouter(prefix="/agents/config", tags=["agents-config"])
 def _available_models() -> list[str]:
     """Models usable with the credentials configured right now.
 
-    Claude always qualifies (routed through haex-claude-proxy, no per-user
-    key). Gemini only qualifies once the "google" secret (GET/PUT
-    /agents/secrets, env fallback GOOGLE_API_KEY) is actually set.
+    Claude models are listed live from haex-claude-proxy's own GET
+    /v1/models (routed through the proxy, no per-user key needed). Gemini
+    models are listed live from Google's API, and so only appear once the
+    "google" secret (GET/PUT /agents/secrets, env fallback GOOGLE_API_KEY)
+    is actually set and valid.
     """
-    models = list(llm.AVAILABLE_CLAUDE_MODELS)
-    if get_secret("google"):
-        models += llm.AVAILABLE_GEMINI_MODELS
-    return models
+    return llm.list_claude_models() + llm.list_gemini_models()
 
 
 class AgentConfigUpdate(BaseModel):
@@ -78,7 +76,7 @@ def put_agent_config(name: str, body: AgentConfigUpdate) -> dict[str, Any]:
         raise HTTPException(404, f"unknown configurable agent: {name!r}")
 
     model = (body.model or "").strip()
-    if model and model not in llm.AVAILABLE_MODELS:
+    if model and model not in _available_models():
         raise HTTPException(422, f"unknown model: {model!r}")
     agent_config.set_model_override(name, model or None)
 

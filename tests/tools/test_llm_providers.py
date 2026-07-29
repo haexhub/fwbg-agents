@@ -4,27 +4,172 @@ unless a Gemini model is actually selected."""
 
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 import pytest
 from pydantic_ai.models.anthropic import AnthropicModel
 from pydantic_ai.models.google import GoogleModel
 
 from fwbg_agents.config import settings
+from fwbg_agents.tools import llm
 from fwbg_agents.tools.llm import (
-    AVAILABLE_GEMINI_MODELS,
-    AVAILABLE_MODELS,
     _build_google_model,
     _build_model_for_name,
+    list_claude_models,
+    list_gemini_models,
 )
 
 
-def test_available_models_is_claude_plus_gemini():
-    assert set(AVAILABLE_GEMINI_MODELS) <= set(AVAILABLE_MODELS)
-    assert "claude-sonnet-5" in AVAILABLE_MODELS
-    assert "gemini-2.5-pro" in AVAILABLE_MODELS
+def test_list_claude_models_maps_ids(monkeypatch):
+    monkeypatch.setattr(llm, "_claude_models_cache", None)
+    init_kwargs = {}
+
+    class FakeModels:
+        def list(self):
+            return [
+                SimpleNamespace(id="claude-sonnet-5"),
+                SimpleNamespace(id="claude-opus-5"),
+            ]
+
+    class FakeClient:
+        def __init__(self, **kwargs):
+            init_kwargs.update(kwargs)
+            self.models = FakeModels()
+
+    monkeypatch.setattr(llm, "Anthropic", FakeClient)
+
+    assert list_claude_models() == ["claude-opus-5", "claude-sonnet-5"]
+    assert init_kwargs["timeout"] == settings.llm_timeout_seconds
+    assert init_kwargs["max_retries"] == settings.llm_max_retries
+
+
+def test_list_claude_models_caches_between_calls(monkeypatch):
+    monkeypatch.setattr(llm, "_claude_models_cache", None)
+    call_count = 0
+
+    class FakeModels:
+        def list(self):
+            nonlocal call_count
+            call_count += 1
+            return [SimpleNamespace(id="claude-sonnet-5")]
+
+    class FakeClient:
+        def __init__(self, **kwargs):
+            self.models = FakeModels()
+
+    monkeypatch.setattr(llm, "Anthropic", FakeClient)
+
+    assert list_claude_models() == ["claude-sonnet-5"]
+    assert list_claude_models() == ["claude-sonnet-5"]
+    assert call_count == 1
+
+
+def test_list_claude_models_falls_back_to_empty_on_error(monkeypatch):
+    monkeypatch.setattr(llm, "_claude_models_cache", None)
+
+    class FailingModels:
+        def list(self):
+            raise RuntimeError("boom")
+
+    class FailingClient:
+        def __init__(self, **kwargs):
+            self.models = FailingModels()
+
+    monkeypatch.setattr(llm, "Anthropic", FailingClient)
+
+    assert list_claude_models() == []
+
+
+def test_list_gemini_models_without_key_returns_empty(tmp_path, monkeypatch):
+    monkeypatch.setattr(settings, "data_dir", tmp_path)
+    monkeypatch.delenv("GOOGLE_API_KEY", raising=False)
+    monkeypatch.setattr(llm, "_gemini_models_cache", None)
+    assert list_gemini_models() == []
+
+
+def test_list_gemini_models_filters_generate_content_and_strips_prefix(tmp_path, monkeypatch):
+    monkeypatch.setattr(settings, "data_dir", tmp_path)
+    monkeypatch.setenv("GOOGLE_API_KEY", "test-key")
+    monkeypatch.setattr(llm, "_gemini_models_cache", None)
+
+    class FakeModels:
+        def list(self):
+            return [
+                SimpleNamespace(
+                    name="models/gemini-2.5-flash", supported_actions=["generateContent"]
+                ),
+                SimpleNamespace(
+                    name="models/text-embedding-004", supported_actions=["embedContent"]
+                ),
+                SimpleNamespace(
+                    name="models/gemini-2.0-flash", supported_actions=["generateContent"]
+                ),
+            ]
+
+    class FakeClient:
+        def __init__(self, api_key):
+            self.models = FakeModels()
+
+    monkeypatch.setattr(llm.genai, "Client", FakeClient)
+
+    assert list_gemini_models() == ["gemini-2.0-flash", "gemini-2.5-flash"]
+
+
+def test_list_gemini_models_caches_between_calls(tmp_path, monkeypatch):
+    monkeypatch.setattr(settings, "data_dir", tmp_path)
+    monkeypatch.setenv("GOOGLE_API_KEY", "test-key")
+    monkeypatch.setattr(llm, "_gemini_models_cache", None)
+    call_count = 0
+
+    class FakeModels:
+        def list(self):
+            nonlocal call_count
+            call_count += 1
+            return [
+                SimpleNamespace(
+                    name="models/gemini-2.5-flash", supported_actions=["generateContent"]
+                )
+            ]
+
+    class FakeClient:
+        def __init__(self, api_key):
+            self.models = FakeModels()
+
+    monkeypatch.setattr(llm.genai, "Client", FakeClient)
+
+    assert list_gemini_models() == ["gemini-2.5-flash"]
+    assert list_gemini_models() == ["gemini-2.5-flash"]
+    assert call_count == 1
+
+
+def test_list_gemini_models_falls_back_to_empty_on_error(tmp_path, monkeypatch):
+    monkeypatch.setattr(settings, "data_dir", tmp_path)
+    monkeypatch.setenv("GOOGLE_API_KEY", "test-key")
+    monkeypatch.setattr(llm, "_gemini_models_cache", None)
+
+    class FailingModels:
+        def list(self):
+            raise RuntimeError("boom")
+
+    class FailingClient:
+        def __init__(self, api_key):
+            self.models = FailingModels()
+
+    monkeypatch.setattr(llm.genai, "Client", FailingClient)
+
+    assert list_gemini_models() == []
 
 
 def test_dispatch_routes_claude_name_to_anthropic_model():
     model = _build_model_for_name("claude-sonnet-5")
+    assert isinstance(model, AnthropicModel)
+
+
+def test_dispatch_routes_non_gemini_name_to_anthropic_model():
+    # Dispatch keys off the "gemini-" prefix, not a maintained Claude name
+    # list (there is none — see list_claude_models) — any other name is
+    # assumed Claude and left for haex-claude-proxy itself to validate.
+    model = _build_model_for_name("claude-opus-5")
     assert isinstance(model, AnthropicModel)
 
 
