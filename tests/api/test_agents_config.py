@@ -12,9 +12,13 @@ from fwbg_agents.main import app
 @pytest_asyncio.fixture
 async def config_client(tmp_path, monkeypatch):
     from fwbg_agents.config import settings
+    from fwbg_agents.tools import llm
 
     monkeypatch.setattr(settings, "data_dir", tmp_path)
     monkeypatch.delenv("GOOGLE_API_KEY", raising=False)
+    # Claude models are listed live from haex-claude-proxy — stub it out so
+    # tests don't make a real network call.
+    monkeypatch.setattr(llm, "list_claude_models", lambda: ["claude-sonnet-5"])
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as c:
         yield c
 

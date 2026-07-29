@@ -13,15 +13,71 @@ from pydantic_ai.models.google import GoogleModel
 from fwbg_agents.config import settings
 from fwbg_agents.tools import llm
 from fwbg_agents.tools.llm import (
-    AVAILABLE_CLAUDE_MODELS,
     _build_google_model,
     _build_model_for_name,
+    list_claude_models,
     list_gemini_models,
 )
 
 
-def test_claude_models_include_default():
-    assert "claude-sonnet-5" in AVAILABLE_CLAUDE_MODELS
+def test_list_claude_models_maps_ids(monkeypatch):
+    monkeypatch.setattr(llm, "_claude_models_cache", None)
+    init_kwargs = {}
+
+    class FakeModels:
+        def list(self):
+            return [
+                SimpleNamespace(id="claude-sonnet-5"),
+                SimpleNamespace(id="claude-opus-5"),
+            ]
+
+    class FakeClient:
+        def __init__(self, **kwargs):
+            init_kwargs.update(kwargs)
+            self.models = FakeModels()
+
+    monkeypatch.setattr(llm, "Anthropic", FakeClient)
+
+    assert list_claude_models() == ["claude-opus-5", "claude-sonnet-5"]
+    assert init_kwargs["timeout"] == settings.llm_timeout_seconds
+    assert init_kwargs["max_retries"] == settings.llm_max_retries
+
+
+def test_list_claude_models_caches_between_calls(monkeypatch):
+    monkeypatch.setattr(llm, "_claude_models_cache", None)
+    call_count = 0
+
+    class FakeModels:
+        def list(self):
+            nonlocal call_count
+            call_count += 1
+            return [SimpleNamespace(id="claude-sonnet-5")]
+
+    class FakeClient:
+        def __init__(self, **kwargs):
+            self.models = FakeModels()
+
+    monkeypatch.setattr(llm, "Anthropic", FakeClient)
+
+    assert list_claude_models() == ["claude-sonnet-5"]
+    assert list_claude_models() == ["claude-sonnet-5"]
+    assert call_count == 1
+
+
+def test_list_claude_models_falls_back_to_empty_on_error(monkeypatch):
+    monkeypatch.setattr(llm, "_claude_models_cache", None)
+
+    class FailingModels:
+        def list(self):
+            raise RuntimeError("boom")
+
+    class FailingClient:
+        def __init__(self, **kwargs):
+            self.models = FailingModels()
+
+    monkeypatch.setattr(llm, "Anthropic", FailingClient)
+
+    assert list_claude_models() == []
 
 
 def test_list_gemini_models_without_key_returns_empty(tmp_path, monkeypatch):
@@ -106,6 +162,14 @@ def test_list_gemini_models_falls_back_to_empty_on_error(tmp_path, monkeypatch):
 
 def test_dispatch_routes_claude_name_to_anthropic_model():
     model = _build_model_for_name("claude-sonnet-5")
+    assert isinstance(model, AnthropicModel)
+
+
+def test_dispatch_routes_non_gemini_name_to_anthropic_model():
+    # Dispatch keys off the "gemini-" prefix, not a maintained Claude name
+    # list (there is none — see list_claude_models) — any other name is
+    # assumed Claude and left for haex-claude-proxy itself to validate.
+    model = _build_model_for_name("claude-opus-5")
     assert isinstance(model, AnthropicModel)
 
 

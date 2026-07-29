@@ -10,7 +10,7 @@ import logging
 import time
 from pathlib import Path
 
-from anthropic import AsyncAnthropic
+from anthropic import Anthropic, AsyncAnthropic
 from google import genai
 from pydantic_ai.models import Model
 from pydantic_ai.models.anthropic import AnthropicModel, AnthropicModelSettings
@@ -24,14 +24,43 @@ from fwbg_agents.tools.secrets import get_secret
 log = logging.getLogger(__name__)
 
 # Claude models selectable per agent via /agents/config. All route through the
-# same haex-claude-proxy, so no extra API keys are needed to switch between them.
-AVAILABLE_CLAUDE_MODELS: tuple[str, ...] = (
-    "claude-opus-4-8",
-    "claude-opus-4-7",
-    "claude-sonnet-5",
-    "claude-sonnet-4-6",
-    "claude-haiku-4-5",
-)
+# same haex-claude-proxy, so no extra API keys are needed to switch between
+# them — listed live from the proxy's own GET /v1/models (see
+# list_claude_models) rather than duplicated here. Anthropic has no live
+# model-listing endpoint reachable via OAuth, so haex-claude-proxy maintains
+# and validates that list itself; this just relays it.
+_CLAUDE_MODELS_CACHE_TTL_SECONDS = 300
+_claude_models_cache: tuple[float, list[str]] | None = None
+
+
+def list_claude_models() -> list[str]:
+    """Claude models haex-claude-proxy currently advertises and accepts.
+
+    Cached briefly since this runs on every GET /agents/config. Falls back to
+    the last successful list (or `[]`) if the proxy is unreachable.
+    """
+    global _claude_models_cache
+    now = time.monotonic()
+    if _claude_models_cache is not None:
+        cached_at, cached_models = _claude_models_cache
+        if now - cached_at < _CLAUDE_MODELS_CACHE_TTL_SECONDS:
+            return cached_models
+
+    try:
+        client = Anthropic(
+            base_url=settings.anthropic_base_url,
+            api_key=settings.anthropic_api_key,
+            timeout=settings.llm_timeout_seconds,
+            max_retries=settings.llm_max_retries,
+        )
+        models = sorted(m.id for m in client.models.list())
+    except Exception as exc:
+        log.warning("Claude ListModels call failed: %s", exc)
+        return _claude_models_cache[1] if _claude_models_cache else []
+
+    _claude_models_cache = (now, models)
+    return models
+
 
 # Gemini models are not hardcoded — listed live from Google's API (see
 # list_gemini_models) so newly released models show up without a code change.
@@ -113,9 +142,9 @@ def _build_google_model(model_name: str) -> GoogleModel:
 
 def _build_model_for_name(model_name: str) -> Model:
     """Dispatch to the right provider's model factory based on the model name."""
-    if model_name in AVAILABLE_CLAUDE_MODELS:
-        return _build_model(model_name)
-    return _build_google_model(model_name)
+    if model_name.startswith("gemini-"):
+        return _build_google_model(model_name)
+    return _build_model(model_name)
 
 
 def role_default_model(agent_name: str) -> str:
