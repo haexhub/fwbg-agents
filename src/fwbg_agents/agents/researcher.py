@@ -38,7 +38,7 @@ from fwbg_agents.orchestrator.hypotheses import (
     validate_hypothesis,
 )
 from fwbg_agents.orchestrator.lessons import lessons_digest
-from fwbg_agents.orchestrator.prior_art import PriorArtMatch, lookup_prior_art
+from fwbg_agents.orchestrator.prior_art import lookup_prior_art
 from fwbg_agents.persistence.agent_runs import (
     fail_agent_run,
     finish_agent_run,
@@ -129,7 +129,6 @@ class Researcher:
     async def run(self, input: ResearcherInput) -> ResearcherHypothesis:
         """Run the researcher agent and return a validated hypothesis."""
         ar = await start_agent_run(self.session, agent_name="researcher")
-        prior_art_seen: list[PriorArtMatch] = []
 
         try:
             template = self.prompt_path.read_text()
@@ -161,7 +160,6 @@ class Researcher:
                 """Search for prior strategies similar to a proposed one (tag-based,
                 anti-redundancy)."""
                 matches = await lookup_prior_art(session, strategy_family, asset_class, tags)
-                prior_art_seen.extend(matches)
                 return [m.model_dump() for m in matches]
 
             @agent.tool_plain
@@ -241,7 +239,19 @@ class Researcher:
             await self.session.commit()
 
             try:
-                validate_hypothesis(result.output, prior_art_seen)
+                # Re-derive prior art from what the hypothesis actually commits to,
+                # not from tool-call history: the Researcher may probe several
+                # families/tags before settling on one, and validating against that
+                # exploration trail both drags in irrelevant matches from families
+                # it didn't propose and can miss real prior art for the family it
+                # did, if that exact call was never made.
+                final_prior_art = await lookup_prior_art(
+                    self.session,
+                    result.output.strategy_family,
+                    result.output.asset_class,
+                    result.output.tags,
+                )
+                validate_hypothesis(result.output, final_prior_art)
             except HypothesisRejectedError as exc:
                 raise ResearcherError(str(exc)) from exc
 

@@ -230,6 +230,8 @@ def _validate_inline_params(
                 continue
             params = entry.get("params") or {}
             for param_name, value in params.items():
+                if value is None:
+                    continue
                 field_schema = param_schema.get(param_name)
                 if not isinstance(field_schema, dict):
                     continue
