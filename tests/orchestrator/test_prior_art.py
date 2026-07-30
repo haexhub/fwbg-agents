@@ -56,50 +56,51 @@ async def _seed(
 async def test_returns_only_strategies_for_same_asset_class(db):
     await _seed(db, "a", "ORB", "FOREX", ["intraday", "momentum"])
     await _seed(db, "b", "ORB", "INDEX", ["intraday", "momentum"])
-    matches = await lookup_prior_art(db, "ORB", "FOREX", ["intraday", "momentum"])
+    matches = await lookup_prior_art(db, "FOREX", ["intraday", "momentum"])
     assert [m.slug for m in matches] == ["a"]
 
 
 @pytest.mark.asyncio
 async def test_jaccard_below_threshold_is_filtered(db):
     await _seed(db, "a", "RSI", "FOREX", ["mean_reversion", "rsi"])
-    matches = await lookup_prior_art(db, "ORB", "FOREX", ["momentum", "intraday"])
+    matches = await lookup_prior_art(db, "FOREX", ["momentum", "intraday"])
     assert matches == []
 
 
 @pytest.mark.asyncio
-async def test_same_family_matches_even_without_tag_overlap(db):
+async def test_same_family_alone_does_not_match_without_tag_overlap(db):
+    """strategy_family is a coarse controlled-vocabulary bucket (~10 values), not a
+    similarity signal — sharing it must not bypass the tag-Jaccard filter."""
     await _seed(db, "a", "ORB", "FOREX", ["breakout"])
-    matches = await lookup_prior_art(db, "ORB", "FOREX", ["intraday"])
-    assert [m.slug for m in matches] == ["a"]
+    matches = await lookup_prior_art(db, "FOREX", ["intraday"])
+    assert matches == []
 
 
 @pytest.mark.asyncio
 async def test_results_sorted_by_jaccard_desc(db):
     await _seed(db, "low", "ORB", "FOREX", ["intraday", "x"])
     await _seed(db, "high", "ORB", "FOREX", ["intraday", "momentum", "trend"])
-    matches = await lookup_prior_art(db, "ORB", "FOREX", ["intraday", "momentum"])
+    matches = await lookup_prior_art(db, "FOREX", ["intraday", "momentum"])
     assert [m.slug for m in matches] == ["high", "low"]
 
 
 @pytest.mark.asyncio
-async def test_strategy_with_no_tags_only_matches_via_family(db):
+async def test_strategy_with_no_tags_does_not_match(db):
     await _seed(db, "no_tags", "ORB", "FOREX", [])
-    await _seed(db, "rsi_no_tags", "RSI", "FOREX", [])
-    matches = await lookup_prior_art(db, "ORB", "FOREX", ["intraday"])
-    assert [m.slug for m in matches] == ["no_tags"]
+    matches = await lookup_prior_art(db, "FOREX", ["intraday"])
+    assert matches == []
 
 
 @pytest.mark.asyncio
 async def test_returns_empty_when_no_strategies(db):
-    matches = await lookup_prior_art(db, "ORB", "FOREX", ["intraday"])
+    matches = await lookup_prior_art(db, "FOREX", ["intraday"])
     assert matches == []
 
 
 @pytest.mark.asyncio
 async def test_tags_overlap_field_is_correct(db):
     await _seed(db, "a", "ORB", "FOREX", ["intraday", "momentum", "trend"])
-    matches = await lookup_prior_art(db, "ORB", "FOREX", ["intraday", "momentum"])
+    matches = await lookup_prior_art(db, "FOREX", ["intraday", "momentum"])
     assert sorted(matches[0].tags_overlap) == ["intraday", "momentum"]
 
 
@@ -116,7 +117,7 @@ async def test_post_mortem_summary_loaded_when_path_exists(db, tmp_path):
         state=StrategyState.ABANDONED,
         post_mortem_path=str(pm),
     )
-    matches = await lookup_prior_art(db, "ORB", "FOREX", ["intraday"])
+    matches = await lookup_prior_art(db, "FOREX", ["intraday"])
     assert matches[0].post_mortem_path == str(pm)
     assert matches[0].post_mortem_summary is not None
     assert "no edge" in matches[0].post_mortem_summary
@@ -132,7 +133,7 @@ async def test_post_mortem_summary_is_none_when_file_missing(db):
         ["intraday"],
         post_mortem_path="/nonexistent/path/post_mortem.yaml",
     )
-    matches = await lookup_prior_art(db, "ORB", "FOREX", ["intraday"])
+    matches = await lookup_prior_art(db, "FOREX", ["intraday"])
     assert matches[0].post_mortem_path is not None
     assert matches[0].post_mortem_summary is None
 
@@ -149,7 +150,7 @@ async def test_post_mortem_summary_truncated_to_240_chars(db, tmp_path):
         ["intraday"],
         post_mortem_path=str(pm),
     )
-    matches = await lookup_prior_art(db, "ORB", "FOREX", ["intraday"])
+    matches = await lookup_prior_art(db, "FOREX", ["intraday"])
     assert matches[0].post_mortem_summary is not None
     assert len(matches[0].post_mortem_summary) <= 240
 
@@ -158,7 +159,7 @@ async def test_post_mortem_summary_truncated_to_240_chars(db, tmp_path):
 async def test_cap_at_20_matches(db):
     for i in range(30):
         await _seed(db, f"s_{i:03d}", "ORB", "FOREX", ["intraday", "momentum"])
-    matches = await lookup_prior_art(db, "ORB", "FOREX", ["intraday", "momentum"])
+    matches = await lookup_prior_art(db, "FOREX", ["intraday", "momentum"])
     assert len(matches) == 20
 
 
@@ -168,7 +169,7 @@ async def test_agnostic_lookup_scans_all_asset_classes(db):
     await _seed(db, "forex_a", "ORB", "FOREX", ["intraday", "momentum"])
     await _seed(db, "index_b", "ORB", "INDEX", ["intraday", "momentum"])
     await _seed(db, "agnostic_c", "ORB", None, ["intraday", "momentum"])
-    matches = await lookup_prior_art(db, "ORB", None, ["intraday", "momentum"])
+    matches = await lookup_prior_art(db, None, ["intraday", "momentum"])
     slugs = {m.slug for m in matches}
     assert slugs == {"forex_a", "index_b", "agnostic_c"}
 
@@ -178,8 +179,8 @@ async def test_empty_string_asset_class_normalised_to_none(db):
     """LLM passes '' for asset-agnostic; must behave identically to None."""
     await _seed(db, "agnostic_a", "ORB", None, ["intraday"])
     await _seed(db, "forex_b", "ORB", "FOREX", ["intraday"])
-    matches_none = await lookup_prior_art(db, "ORB", None, ["intraday"])
-    matches_empty = await lookup_prior_art(db, "ORB", "", ["intraday"])
+    matches_none = await lookup_prior_art(db, None, ["intraday"])
+    matches_empty = await lookup_prior_art(db, "", ["intraday"])
     assert {m.slug for m in matches_none} == {m.slug for m in matches_empty}
 
 
@@ -198,5 +199,5 @@ async def test_match_surfaces_edge_mechanism_from_hypothesis(db, tmp_path, monke
     (it_dir / "hypothesis.json").write_text(
         json.dumps({"edge_mechanism": "London-open liquidity imbalance drives a momentum burst"})
     )
-    matches = await lookup_prior_art(db, "ORB", "FOREX", ["intraday", "momentum"])
+    matches = await lookup_prior_art(db, "FOREX", ["intraday", "momentum"])
     assert matches[0].edge_mechanism == "London-open liquidity imbalance drives a momentum burst"
