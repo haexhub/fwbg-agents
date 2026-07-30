@@ -100,6 +100,27 @@ def _lookup_then_final_handler(lookup_args, hyp_args):
     return handler
 
 
+def _multi_lookup_then_final_handler(lookup_args_list, hyp_args):
+    """Call lookup_prior_art_tool once per entry in lookup_args_list, in order,
+    then emit the final hypothesis — simulates the Researcher exploring several
+    families/tag sets before committing to one."""
+
+    def handler(messages: list[ModelRequest], _info: AgentInfo) -> ModelResponse:
+        tool_returns = sum(
+            1
+            for msg in messages
+            for part in getattr(msg, "parts", [])
+            if isinstance(part, ToolReturnPart) and part.tool_name == "lookup_prior_art_tool"
+        )
+        if tool_returns < len(lookup_args_list):
+            return ModelResponse(
+                parts=[ToolCallPart("lookup_prior_art_tool", lookup_args_list[tool_returns])]
+            )
+        return ModelResponse(parts=[ToolCallPart("final_result", hyp_args)])
+
+    return handler
+
+
 def _mock_transport(payload):
     async def handler(_req):
         return httpx.Response(200, json=payload)
@@ -211,6 +232,51 @@ async def test_hypothesis_accepted_when_differentiates_from_covers_prior_art(db)
         ResearcherInput(asset_class="FOREX", strategy_family_hint="RSI_meanrev")
     )
     assert "rsimeanrev__forex__001" in result.differentiates_from
+
+
+@pytest.mark.asyncio
+async def test_validation_ignores_prior_art_from_abandoned_exploration(db):
+    """Validation must check the *committed* hypothesis, not every family the
+    Researcher probed on the way there. A tool call for a family it ends up
+    NOT proposing must not force differentiates_from to cover that family too.
+    """
+    await _seed_prior_strategy(
+        db, "momentum__forex__001", "momentum", "FOREX", ["momentum", "breakout"]
+    )
+    await _seed_prior_strategy(
+        db,
+        "carry__forex__001",
+        "carry",
+        "FOREX",
+        ["carry", "interest_rate_differential"],
+    )
+
+    model = FunctionModel(
+        _multi_lookup_then_final_handler(
+            [
+                {
+                    "strategy_family": "momentum",
+                    "asset_class": "FOREX",
+                    "tags": ["momentum", "breakout"],
+                },
+                {
+                    "strategy_family": "carry",
+                    "asset_class": "FOREX",
+                    "tags": ["carry", "interest_rate_differential"],
+                },
+            ],
+            _hyp_args(
+                strategy_family="carry",
+                tags=["carry", "interest_rate_differential"],
+                differentiates_from=["carry__forex__001"],
+            ),
+        )
+    )
+    researcher = Researcher(db, model=model, search_client=None)
+    result = await researcher.run(
+        ResearcherInput(asset_class="FOREX", strategy_family_hint="carry")
+    )
+    assert result.differentiates_from == ["carry__forex__001"]
 
 
 @pytest.mark.asyncio
