@@ -10,6 +10,7 @@ from pydantic import ValidationError
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from fwbg_agents.orchestrator.hypotheses import (
+    DUPLICATE_JACCARD_THRESHOLD,
     HypothesisRejectedError,
     ResearcherHypothesis,
     Source,
@@ -43,14 +44,14 @@ def _hyp(**over):
     return ResearcherHypothesis(**base)
 
 
-def _match(slug="prev_orb_001"):
+def _match(slug="prev_orb_001", jaccard=0.5):
     return PriorArtMatch(
         slug=slug,
         current_state="abandoned",
         strategy_family="ORB",
         asset_class="FOREX",
         tags_overlap=["momentum"],
-        jaccard=0.5,
+        jaccard=jaccard,
         post_mortem_path=None,
         post_mortem_summary=None,
     )
@@ -63,9 +64,16 @@ def test_validate_passes_with_no_prior_art():
     validate_hypothesis(_hyp(), [])
 
 
-def test_validate_rejects_when_prior_art_and_no_differentiates_from():
-    with pytest.raises(HypothesisRejectedError):
-        validate_hypothesis(_hyp(), [_match()])
+def test_validate_passes_with_related_non_duplicate_prior_art_and_no_differentiates_from():
+    """Below DUPLICATE_JACCARD_THRESHOLD, a match is context, not a blocker."""
+    validate_hypothesis(_hyp(), [_match(jaccard=DUPLICATE_JACCARD_THRESHOLD - 0.01)])
+
+
+def test_validate_rejects_near_duplicate_even_with_differentiates_from():
+    """At/above DUPLICATE_JACCARD_THRESHOLD it's the same idea — no prose overrides that."""
+    match = _match(jaccard=DUPLICATE_JACCARD_THRESHOLD)
+    with pytest.raises(HypothesisRejectedError, match="near-duplicate"):
+        validate_hypothesis(_hyp(differentiates_from=["prev_orb_001"]), [match])
 
 
 def test_validate_passes_when_differentiates_from_covers_prior_art():
@@ -77,11 +85,10 @@ def test_validate_rejects_when_differentiates_from_slug_unknown():
         validate_hypothesis(_hyp(differentiates_from=["unrelated"]), [_match()])
 
 
-def test_validate_rejects_when_partial_differentiates_from():
-    """All prior-art slugs must be addressed, not just some."""
+def test_validate_passes_with_partial_differentiates_from_when_not_duplicate():
+    """Naming only some of several non-duplicate matches is fine — no full-enumeration rule."""
     matches = [_match("prev_orb_001"), _match("prev_orb_002")]
-    with pytest.raises(HypothesisRejectedError):
-        validate_hypothesis(_hyp(differentiates_from=["prev_orb_001"]), matches)
+    validate_hypothesis(_hyp(differentiates_from=["prev_orb_001"]), matches)
 
 
 # --- WP3: first-iteration universe breadth ---

@@ -1,10 +1,14 @@
 """Tag-based prior-art lookup for the Researcher (M4).
 
 Deterministic, no LLM. Researcher MUST call this before producing a hypothesis;
-`validate_hypothesis` (orchestrator/hypotheses.py) refuses any hypothesis that
-overlaps with existing strategies but does not declare `differentiates_from`.
+`validate_hypothesis` (orchestrator/hypotheses.py) refuses a hypothesis that is
+a near-duplicate of a returned match.
 
-Layer 1 (this module): Jaccard tag-similarity + same-family bypass.
+Layer 1 (this module): Jaccard tag-similarity. `strategy_family` is a coarse,
+controlled-vocabulary bucket (~10 values, see speckit/strategy_spec.py) used
+for grouping/analytics, not as a similarity signal — a same-family bypass here
+would force every strategy in a bucket to be treated as prior art for every
+other, regardless of actual overlap.
 Layer 2 (sqlite-vec embedding similarity): deferred to post-M4 — only worth
 adding once the tag layer has been validated against real abandoned strategies.
 """
@@ -80,7 +84,6 @@ def _load_summary(path_str: str | None) -> str | None:
 
 async def lookup_prior_art(
     session: AsyncSession,
-    strategy_family: str,
     asset_class: str | None,
     tags: list[str],
 ) -> list[PriorArtMatch]:
@@ -90,13 +93,12 @@ async def lookup_prior_art(
     scanned to avoid penalising unrelated families in other markets.
 
     For asset-agnostic research (asset_class=None or ""), ALL strategies are
-    scanned — otherwise asset-agnostic strategies would never see each other and
-    the anti-redundancy gate would be blind to same-family repeats. The LLM
-    passes "" for asset-agnostic; the DB stores None — both are normalised here.
+    scanned — otherwise asset-agnostic strategies would never see each other. The
+    LLM passes "" for asset-agnostic; the DB stores None — both are normalised
+    here.
 
-    A strategy with the same `strategy_family` is always included even if its
-    tag overlap is below threshold. Sorted by descending Jaccard, same-family
-    as tiebreaker.
+    Matches are strategies whose tag Jaccard similarity meets JACCARD_THRESHOLD.
+    Sorted by descending Jaccard.
     """
     # Normalise: LLM passes "" for asset-agnostic; DB stores None.
     if asset_class == "":
@@ -131,8 +133,7 @@ async def lookup_prior_art(
     for s in rows:
         found_tags = tags_by_strategy[s.id]
         jaccard = _jaccard(input_tags, found_tags)
-        same_family = s.strategy_family == strategy_family
-        if jaccard < JACCARD_THRESHOLD and not same_family:
+        if jaccard < JACCARD_THRESHOLD:
             continue
         overlap = sorted(input_tags & found_tags)
         # File reads — off the event loop so a large candidate set (many
@@ -154,8 +155,5 @@ async def lookup_prior_art(
             )
         )
 
-    matches.sort(
-        key=lambda m: (m.jaccard, 1 if m.strategy_family == strategy_family else 0),
-        reverse=True,
-    )
+    matches.sort(key=lambda m: m.jaccard, reverse=True)
     return matches[:MAX_RESULTS]
