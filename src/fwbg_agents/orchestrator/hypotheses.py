@@ -20,6 +20,11 @@ from fwbg_agents.speckit.strategy_spec import StrategyFamilyLit, StrategySpec
 _SLUG_SUFFIX_RE = re.compile(r"__(\d{3,})$")
 _ITER_SUFFIX_RE = re.compile(r"__it(\d{3,})$")
 
+# Above prior_art.JACCARD_THRESHOLD (0.2, "worth surfacing as context"): a match
+# this close in tags is the same idea, not a related one — reject rather than
+# ask the Researcher to argue its way past it.
+DUPLICATE_JACCARD_THRESHOLD = 0.6
+
 
 class HypothesisRejectedError(ValueError):
     """Raised by validate_hypothesis when the Researcher output conflicts with prior art."""
@@ -111,12 +116,17 @@ def validate_hypothesis(
     hypothesis: ResearcherHypothesis,
     prior_art: list[PriorArtMatch],
 ) -> None:
-    """Reject a hypothesis that overlaps with prior art without addressing it,
-    or whose first-iteration universe is too narrow (Plan 009 WP3).
+    """Reject a hypothesis that is a near-duplicate of prior art, or whose
+    first-iteration universe is too narrow (Plan 009 WP3).
 
-    Rule (design §6.4): if `lookup_prior_art` returned matches, the Researcher
-    MUST list every match in `differentiates_from`. Slugs in `differentiates_from`
-    that don't appear in the prior-art set are also rejected (LLM made them up).
+    Duplicate rule (design §6.4): if any `lookup_prior_art` match is at or above
+    `DUPLICATE_JACCARD_THRESHOLD`, this is the same idea already tried — reject
+    outright and let the caller retry with a different angle (no amount of
+    `differentiates_from` prose overrides this; see researcher.md rule 1).
+    Matches below that bar are informational context only, not something the
+    Researcher must enumerate. Slugs the Researcher does list in
+    `differentiates_from` must still refer to actual matches (else the LLM made
+    them up).
 
     Universe rule (WP3): a hypothesis must open on >= 3 assets so the phase-1
     funnel has something to narrow from — a single asset_class scope satisfies
@@ -129,21 +139,16 @@ def validate_hypothesis(
     if not prior_art:
         return
 
+    duplicates = [m for m in prior_art if m.jaccard >= DUPLICATE_JACCARD_THRESHOLD]
+    if duplicates:
+        slugs = sorted(m.slug for m in duplicates)
+        raise HypothesisRejectedError(
+            f"near-duplicate of existing strategy/strategies {slugs} "
+            f"(jaccard >= {DUPLICATE_JACCARD_THRESHOLD}) — pick a different edge"
+        )
+
     prior_slugs = {m.slug for m in prior_art}
-    diff_slugs = set(hypothesis.differentiates_from)
-
-    if not diff_slugs:
-        raise HypothesisRejectedError(
-            f"prior-art exists ({sorted(prior_slugs)}) but differentiates_from is empty"
-        )
-
-    missing = prior_slugs - diff_slugs
-    if missing:
-        raise HypothesisRejectedError(
-            f"differentiates_from must address all prior art; missing {sorted(missing)}"
-        )
-
-    unknown = diff_slugs - prior_slugs
+    unknown = set(hypothesis.differentiates_from) - prior_slugs
     if unknown:
         raise HypothesisRejectedError(
             f"differentiates_from references unknown slugs {sorted(unknown)}"

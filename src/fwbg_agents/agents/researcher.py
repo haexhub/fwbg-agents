@@ -159,7 +159,9 @@ class Researcher:
             ) -> list[dict]:
                 """Search for prior strategies similar to a proposed one (tag-based,
                 anti-redundancy)."""
-                matches = await lookup_prior_art(session, strategy_family, asset_class, tags)
+                # strategy_family is accepted for prompt/tool-schema stability but not
+                # forwarded: matching is tag-Jaccard only (see prior_art.py docstring).
+                matches = await lookup_prior_art(session, asset_class, tags)
                 return [m.model_dump() for m in matches]
 
             @agent.tool_plain
@@ -247,7 +249,6 @@ class Researcher:
                 # did, if that exact call was never made.
                 final_prior_art = await lookup_prior_art(
                     self.session,
-                    result.output.strategy_family,
                     result.output.asset_class,
                     result.output.tags,
                 )

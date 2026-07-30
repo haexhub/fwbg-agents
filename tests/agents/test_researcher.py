@@ -177,7 +177,9 @@ async def test_happy_path_no_prior_art(db):
 
 
 @pytest.mark.asyncio
-async def test_hypothesis_rejected_when_prior_art_and_no_differentiates_from(db):
+async def test_hypothesis_rejected_when_near_duplicate_of_prior_art(db):
+    """3 of the seed's tags reappear in the 4-tag hypothesis -> jaccard 0.75,
+    above DUPLICATE_JACCARD_THRESHOLD -> rejected regardless of differentiates_from."""
     await _seed_prior_strategy(
         db,
         "rsimeanrev__forex__001",
@@ -204,17 +206,19 @@ async def test_hypothesis_rejected_when_prior_art_and_no_differentiates_from(db)
 
     runs = (await db.execute(select(AgentRun))).scalars().all()
     assert runs[0].status == AgentRunStatus.FAILED.value
-    assert "differentiates_from" in (runs[0].error or "")
+    assert "near-duplicate" in (runs[0].error or "")
 
 
 @pytest.mark.asyncio
 async def test_hypothesis_accepted_when_differentiates_from_covers_prior_art(db):
+    """Only 2 of the seed's tags overlap with the 4-tag hypothesis -> jaccard 0.5,
+    below DUPLICATE_JACCARD_THRESHOLD -> related context, not a blocker."""
     await _seed_prior_strategy(
         db,
         "rsimeanrev__forex__001",
         "RSI_meanrev",
         "FOREX",
-        ["mean_reversion", "intraday", "forex_majors"],
+        ["mean_reversion", "intraday"],
     )
 
     model = FunctionModel(
@@ -222,7 +226,7 @@ async def test_hypothesis_accepted_when_differentiates_from_covers_prior_art(db)
             {
                 "strategy_family": "RSI_meanrev",
                 "asset_class": "FOREX",
-                "tags": ["mean_reversion", "intraday", "forex_majors"],
+                "tags": ["mean_reversion", "intraday"],
             },
             _hyp_args(differentiates_from=["rsimeanrev__forex__001"]),
         )
@@ -267,7 +271,9 @@ async def test_validation_ignores_prior_art_from_abandoned_exploration(db):
             ],
             _hyp_args(
                 strategy_family="carry",
-                tags=["carry", "interest_rate_differential"],
+                # 2 of these 4 tags overlap the seed -> jaccard 0.5, below
+                # DUPLICATE_JACCARD_THRESHOLD, so this isn't auto-rejected as a duplicate.
+                tags=["carry", "interest_rate_differential", "central_bank_divergence", "g10"],
                 differentiates_from=["carry__forex__001"],
             ),
         )
@@ -481,7 +487,7 @@ async def test_tool_registry_empties_after_hypothesis_rejected(db, monkeypatch):
                 "asset_class": "FOREX",
                 "tags": ["mean_reversion", "intraday", "forex_majors"],
             },
-            _hyp_args(),  # differentiates_from=[] -> rejected
+            _hyp_args(),  # jaccard 0.75 vs seed -> rejected as near-duplicate
         )
     )
     researcher = Researcher(db, model=model, search_client=None)
