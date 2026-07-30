@@ -1,0 +1,33 @@
+name: Main Auto-Merge
+
+# Enables GitHub auto-merge for PRs targeting `main` that come from the
+# release pipeline (develop -> main sync, or release-please's own PR), so
+# they merge themselves once required checks pass. Mirrors
+# dependabot-automerge.yml's approach.
+#
+# hotfix/* is intentionally excluded - those stay manual per
+# enforce-main-base.yml's allowlist.
+
+on:
+  pull_request:
+    branches:
+      - main
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  automerge:
+    if: |
+      github.event.pull_request.head.ref == 'develop' ||
+      startsWith(github.event.pull_request.head.ref, 'release-please--') ||
+      startsWith(github.event.pull_request.head.ref, 'sync-')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Enable auto-merge
+        env:
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          REPO: ${{ github.repository }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh pr merge "$PR_NUMBER" --merge --auto --repo "$REPO"
