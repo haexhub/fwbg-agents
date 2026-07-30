@@ -56,8 +56,10 @@ class ResearcherHypothesis(BaseModel):
     """Structured output of the Researcher agent.
 
     `differentiates_from` lists slugs of prior strategies this hypothesis
-    deliberately deviates from. Required by `validate_hypothesis` whenever
-    `lookup_prior_art` returned matches.
+    deliberately deviates from. Optional for matches `lookup_prior_art` returned
+    that aren't near-duplicates — listed slugs must still refer to actual
+    matches, and a match at/above `DUPLICATE_JACCARD_THRESHOLD` is rejected by
+    `validate_hypothesis` regardless of what's listed here.
 
     `asset_class` is optional — None means asset-agnostic research. When set,
     it must match fwbg's controlled vocabulary (validated at API intake).
