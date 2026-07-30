@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.33.1](https://github.com/haexhub/fwbg-agents/compare/v0.33.0...v0.33.1) (2026-07-30)
+
+
+### Bug Fixes
+
+* **researcher:** validate prior art against the committed hypothesis, not tool-call history ([a68e5a6](https://github.com/haexhub/fwbg-agents/commit/a68e5a6cd7cc957cda1ee2b9b39eedfc47969a38))
+* **translator:** don't reject None param values against schema choices ([c31c8d6](https://github.com/haexhub/fwbg-agents/commit/c31c8d6969872adf002891c6058eccdc98cb8621))
+
 ## [0.33.0](https://github.com/haexhub/fwbg-agents/compare/v0.32.1...v0.33.0) (2026-07-29)
 
 
