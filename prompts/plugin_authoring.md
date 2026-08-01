@@ -62,6 +62,8 @@ def compute(self, df: pd.DataFrame, **params) -> pd.DataFrame:
 **Critical rules:**
 - **Lookahead-bias prevention is MANDATORY.** All new feature columns MUST be shifted by 1 bar before being returned. Use `shift_features({col_name: series, ...}, df.index)` and concat with the input df.
 - **Safe division.** Use `safe_divide(numerator, denominator)` for all divisions — guarantees consistent NaN-handling for zero denominators.
+- **`df.index` is a plain `RangeIndex`, NOT a `DatetimeIndex`.** Time lives in the `timestamp` column (`datetime64[ns, UTC]`). Never call `df.index.hour`/`.dayofweek`/etc. — use `df["timestamp"].dt.hour` (and shift the result like any other feature) for session/calendar logic.
+- **Every output column MUST be numeric or boolean dtype.** No `object`/string dtype (e.g. category labels like `"long"`/`"short"`) — encode direction/regime signals as `-1/0/1` or booleans instead. The Evaluator rejects any non-numeric, non-boolean output outright.
 - Add optional class attr `group: str` for UI categorization. Default `"custom"`.
 - Add optional class attr `benefits_from_stationary: bool` — `True` if the indicator should run on preprocessed (stationary) data inside each CV fold.
 
@@ -222,6 +224,10 @@ Rules:
   generates and writes the data itself; never point at hand-made fixtures.
 - Omit `expected_outputs` — the deterministic Evaluator checks structural
   invariants (length parity, finite values, dtypes), not expected values.
+  The dtype invariant requires numeric or boolean output columns — an
+  `object`/string dtype fails verification. The synthetic scenario frames
+  carry a plain `RangeIndex`; do not rely on `df.index` for time-of-day or
+  calendar logic — use the `timestamp` column instead.
 - Mark event-style outputs that only carry values at signal bars (e.g. a
   `*_lag` or `*_age` column) with `sparse: true` in `contract.outputs`. The
   synthetic scenarios contain no upstream indicator columns, so composite
