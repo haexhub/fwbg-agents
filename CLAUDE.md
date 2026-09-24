@@ -20,3 +20,8 @@ The complete design lives in the fwbg repo at `docs/plans/2026-06-23-fwbg-agents
 - **Stop-loss is mandatory for every order, paper or live.** Pre-trade validators reject orders without SL. SL is sent atomically with entry.
 - **Live trading requires human approval gate.** Backtest → paper can be automated; paper → live always needs manual confirmation in dashboard.
 - **Generated plugins live in `data/plugins/` only.** They are never auto-committed to the fwbg core repo. The PromoteAgent opens a PR for human review.
+
+<!-- SPECKIT START -->
+For additional context about technologies to be used, project structure,
+shell commands, and other important information, read the current plan
+<!-- SPECKIT END -->
