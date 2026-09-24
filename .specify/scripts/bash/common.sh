@@ -160,6 +160,8 @@ _persist_feature_json() {
     fi
 }
 
+# Print shell-quoted paths for the selected feature so callers can eval them.
+# With --no-persist, resolve paths without updating .specify/feature.json.
 get_feature_paths() {
     # Read-only callers (e.g. check-prerequisites.sh --paths-only) pass
     # --no-persist so pure path resolution never writes .specify/feature.json,
@@ -242,6 +244,8 @@ has_jq() {
     command -v jq >/dev/null 2>&1
 }
 
+# Return the active integration's command separator ("." or "-").
+# Cache the result per repository and default to "." when no setting is found.
 get_invoke_separator() {
     local repo_root="${1:-$(get_repo_root)}"
     if [[ "${_SPECIFY_INVOKE_SEPARATOR_CACHE_REPO_ROOT:-}" == "$repo_root" && -n "${_SPECIFY_INVOKE_SEPARATOR_CACHE_VALUE:-}" ]]; then
@@ -354,6 +358,8 @@ PY
     printf '%s\n' "$separator"
 }
 
+# Format a Spec Kit command using the active integration's separator.
+# Accept a bare name or one prefixed with /, speckit., or speckit-.
 format_speckit_command() {
     local command_name="$1"
     local repo_root="${2:-$(get_repo_root)}"
@@ -420,6 +426,8 @@ _python3_command() {
     fi
 }
 
+# Print enabled extension IDs in registry priority order, then by ID.
+# If Python is unavailable and no registry exists, list valid directories instead.
 _sorted_extension_ids() {
     local ext_dir="$1"
     local python_spec
