@@ -19,6 +19,7 @@ across-trials SR variance is estimated from durable per-run snapshots.
 
 from __future__ import annotations
 
+import json
 import logging
 import math
 import statistics
@@ -70,6 +71,36 @@ def pnl_series(run_dir: Path) -> list[float]:
             continue
         trades, _ = _load_symbol_trades(run_dir, sym_dir.name)
         pnls.extend(float(t["pnl_raw"]) for t in trades)
+    return pnls
+
+
+def holdout_pnl_series(run_dir: Path) -> list[float] | None:
+    """Raw per-trade P&L of a register holdout look (all symbols).
+
+    A holdout look writes no fold_results.json; each symbol that traded after
+    the cutoff has ``grid_details/<symbol>/trades.json`` whose ``tr_trace``
+    holds the frozen setting's raw trade P&L (the unit ``pnl_series`` reads
+    from iteration folds). Kept apart from ``pnl_series`` so a look never
+    enters the trial census. Returns None when any trades.json is unreadable
+    or malformed: a partial series would judge only the readable symbols.
+    Non-finite values are kept for the caller's fail-closed check.
+    """
+    pnls: list[float] = []
+    grid = run_dir / "grid_details"
+    if not grid.is_dir():
+        return pnls
+    for path in sorted(grid.glob("*/trades.json")):
+        try:
+            trace = json.loads(path.read_text()).get("tr_trace")
+        except (OSError, ValueError, AttributeError) as exc:
+            log.warning("holdout_pnl_series: unreadable %s (%s)", path, exc)
+            return None
+        if not isinstance(trace, list) or not all(
+            isinstance(v, (int, float)) and not isinstance(v, bool) for v in trace
+        ):
+            log.warning("holdout_pnl_series: malformed tr_trace in %s", path)
+            return None
+        pnls.extend(float(v) for v in trace)
     return pnls
 
 

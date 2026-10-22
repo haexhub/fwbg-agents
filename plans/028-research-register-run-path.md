@@ -75,6 +75,16 @@ in the cross-asset median; a strategy may be created with an existing card id (D
   `ensure_research_id` returns a stored id before building a card. A root with neither a
   `research_id` nor a usable `hypothesis.json` fails its run with a `ResearchCardError` that
   asks for a valid `hypothesis.json` and names the `research_id` route for new strategies.
+- **D9 holdout DSR (operator, 2026-10-22):** a register holdout look writes no
+  `fold_results.json`, so the promote gate's DSR reads the look's raw per-trade P&L from each
+  symbol's `grid_details/<sym>/trades.json` `tr_trace` with a dedicated reader (not a fallback in
+  `pnl_series`, so the look never enters the census). No readable series (missing or unreadable
+  files, no trades, too short or flat for the moments) fails the DSR check closed.
+- **D10 census (operator, 2026-10-22):** the holdout look is not recorded with
+  `record_trial_stat` (a look selects nothing; fwbg keeps looks out of its trial count too). The
+  cost-stress run is recorded as before.
+- A lineage without a card at the promote gate (`ResearchCardError`) is a configuration error,
+  not a failed gate run: the AgentRun fails, the error propagates, the attempt budget is untouched.
 
 ## Tasks
 

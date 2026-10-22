@@ -496,6 +496,7 @@ class Runner:
         research_id: str,
         note: str,
         reason: str | None = None,
+        holdout: bool = False,
     ) -> str:
         """Get a job_id for this strategy: adopt an already-active fwbg run
         of the same strategy, or start a new one — waiting while fwbg's
@@ -551,6 +552,7 @@ class Runner:
                     research_id=research_id,
                     note=note,
                     reason=reason,
+                    holdout=holdout,
                 )
             except FwbgClientError as exc:
                 if exc.status != 429:
@@ -583,9 +585,11 @@ class Runner:
         research_id: str,
         note: str,
         reason: str | None = None,
+        holdout: bool = False,
     ) -> tuple[str, dict[str, Any]]:
         """Start one fwbg run and poll it to completion. Raises RunnerError on
-        a failed/errored run, a research gate refusal or a polling timeout."""
+        a failed/errored run, a research gate refusal or a polling timeout.
+        ``holdout`` asks fwbg for the research card's holdout look."""
         job_id = await self._acquire_run(
             fwbg_name,
             assets=assets,
@@ -596,6 +600,7 @@ class Runner:
             research_id=research_id,
             note=note,
             reason=reason,
+            holdout=holdout,
         )
         # Anchor event for the dashboard's link to /runs/<fwbg_run_id>.
         emit_run_event(

@@ -3,18 +3,23 @@
 Before a BACKTESTED strategy may advance to paper trading it must clear two
 extra sequential backtests (one fwbg run at a time — no fan-out):
 
-1. **Holdout** — the same universe on ``[B, today)``, where ``B`` is the
-   lineage's frozen data boundary (see ``orchestrator/lineage_boundary.py``) —
-   a window no iteration of this lineage ever saw (iteration backtests end at
-   ``B``, frozen once for the whole family). Catches in-sample overfitting
-   from the iteration chain that the in-sample metrics cannot.
-2. **Cost stress** — the full window at 2x spread/slippage. Catches an edge
-   that only survives unrealistically low transaction costs.
-3. **Deflated Sharpe Ratio** (Plan 010 WP2) — the holdout run's per-trade
+1. **Holdout** — a register holdout look of the same universe (Plan 028
+   D6): fwbg develops on data before the research card's cutoff (the
+   lineage's frozen boundary ``B``, where every iteration ended) and
+   evaluates the frozen setting once on ``[cutoff, today)``, data no
+   iteration of this lineage ever saw. Catches in-sample overfitting from the
+   iteration chain that the in-sample metrics cannot. A further look on the
+   same card carries a reason (D3); the register refuses it otherwise.
+2. **Cost stress** — a development run at 2x spread/slippage (fwbg clamps it
+   to the card's cutoff). Catches an edge that only survives unrealistically
+   low transaction costs.
+3. **Deflated Sharpe Ratio** (Plan 010 WP2) — the holdout look's per-trade
    Sharpe must beat the expected max Sharpe of N zero-skill trials
    (N = every backtest the factory ever ran, see
    ``orchestrator/trials.py``) with probability ≥ ``settings.dsr_min``.
    Catches selection bias: the more the loop searches, the higher the bar.
+   Without a readable holdout trade series it fails (D9). The look itself is
+   not a selection trial and stays out of that census (D10).
 
 Both are checked against deliberately milder thresholds than the main
 ``backtest_to_paper`` gate (they run on shorter / harder windows), stored in the
@@ -37,10 +42,10 @@ import json
 import logging
 import math
 import statistics
-from datetime import date
 from pathlib import Path
 from typing import Any
 
+import httpx
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -48,12 +53,12 @@ from fwbg_agents.agents.analyst import _median_metrics_across_assets
 from fwbg_agents.agents.runner import Runner, RunnerError
 from fwbg_agents.config import settings
 from fwbg_agents.orchestrator.lifecycle import check_criteria_section, strategy_dir
-from fwbg_agents.orchestrator.lineage_boundary import get_or_freeze_boundary, lineage_root
+from fwbg_agents.orchestrator.lineage_boundary import lineage_root
 from fwbg_agents.orchestrator.research_card import ensure_research_id
 from fwbg_agents.orchestrator.trials import (
     count_trials,
     deflated_sharpe_ratio,
-    pnl_series,
+    holdout_pnl_series,
     record_trial_stat,
     series_moments,
 )
@@ -64,11 +69,13 @@ from fwbg_agents.persistence.agent_runs import (
 )
 from fwbg_agents.persistence.models import AgentRunStatus, Strategy
 from fwbg_agents.run_events import emit_run_event
-from fwbg_agents.tools.fwbg_client import safe_fwbg_strategy_name
+from fwbg_agents.tools.fwbg_client import FwbgClientError, safe_fwbg_strategy_name
 
 log = logging.getLogger(__name__)
 
 COST_STRESS_MULTIPLIER = 2.0
+HOLDOUT_NOTE = "promote gate holdout look"
+COST_STRESS_NOTE = f"promote gate cost stress x{COST_STRESS_MULTIPLIER:g}"
 
 
 class GateRun(BaseModel):
@@ -110,25 +117,63 @@ def _universe_assets(strategy: Strategy) -> list[str]:
     return list((data.get("assets") or {}).keys())
 
 
+async def _holdout_reason(fwbg_client, research_id: str, slug: str) -> str | None:
+    """The reason a further holdout look needs, or None for the card's first look.
+
+    Any earlier look counts, a failed one too (fwbg's gate rule). Raises
+    FwbgClientError or httpx.TransportError when the card cannot be read and
+    ValueError when it carries no trial list.
+    """
+    # ponytail: a look still pending in fwbg (started, not yet recorded) is not
+    # among the card's trials, so no reason is sent and fwbg refuses it as
+    # holdout_repeat — a failed gate run. Upgrade path: fwbg lists the kind of
+    # the card's pending runs.
+    card = await fwbg_client.get_research_card(research_id)
+    trials = card.get("trials")
+    if not isinstance(trials, list):
+        raise ValueError(f"research card {research_id} carries no trial list")
+    if any(isinstance(trial, dict) and trial.get("kind") == "holdout" for trial in trials):
+        return f"promote gate: further holdout look ({slug})"
+    return None
+
+
+def _failed_gate_run(agent_run_id: int, label: str, exc: Exception) -> GateRun:
+    emit_run_event(agent_run_id, "promote_gate_failed", label=label, reason=str(exc))
+    return GateRun(label=label, passed=False, metrics={}, failures=[str(exc)], error=str(exc))
+
+
 async def _run_dsr_check(
     session: AsyncSession, holdout_job_id: str | None
 ) -> tuple[bool, float | None, int | None, list[str]]:
-    """Deflated-Sharpe check on the holdout run's trade-P&L series.
+    """Deflated-Sharpe check on the holdout look's trade-P&L series.
 
-    Returns (passed, dsr, n_trials, failures). Missing trade data passes, and
-    the visible cold-start branch passes with fewer than two historical
-    Sharpes. Non-finite computed inputs fail closed.
+    Returns (passed, dsr, n_trials, failures). Without a holdout job (the look
+    itself failed, which already fails the gate) there is nothing to judge.
+    A look without a readable trade series, or one too short or flat for the
+    moments, fails closed, as do non-finite inputs. The visible cold-start
+    branch passes with fewer than two historical Sharpes.
     """
     if not holdout_job_id:
         return True, None, None, []
-    raw_pnls = pnl_series(settings.fwbg_test_results_dir / holdout_job_id)
+    raw_pnls = holdout_pnl_series(settings.fwbg_test_results_dir / holdout_job_id)
+    if not raw_pnls:
+        return (
+            False,
+            None,
+            None,
+            [f"dsr: no holdout trade series readable for run {holdout_job_id}; failing closed"],
+        )
     if any(not math.isfinite(value) for value in raw_pnls):
         counts = await count_trials(session)
         return False, None, counts.global_trials, ["dsr is NaN — non-finite inputs; failing closed"]
-    pnls = [value for value in raw_pnls if math.isfinite(value)]
-    moments = series_moments(pnls)
+    moments = series_moments(raw_pnls)
     if moments is None:
-        return True, None, None, []
+        return (
+            False,
+            None,
+            None,
+            ["dsr: holdout trade series too short or flat to judge; failing closed"],
+        )
     sr, skew, kurtosis = moments
 
     counts = await count_trials(session)
@@ -147,7 +192,7 @@ async def _run_dsr_check(
         sr,
         sr_variance_across_trials=sr_variance,
         n_trials=max(counts.global_trials, 1),
-        n_obs=len(pnls),
+        n_obs=len(raw_pnls),
         skew=skew,
         kurtosis=kurtosis,
     )
@@ -184,8 +229,12 @@ async def run_promote_gate(
 ) -> PromoteGateResult:
     """Run the holdout + cost-stress backtests and evaluate the gate.
 
-    Never raises for a backtest failure — a run that errors counts as a gate
-    failure (fail-closed: an unvalidatable strategy must not promote).
+    Never raises for a backtest failure — a run that errors or that the
+    research register refuses, and an unreadable research card, count as a
+    gate failure (fail-closed: an unvalidatable strategy must not promote).
+    A lineage without a research card is a configuration error, not a
+    backtest failure: ``ResearchCardError`` propagates, the AgentRun fails
+    and the lineage's attempt budget is left untouched.
     """
     ar = await start_agent_run(session, agent_name="promote_gate", strategy_id=strategy.id)
     try:
@@ -203,32 +252,28 @@ async def run_promote_gate(
         runner = Runner(fwbg_client, session)
         fwbg_name = _fwbg_name(strategy)
         assets = _universe_assets(strategy) or None
-        today = date.today().isoformat()
-        holdout_start = await get_or_freeze_boundary(session, strategy)
 
+        # No window on either run: the card's cutoff splits development from
+        # the holdout look, and fwbg clamps the cost-stress run to it.
         specs: list[tuple[str, str, dict[str, Any]]] = [
-            (
-                "holdout",
-                "promote_holdout",
-                {
-                    "start_date": holdout_start,
-                    "end_date": today,
-                    "note": "promote gate holdout look",
-                },
-            ),
+            ("holdout", "promote_holdout", {"holdout": True, "note": HOLDOUT_NOTE}),
             (
                 "cost_stress",
                 "promote_cost_stress",
-                {
-                    "cost_multiplier": COST_STRESS_MULTIPLIER,
-                    "note": f"promote gate cost stress x{COST_STRESS_MULTIPLIER:g}",
-                },
+                {"cost_multiplier": COST_STRESS_MULTIPLIER, "note": COST_STRESS_NOTE},
             ),
         ]
         runs: list[GateRun] = []
         holdout_job_id: str | None = None
         for label, section, kwargs in specs:
             emit_run_event(ar.id, "promote_gate_submitted", label=label)
+            if label == "holdout":
+                try:
+                    reason = await _holdout_reason(fwbg_client, research_id, strategy.slug)
+                except (FwbgClientError, httpx.TransportError, ValueError) as exc:
+                    runs.append(_failed_gate_run(ar.id, label, exc))
+                    continue
+                kwargs = {**kwargs, "reason": reason}
             try:
                 job_id, run_data = await runner.execute_backtest(
                     fwbg_name,
@@ -239,22 +284,24 @@ async def run_promote_gate(
                     **kwargs,
                 )
             except RunnerError as exc:
-                runs.append(
-                    GateRun(
-                        label=label, passed=False, metrics={}, failures=[str(exc)], error=str(exc)
-                    )
-                )
-                emit_run_event(ar.id, "promote_gate_failed", label=label, reason=str(exc))
+                runs.append(_failed_gate_run(ar.id, label, exc))
                 continue
             if label == "holdout":
+                # A look evaluates one frozen setting and selects nothing, so it
+                # stays out of the trial census (D10), as in fwbg's register.
                 holdout_job_id = job_id
-            await record_trial_stat(
-                session,
-                run_id=job_id,
-                strategy=strategy,
-                run_data=run_data,
-                run_dir=settings.fwbg_test_results_dir / job_id,
-            )
+            else:
+                await record_trial_stat(
+                    session,
+                    run_id=job_id,
+                    strategy=strategy,
+                    run_data=run_data,
+                    run_dir=settings.fwbg_test_results_dir / job_id,
+                )
+            # ponytail: a holdout symbol that was looked at but made no trades
+            # after the cutoff (no_unified_trades) has no unified_metrics and is
+            # left out of the median instead of counting as no edge. Upgrade
+            # path: count an evaluated symbol without trades as zero.
             metrics = _median_metrics_across_assets(run_data)
             ok, failures = check_criteria_section(
                 asset_class=strategy.asset_class,  # type: ignore[arg-type]  # set for any BACKTESTED strategy
