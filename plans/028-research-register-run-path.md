@@ -127,5 +127,8 @@ in the cross-asset median; a strategy may be created with an existing card id (D
   (known worktree-only failures that need a sibling fwbg checkout are listed, not hidden).
 - No data from the private research register (card contents, ids beyond test fixtures) in code,
   docs, tests or commit messages: both repos are public.
-- `agents/runner.py` was already over 500 LoC before this plan (pre-existing; its split is out
-  of scope here).
+- `agents/runner.py` was already over 500 LoC before this plan. Its split is a follow-up plan
+  along three seams: the error family (done here: `agents/runner_errors.py`); universe and
+  data resolution (`_resolve_assets`, `_ensure_data_ready`); the start/poll loop
+  (`_acquire_run`, `execute_backtest`, also used by the promote gate). `Runner.run` then keeps
+  only the attempt choreography and the lifecycle transition.

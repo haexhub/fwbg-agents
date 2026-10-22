@@ -523,11 +523,15 @@ class Runner:
             except (httpx.TransportError, FwbgClientError):
                 active = []
             if active:
-                # ponytail: should fwbg's preflight refuse an adopted "starting"
-                # run, fwbg drops the job and polling sees 404s until the
-                # outage tolerance ends it as "unreachable", not as a refusal.
-                # Rare; upgrade path: treat a 404 for an adopted starting run
-                # as a refusal.
+                # ponytail: adoption matches by strategy_name only. (1) Should
+                # fwbg's preflight refuse an adopted "starting" run, fwbg drops
+                # the job and polling sees 404s until the outage tolerance ends
+                # it as "unreachable", not as a refusal. (2) A start that a
+                # proxy timed out (fwbg still started it) can be adopted by the
+                # next universe attempt and recorded under that attempt's
+                # label. Both rare; upgrade path: treat a 404 for an adopted
+                # starting run as a refusal, and match adoption on the run's
+                # universe (assets/asset_classes) as well.
                 job_id = active[0].get("run_id") or active[0].get("job_id")
                 log.info(
                     "runner: adopting already-active fwbg job %s for %s",
