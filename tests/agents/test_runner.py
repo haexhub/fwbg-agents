@@ -24,8 +24,8 @@ import pytest_asyncio
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
+from fwbg_agents.agents.research_gate import ResearchGateRefusedError
 from fwbg_agents.agents.runner import (
-    ResearchGateRefused,
     Runner,
     RunnerError,
     UnrunnableStrategyError,
@@ -907,70 +907,19 @@ async def _start(SessionMaker, sid, fake) -> None:
         )
 
 
-async def test_gate_refusal_keeps_status_codes_and_messages(runner_env):
-    SessionMaker, make_strategy, _ = runner_env
-    sid = await make_strategy()
-    fake = FakeFwbgClient(start_errors=[_refusal(409, "duplicate_fingerprint", "after_cutoff")])
-
-    with pytest.raises(ResearchGateRefused) as excinfo:
-        await _start(SessionMaker, sid, fake)
-
-    refused = excinfo.value
-    assert refused.status == 409
-    assert [(d.code, d.message) for d in refused.denials] == [
-        ("duplicate_fingerprint", "duplicate_fingerprint denied"),
-        ("after_cutoff", "after_cutoff denied"),
-    ]
-    assert "duplicate_fingerprint, after_cutoff" in str(refused)
-
-
-async def test_preflight_failure_is_a_refusal_with_its_message(runner_env):
-    SessionMaker, make_strategy, _ = runner_env
-    sid = await make_strategy()
-    detail = {"message": "research preflight failed", "output": "cannot load strategy"}
-    fake = FakeFwbgClient(start_errors=[FwbgClientError(422, json.dumps({"detail": detail}))])
-
-    with pytest.raises(ResearchGateRefused) as excinfo:
-        await _start(SessionMaker, sid, fake)
-
-    assert excinfo.value.status == 422
-    assert excinfo.value.denials == []
-    assert excinfo.value.output == "cannot load strategy"
-    assert "research preflight failed" in str(excinfo.value)
-    assert "cannot load strategy" in str(excinfo.value)
-
-
-async def test_preflight_timeout_is_a_refusal(runner_env):
+async def test_start_refusal_surfaces_as_research_gate_refused(runner_env):
+    """The body shapes are covered in test_research_gate.py; this checks the
+    Runner raises the refusal instead of a plain client error."""
     SessionMaker, make_strategy, _ = runner_env
     sid = await make_strategy()
     body = json.dumps({"detail": "research preflight timed out"})
     fake = FakeFwbgClient(start_errors=[FwbgClientError(504, body)])
 
-    with pytest.raises(ResearchGateRefused) as excinfo:
+    with pytest.raises(ResearchGateRefusedError) as excinfo:
         await _start(SessionMaker, sid, fake)
 
     assert excinfo.value.status == 504
     assert "timed out" in str(excinfo.value)
-
-
-@pytest.mark.parametrize(
-    ("status", "body"),
-    [
-        (500, "Internal Server Error"),
-        # FastAPI's own request validation: a list detail, not the gate's shape.
-        (422, json.dumps({"detail": [{"loc": ["body", "note"], "msg": "field required"}]})),
-    ],
-)
-async def test_other_start_errors_stay_client_errors(runner_env, status, body):
-    SessionMaker, make_strategy, _ = runner_env
-    sid = await make_strategy()
-    fake = FakeFwbgClient(start_errors=[FwbgClientError(status, body)])
-
-    with pytest.raises(FwbgClientError) as excinfo:
-        await _start(SessionMaker, sid, fake)
-
-    assert not isinstance(excinfo.value, ResearchGateRefused)
-    assert excinfo.value.status == status
 
 
 async def test_missing_card_ends_the_run_without_fallback(runner_env):

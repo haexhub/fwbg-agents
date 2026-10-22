@@ -57,9 +57,10 @@ in the cross-asset median; a strategy may be created with an existing card id (D
   a module constant with that why-comment); connect/write/pool and other calls keep the
   client's timeouts.
   `_acquire_run` adopts active runs with status `starting` or `running`.
-- **D5 refusals:** `ResearchGateRefused(RunnerError)` carries `status` and the list of
-  `(code, message)` denials (or the preflight `message`/`output`); raised by the Runner for
-  409/422 responses of `/api/runs/start` whose body has the fwbg shape, and for 504.
+- **D5 refusals:** `ResearchGateRefusedError(RunnerError)` (`agents/research_gate.py`) carries
+  `status` and the list of `(code, message)` denials (or the preflight `message`/`output`);
+  raised by the Runner for 409/422 responses of `/api/runs/start` whose body has the fwbg
+  shape, and for 504.
   Other non-2xx stay `FwbgClientError`. Being a `RunnerError`, a refusal ends that universe
   attempt (the next attempt has another fingerprint) and, if all fail, the AgentRun fails with
   the denial codes in its message.
@@ -100,12 +101,12 @@ in the cross-asset median; a strategy may be created with an existing card id (D
 - `agents/runner.py`: `run(strategy, *, reason=None)` resolves `research_id` once, builds the
   note per attempt, passes `research_id/note/reason` through `execute_backtest` →
   `_acquire_run` → `start_run`; adopts `starting` runs; maps refusals to
-  `ResearchGateRefused` (D5). `api/runs.py` run endpoint accepts optional `reason`. Other
+  `ResearchGateRefusedError` (D5). `api/runs.py` run endpoint accepts optional `reason`. Other
   `Runner.run` callers unchanged. `start_run` requires `research_id` and `note`; the
   start timeout covers only the read wait. `POST /strategies` takes `research_id` (D8).
 - Tests: fields reach `start_run`; a `starting` run is adopted; 409 refusal on the first
   attempt falls back to the next; all attempts refused → AgentRun failed with the codes;
-  504 → `ResearchGateRefused`; 429 behaviour unchanged.
+  504 → `ResearchGateRefusedError`; 429 behaviour unchanged.
 - Commit: `feat(runner): run through the research register gate`
 
 ### Task 4: Promote gate — holdout look, notes, reason
@@ -126,3 +127,5 @@ in the cross-asset median; a strategy may be created with an existing card id (D
   (known worktree-only failures that need a sibling fwbg checkout are listed, not hidden).
 - No data from the private research register (card contents, ids beyond test fixtures) in code,
   docs, tests or commit messages: both repos are public.
+- `agents/runner.py` was already over 500 LoC before this plan (pre-existing; its split is out
+  of scope here).

@@ -47,7 +47,6 @@ import json
 import logging
 import re
 import time
-from dataclasses import dataclass
 from datetime import date
 from pathlib import Path
 from typing import Any, Protocol
@@ -118,79 +117,6 @@ class RunnerConfigError(RunnerError):
         super().__init__(message)
         self.dependent = dependent
         self.dependency = dependency
-
-
-@dataclass(frozen=True)
-class GateDenial:
-    """One reason fwbg's research gate gave for refusing a run."""
-
-    code: str
-    message: str
-
-
-class ResearchGateRefused(RunnerError):  # noqa: N818  # name fixed by Plan 028 D5
-    """fwbg's research register refused a run start (Plan 028 D5).
-
-    Covers a gate refusal (409/422 with ``denials``), a preflight that failed
-    before the gate (422 with ``output``) and a preflight timeout (504). Being
-    a RunnerError, it ends only the current universe attempt: the next one
-    has another fingerprint.
-    """
-
-    def __init__(
-        self,
-        status: int,
-        *,
-        detail: str,
-        denials: list[GateDenial] | None = None,
-        output: str | None = None,
-    ):
-        self.status = status
-        self.detail = detail
-        self.denials = denials or []
-        self.output = output
-        message = f"fwbg research gate ({status}): {detail}"
-        if self.denials:
-            message += f" [{', '.join(d.code for d in self.denials)}]"
-            message += "; " + "; ".join(d.message for d in self.denials)
-        if output:
-            message += f"; output: {' '.join(output.split())}"
-        super().__init__(message)
-
-
-def _research_gate_refusal(exc: FwbgClientError) -> ResearchGateRefused | None:
-    """Translate a /api/runs/start error into a refusal, or None if it is none.
-
-    fwbg's refusal body is ``{"detail": {"message", "denials" | "output"}}``.
-    A 409/422 of another shape (e.g. FastAPI's request validation, whose
-    ``detail`` is a list) stays a client error.
-    """
-    try:
-        body = json.loads(exc.body)
-    except ValueError:
-        body = None
-    detail = body.get("detail") if isinstance(body, dict) else None
-    if exc.status == 504:
-        return ResearchGateRefused(
-            504, detail=detail if isinstance(detail, str) else "research preflight timed out"
-        )
-    if exc.status not in (409, 422) or not isinstance(detail, dict):
-        return None
-    message = detail.get("message")
-    if not isinstance(message, str):
-        return None
-    raw_denials = detail.get("denials")
-    if isinstance(raw_denials, list):
-        denials = [
-            GateDenial(code=str(d.get("code")), message=str(d.get("message", "")))
-            for d in raw_denials
-            if isinstance(d, dict)
-        ]
-        return ResearchGateRefused(exc.status, detail=message, denials=denials)
-    output = detail.get("output")
-    return ResearchGateRefused(
-        exc.status, detail=message, output=output if isinstance(output, str) else None
-    )
 
 
 # fwbg's pipeline builder rejects a plugin whose declared dependency is absent
@@ -602,7 +528,7 @@ class Runner:
         429 while busy — the intended behaviour then is to wait for the slot,
         not to burn a universe attempt. A run still in fwbg's research
         preflight ("starting") is active too. A research gate refusal raises
-        ResearchGateRefused.
+        ResearchGateRefusedError.
         """
         deadline = time.monotonic() + settings.runner_poll_timeout_seconds
         while True:
@@ -616,6 +542,11 @@ class Runner:
             except (httpx.TransportError, FwbgClientError):
                 active = []
             if active:
+                # ponytail: should fwbg's preflight refuse an adopted "starting"
+                # run, fwbg drops the job and polling sees 404s until the
+                # outage tolerance ends it as "unreachable", not as a refusal.
+                # Rare; upgrade path: treat a 404 for an adopted starting run
+                # as a refusal.
                 job_id = active[0].get("run_id") or active[0].get("job_id")
                 log.info(
                     "runner: adopting already-active fwbg job %s for %s",
@@ -638,7 +569,11 @@ class Runner:
                 )
             except FwbgClientError as exc:
                 if exc.status != 429:
-                    refusal = _research_gate_refusal(exc)
+                    # Local import: research_gate subclasses RunnerError from
+                    # this module, so a module-level import would be circular.
+                    from fwbg_agents.agents.research_gate import research_gate_refusal
+
+                    refusal = research_gate_refusal(exc)
                     if refusal is not None:
                         raise refusal from exc
                     raise
