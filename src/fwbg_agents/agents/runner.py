@@ -264,7 +264,9 @@ class Runner:
 
             attempts = plan_universe_attempts(strategy)
             tf_by_symbol = timeframes_by_symbol(strategy)
-            last_reason = "no universe attempts produced results"
+            # One reason per failed attempt; all of them end up in the final
+            # error, so every attempt's refusal codes stay visible.
+            reasons: list[str] = []
             # Frozen per-lineage boundary — every iteration of every
             # generation ends its in-sample data at the same date, so the
             # promote gate's holdout later never overlaps with anything an
@@ -278,8 +280,11 @@ class Runner:
                     # Rung was symbol-only and no symbol had data — nothing to
                     # run, so broaden. (A rung that also names classes still runs
                     # on those, dropping only the dataless symbols.)
-                    last_reason = f"no data for suggested symbols {list(attempt.assets)}"
-                    log.info("runner: %s; falling back", last_reason)
+                    reasons.append(
+                        f"attempt {attempt.label!r}: no data for suggested symbols "
+                        f"{list(attempt.assets)}"
+                    )
+                    log.info("runner: %s; falling back", reasons[-1])
                     continue
 
                 note = await run_note(
@@ -309,8 +314,8 @@ class Runner:
                         reason=reason,
                     )
                 except RunnerError as exc:
-                    last_reason = f"attempt {attempt.label!r}: {exc}"
-                    log.info("runner: %s; falling back", last_reason)
+                    reasons.append(f"attempt {attempt.label!r}: {exc}")
+                    log.info("runner: %s; falling back", reasons[-1])
                     continue
 
                 metrics = _median_metrics_across_assets(run_data)
@@ -338,10 +343,12 @@ class Runner:
                                 dependent=dep[0],
                                 dependency=dep[1],
                             )
-                        last_reason = f"attempt {attempt.label!r}: {detail}"
+                        reasons.append(f"attempt {attempt.label!r}: {detail}")
                     else:
-                        last_reason = f"attempt {attempt.label!r} completed but produced no metrics"
-                    log.info("runner: %s; falling back", last_reason)
+                        reasons.append(
+                            f"attempt {attempt.label!r} completed but produced no metrics"
+                        )
+                    log.info("runner: %s; falling back", reasons[-1])
                     continue
 
                 # Success — persist and transition.
@@ -397,7 +404,8 @@ class Runner:
                 )
 
             raise RunnerError(
-                f"all {len(attempts)} universe attempt(s) exhausted; last: {last_reason}"
+                f"all {len(attempts)} universe attempt(s) exhausted: "
+                + ("; ".join(reasons) or "no universe attempts produced results")
             )
         except Exception as exc:
             await fail_agent_run(

@@ -63,7 +63,7 @@ in the cross-asset median; a strategy may be created with an existing card id (D
   shape, and for 504.
   Other non-2xx stay `FwbgClientError`. Being a `RunnerError`, a refusal ends that universe
   attempt (the next attempt has another fingerprint) and, if all fail, the AgentRun fails with
-  the denial codes in its message.
+  every attempt's reason (its denial codes included) in its message.
 - **D6 windows:** iterations keep `end_date = B`. The promote-gate holdout becomes a register
   holdout look: `holdout=True`, no `start_date`/`end_date` (fwbg develops up to the cutoff and
   evaluates once after it). Cost stress stays a development run (`cost_multiplier` is part of

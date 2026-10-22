@@ -891,8 +891,11 @@ async def test_all_attempts_refused_fails_the_agent_run_with_the_codes(runner_en
         await _run(SessionMaker, sid, fake)
 
     error = await _runner_error(SessionMaker)
-    assert "after_cutoff" in error
-    assert "card_closed" in error
+    # Every attempt's reason is named, not only the last one.
+    assert "attempt 'class': fwbg research gate (409)" in error
+    assert "[duplicate_fingerprint]" in error
+    assert "attempt 'unconstrained': fwbg research gate (422)" in error
+    assert "[after_cutoff, card_closed]" in error
 
 
 async def _start(SessionMaker, sid, fake) -> None:
