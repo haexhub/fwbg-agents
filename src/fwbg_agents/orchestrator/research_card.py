@@ -4,8 +4,9 @@ fwbg counts every backtest as a trial of a research card. One card stands for
 one hypothesis, so the whole lineage (root and every reiterated child) shares
 the root's card: its id lives only on the root, in
 ``Strategy.metadata_json["research_id"]``, and is created lazily on the
-lineage's first run. The card's cutoff is the frozen lineage boundary, which
-already separates iterations from the holdout the same way the register does.
+lineage's first run. An auto-created card's cutoff is the frozen lineage
+boundary B; from then on the card's cutoff is the source of truth for the
+split (iterations send no end_date, fwbg clamps them to it).
 """
 
 from __future__ import annotations

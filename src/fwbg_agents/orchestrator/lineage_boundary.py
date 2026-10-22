@@ -9,15 +9,16 @@ against slightly different (and drifting) holdout windows.
 
 ``get_or_freeze_boundary`` fixes a single date ``B`` the first time any
 strategy in a lineage needs one, and persists it as a sidecar at the lineage
-root's directory. From then on:
+root's directory. ``B`` is the cutoff of the lineage's auto-created research
+card (Plan 028 D1). The card's cutoff, not ``B``, is the source of truth for
+the split: iterations send no ``end_date`` and fwbg clamps them to
+``[..., cutoff)``, and the promote gate's register holdout look develops on
+data before the cutoff and evaluates the frozen setting once after it. For an
+auto-created card the two coincide; an operator-linked card (D8) keeps its own
+cutoff and no ``B`` is frozen.
 
-- iteration backtests train/test on ``[..., B)`` (exclusive upper bound),
-- ``B`` is the cutoff of the lineage's auto-created research card (Plan 028
-  D1), so the promote gate's register holdout look develops on data before
-  ``B`` and evaluates the frozen setting once on ``[B, today)``,
-
-so no iteration of the lineage ever sees the holdout data, no matter how many
-generations later the promote gate runs.
+Frozen once, ``B`` never drifts with ``date.today()``, so a lineage's card is
+created with the same cutoff no matter when its first run happens.
 """
 
 from __future__ import annotations
@@ -91,8 +92,8 @@ async def get_or_freeze_boundary(session: AsyncSession, strategy: Strategy) -> s
                 "lineage_boundary: unreadable sidecar at %s; refreezing", path, exc_info=True
             )
 
-    # Local import: avoids a module-level circular import (runner.py will
-    # import get_or_freeze_boundary from this module).
+    # Local import: avoids a module-level circular import (runner.py imports
+    # this module through orchestrator/research_card.py).
     from fwbg_agents.agents.runner import _months_ago_iso
 
     data_end = _months_ago_iso(settings.holdout_months)

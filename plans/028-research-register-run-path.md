@@ -38,9 +38,9 @@ in the cross-asset median; a strategy may be created with an existing card id (D
   rather than `ResearcherHypothesis` (files written before Plan 009 fail the full model on
   `strategy_family`/`edge_mechanism`): `title`, `tags`, `hypothesis`, `edge_mechanism` →
   `mechanism`, falling back to the pre-Plan-009 `expected_edge_explanation` when
-  `edge_mechanism` is absent or blank; `cutoff = get_or_freeze_boundary(...)`
-  (the lineage boundary B already has the register's cutoff semantics: iterations `[…, B)`,
-  holdout `[B, today)`). No criteria: A keeps its own gate. A missing or invalid
+  `edge_mechanism` is absent or blank; `cutoff = get_or_freeze_boundary(...)`: B is the
+  cutoff of an auto-created card. The card's cutoff is the source of truth for the split
+  (iterations `[…, cutoff)`, holdout `[cutoff, today)`), see D6. No criteria: A keeps its own gate. A missing or invalid
   `hypothesis.json` raises a specific error (no invented card). A `warning` in the response is
   logged and the id stored anyway. An `asyncio.Lock` per root slug prevents two cards for one
   lineage (`ponytail:` process-local; a multi-process deployment would need a DB-level claim).
@@ -64,7 +64,10 @@ in the cross-asset median; a strategy may be created with an existing card id (D
   Other non-2xx stay `FwbgClientError`. Being a `RunnerError`, a refusal ends that universe
   attempt (the next attempt has another fingerprint) and, if all fail, the AgentRun fails with
   every attempt's reason (its denial codes included) in its message.
-- **D6 windows:** iterations keep `end_date = B`. The promote-gate holdout becomes a register
+- **D6 windows:** iterations send no `end_date`; fwbg clamps an open-ended iteration to the
+  card's cutoff before fingerprinting it. The card's cutoff is the source of truth; B is the
+  cutoff of an auto-created card. (Sending `end_date = B` would make every iteration of an
+  operator-linked card whose cutoff lies before B fail as `after_cutoff`.) The promote-gate holdout becomes a register
   holdout look: `holdout=True`, no `start_date`/`end_date` (fwbg develops up to the cutoff and
   evaluates once after it). Cost stress stays a development run (`cost_multiplier` is part of
   the fingerprint; no `end_date` → clamped to the cutoff).
@@ -72,7 +75,8 @@ in the cross-asset median; a strategy may be created with an existing card id (D
   asset that has `unified_metrics`; other keys unchanged.
 - **D8 card given at creation:** `POST /strategies` accepts an optional `research_id`
   (`S-` + 4 digits, else 422) and stores it on the new root's `metadata_json`;
-  `ensure_research_id` returns a stored id before building a card. A root with neither a
+  `ensure_research_id` returns a stored id before building a card, and that card's cutoff
+  bounds the iterations (D6), whether it lies before or after B. A root with neither a
   `research_id` nor a usable `hypothesis.json` fails its run with a `ResearchCardError` that
   asks for a valid `hypothesis.json` and names the `research_id` route for new strategies.
 - **D9 holdout DSR (operator, 2026-10-22):** a register holdout look writes no

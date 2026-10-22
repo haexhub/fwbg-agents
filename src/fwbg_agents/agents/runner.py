@@ -63,7 +63,6 @@ from fwbg_agents.agents.runner_errors import (
 )
 from fwbg_agents.config import settings
 from fwbg_agents.orchestrator.lifecycle import strategy_dir, transition_strategy
-from fwbg_agents.orchestrator.lineage_boundary import get_or_freeze_boundary
 from fwbg_agents.orchestrator.metrics import (
     median_metrics_across_assets as _median_metrics_across_assets,
 )
@@ -168,8 +167,8 @@ _ACTIVE_FWBG_STATUSES = frozenset({"starting", "running"})
 def _months_ago_iso(months: int) -> str:
     """ISO date (YYYY-MM-DD) `months` calendar months before today.
 
-    Used to end iteration backtests before the reserved holdout window so no
-    iteration ever trains/tests on the most recent `holdout_months` of data.
+    Used to freeze the lineage boundary B (orchestrator/lineage_boundary.py),
+    the cutoff of an auto-created research card.
     """
     today = date.today()
     year, month = today.year, today.month - months
@@ -267,11 +266,6 @@ class Runner:
             # One reason per failed attempt; all of them end up in the final
             # error, so every attempt's refusal codes stay visible.
             reasons: list[str] = []
-            # Frozen per-lineage boundary — every iteration of every
-            # generation ends its in-sample data at the same date, so the
-            # promote gate's holdout later never overlaps with anything an
-            # iteration trained/tested on.
-            boundary = await get_or_freeze_boundary(self.session, strategy)
 
             for attempt in attempts:
                 assets = await self._resolve_assets(attempt, tf_by_symbol)
@@ -303,12 +297,11 @@ class Runner:
                         assets=assets,
                         asset_classes=asset_classes,
                         agent_run_id=ar.id,
-                        # Reserve the frozen lineage boundary onward as an
-                        # unseen holdout — the promote gate validates on it
-                        # later. Frozen once per lineage (see
-                        # orchestrator/lineage_boundary.py), not recomputed
-                        # from today() on every run.
-                        end_date=boundary,
+                        # No end_date: fwbg clamps an open-ended iteration to
+                        # the research card's cutoff, the source of truth for
+                        # the split. An operator-linked card (Plan 028 D8) may
+                        # cut off before the lineage boundary B; ending at B
+                        # would then be refused as after_cutoff.
                         research_id=research_id,
                         note=note,
                         reason=reason,
@@ -490,8 +483,6 @@ class Runner:
         *,
         assets: list[str] | None,
         asset_classes: list[str] | None,
-        start_date: str | None = None,
-        end_date: str | None = None,
         cost_multiplier: float | None = None,
         research_id: str,
         note: str,
@@ -546,8 +537,6 @@ class Runner:
                     fwbg_name,
                     assets=assets,
                     asset_classes=asset_classes,
-                    start_date=start_date,
-                    end_date=end_date,
                     cost_multiplier=cost_multiplier,
                     research_id=research_id,
                     note=note,
@@ -579,8 +568,6 @@ class Runner:
         assets: list[str] | None,
         asset_classes: list[str] | None,
         agent_run_id: int,
-        start_date: str | None = None,
-        end_date: str | None = None,
         cost_multiplier: float | None = None,
         research_id: str,
         note: str,
@@ -594,8 +581,6 @@ class Runner:
             fwbg_name,
             assets=assets,
             asset_classes=asset_classes,
-            start_date=start_date,
-            end_date=end_date,
             cost_multiplier=cost_multiplier,
             research_id=research_id,
             note=note,

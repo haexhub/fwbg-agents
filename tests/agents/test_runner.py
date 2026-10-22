@@ -747,19 +747,24 @@ def test_months_ago_iso_subtracts_calendar_months():
     assert d.month == today.month
 
 
-async def test_runner_reserves_holdout_window(runner_env):
-    """Iteration backtests must end at today - holdout_months so no iteration
-    ever sees the reserved holdout tail."""
-    from datetime import date
-
+async def test_runner_leaves_the_iteration_end_to_the_cards_cutoff(runner_env):
+    """An operator-linked card (D8) may have a cutoff before the lineage
+    boundary; an end_date of B would then be refused as after_cutoff. With no
+    end_date fwbg clamps the iteration to the card's cutoff."""
     SessionMaker, make_strategy, _ = runner_env
-    sid = await make_strategy()
+    sid = await make_strategy(seed_hypothesis=False)
+    async with SessionMaker() as session:
+        s = (await session.execute(select(Strategy).where(Strategy.id == sid))).scalar_one()
+        s.metadata_json = {"research_id": "S-0007"}
+        await session.commit()
     fake = FakeFwbgClient()
+
     await _run(SessionMaker, sid, fake)
 
-    end_date = fake.calls_of("start_run")[0][2]["end_date"]
-    assert end_date is not None
-    assert date.fromisoformat(end_date) < date.today()
+    start = fake.calls_of("start_run")[0][2]
+    assert start["research_id"] == "S-0007"
+    assert start.get("end_date") is None
+    assert start.get("start_date") is None
 
 
 def _write_strategy_json(tmp_path, slug: str, data: dict) -> None:
