@@ -13,6 +13,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import weakref
 from pathlib import Path
 from typing import Annotated, Any, Protocol
 
@@ -27,6 +28,8 @@ from fwbg_agents.persistence.models import Strategy
 log = logging.getLogger(__name__)
 
 NOTE_MAX_CHARS = 240
+# Few enough that a universe suffix leaves most of the note to the reason.
+_NOTE_MAX_ASSETS = 5
 
 _NonBlank = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
 
@@ -71,8 +74,9 @@ class _CardHypothesis(BaseModel):
 
 # ponytail: process-local locks keyed by root slug; they serialise card creation
 # only within one process. A multi-process deployment would need a DB-level
-# claim (e.g. a unique pending-card row) instead.
-_card_locks: dict[str, asyncio.Lock] = {}
+# claim (e.g. a unique pending-card row) instead. Weak values: a lock lives only
+# while someone holds or awaits it, so the map cannot grow without bound.
+_card_locks: weakref.WeakValueDictionary[str, asyncio.Lock] = weakref.WeakValueDictionary()
 
 
 async def ensure_research_id(session: AsyncSession, strategy: Strategy, fwbg: _CardClient) -> str:
@@ -90,9 +94,12 @@ async def ensure_research_id(session: AsyncSession, strategy: Strategy, fwbg: _C
     if research_id:
         return str(research_id)
 
-    async with _card_locks.setdefault(root.slug, asyncio.Lock()):
+    lock = _card_locks.setdefault(root.slug, asyncio.Lock())
+    async with lock:
         # Another caller may have created the card while this one waited; reload
-        # so a later metadata write from this session cannot drop the id.
+        # so a later metadata write from this session cannot drop the id. The
+        # flush first writes a pending metadata change the refresh would discard.
+        await session.flush()
         await session.refresh(root, attribute_names=["metadata_json"])
         research_id = (root.metadata_json or {}).get("research_id")
         if research_id:
@@ -108,27 +115,29 @@ async def ensure_research_id(session: AsyncSession, strategy: Strategy, fwbg: _C
             cutoff=cutoff,
         )
         research_id = _card_id(response, root.slug)
+        # Logged before the commit: should the commit fail, the card exists in
+        # fwbg and its id must still be findable.
+        log.info("research_card: created %s for lineage %s", research_id, root.slug)
+        if "warning" in response:
+            # fwbg wrote the card but did not commit it; retrying would create a
+            # second card, so the id is kept and the operator has to look.
+            log.warning(
+                "research_card: card %s for lineage %s created with warning: %s",
+                research_id,
+                root.slug,
+                response["warning"],
+            )
 
         # Reassign rather than mutate: JSON columns do not track in-place edits.
         root.metadata_json = {**(root.metadata_json or {}), "research_id": research_id}
         await session.commit()
-
-    if "warning" in response:
-        # fwbg wrote the card but did not commit it; retrying would create a
-        # second card, so the id is kept and the operator has to look.
-        log.warning(
-            "research_card: card %s for lineage %s created with warning: %s",
-            research_id,
-            root.slug,
-            response["warning"],
-        )
     return research_id
 
 
 def _load_card_hypothesis(root_slug: str) -> _CardHypothesis:
     path = strategy_dir(root_slug) / "iteration_001" / "hypothesis.json"
     try:
-        return _CardHypothesis.model_validate_json(path.read_text())
+        return _CardHypothesis.model_validate_json(path.read_bytes())
     except OSError as exc:
         raise ResearchCardError(f"cannot read hypothesis.json of {root_slug}: {exc}") from exc
     except ValidationError as exc:
@@ -163,7 +172,9 @@ async def run_note(
     if attempt_label is not None:
         suffix = f"; universe {attempt_label}"
         if assets:
-            suffix += f": {', '.join(assets)}"
+            suffix += f": {', '.join(assets[:_NOTE_MAX_ASSETS])}"
+            if len(assets) > _NOTE_MAX_ASSETS:
+                suffix += f" +{len(assets) - _NOTE_MAX_ASSETS} more"
         suffix = _one_line(suffix)
     head = _one_line(base)[: max(NOTE_MAX_CHARS - len(suffix), 0)].rstrip()
     return (head + suffix)[:NOTE_MAX_CHARS]
@@ -181,6 +192,10 @@ async def _note_base(session: AsyncSession, strategy: Strategy) -> str:
         await session.execute(select(Strategy).where(Strategy.id == strategy.parent_strategy_id))
     ).scalar_one_or_none()
     if parent is not None:
+        # ponytail: the parent's recommendation file is overwritten when the
+        # parent is analysed again, so a re-run child may be described by a newer
+        # recommendation than the one it was built from. Snapshotting the reason
+        # on the child at reiterate time would fix that.
         rec = _read_json(
             strategy_dir(parent.slug) / "iteration_001" / "analyst_recommendation.json"
         )
@@ -200,8 +215,8 @@ def _read_json(path: Path) -> dict[str, Any] | None:
     if not path.is_file():
         return None
     try:
-        data = json.loads(path.read_text())
-    except (OSError, json.JSONDecodeError):
+        data = json.loads(path.read_bytes())
+    except (OSError, ValueError):  # ValueError covers bad JSON and bad UTF-8
         log.warning("research_card: unreadable %s; using a generic note", path, exc_info=True)
         return None
     return data if isinstance(data, dict) else None

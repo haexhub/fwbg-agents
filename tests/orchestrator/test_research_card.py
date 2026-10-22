@@ -17,6 +17,7 @@ import pytest_asyncio
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
+from fwbg_agents.orchestrator import research_card
 from fwbg_agents.orchestrator.lifecycle import strategy_dir
 from fwbg_agents.orchestrator.lineage_boundary import boundary_path
 from fwbg_agents.orchestrator.research_card import (
@@ -48,16 +49,23 @@ async def db(tmp_path, monkeypatch):
 class _CardFake:
     """Records create_research_card calls and answers with sequential card ids.
 
-    With ``hold=True`` each call parks on ``release`` after signalling
-    ``entered``, so a test can let a concurrent caller run while a card is
-    being created.
+    With ``hold=True`` the first call parks on ``release`` until someone sets
+    it; a second call sets it itself, so callers that skipped mutual exclusion
+    both finish and show up as two calls. ``response`` replaces the generated
+    answer.
     """
 
-    def __init__(self, *, warning: str | None = None, hold: bool = False) -> None:
+    def __init__(
+        self,
+        *,
+        warning: str | None = None,
+        hold: bool = False,
+        response: dict[str, Any] | None = None,
+    ) -> None:
         self.calls: list[dict[str, Any]] = []
         self._warning = warning
         self._hold = hold
-        self.entered = asyncio.Event()
+        self._response = response
         self.release = asyncio.Event()
 
     async def create_research_card(
@@ -73,12 +81,28 @@ class _CardFake:
             }
         )
         if self._hold:
-            self.entered.set()
+            if len(self.calls) > 1:
+                self.release.set()
             await self.release.wait()
+        if self._response is not None:
+            return self._response
         response: dict[str, Any] = {"card": {"id": f"S-{len(self.calls):04d}", "title": title}}
         if self._warning is not None:
             response["warning"] = self._warning
         return response
+
+
+class _ContentionLock(asyncio.Lock):
+    """An ``asyncio.Lock`` that sets ``contended`` when a second caller waits for it."""
+
+    def __init__(self, contended: asyncio.Event) -> None:
+        super().__init__()
+        self._contended = contended
+
+    async def acquire(self) -> bool:
+        if self.locked():
+            self._contended.set()
+        return await super().acquire()
 
 
 async def _make_strategy(session, slug: str, *, parent_id: int | None = None) -> Strategy:
@@ -177,25 +201,85 @@ async def test_child_reuses_the_roots_card_without_a_call(db):
     assert "research_id" not in stored_child.metadata_json
 
 
-async def test_concurrent_calls_for_one_lineage_create_one_card(db):
+async def test_concurrent_calls_for_one_lineage_create_one_card(db, monkeypatch):
     async with db() as session:
-        root = await _make_strategy(session, "orb_concurrent")
-        child = await _make_strategy(session, "orb_concurrent__it002", parent_id=root.id)
-    _write_hypothesis("orb_concurrent")
-    _freeze_boundary("orb_concurrent")
+        root = await _make_strategy(session, "orb_root")
+        child = await _make_strategy(session, "orb_root__it002", parent_id=root.id)
+    _write_hypothesis("orb_root")
+    _freeze_boundary("orb_root")
     fake = _CardFake(hold=True)
+    # The card request is held until the other caller waits on the lineage lock
+    # (or, without mutual exclusion, makes its own request), so the two calls
+    # overlap deterministically.
+    lock = _ContentionLock(fake.release)
+    monkeypatch.setitem(research_card._card_locks, "orb_root", lock)
 
     async with db() as session_a, db() as session_b:
         root_a = await _load(session_a, root.id)
+        # B keeps the root it loaded before the card existed, so it misses the
+        # fast path and depends on the re-check under the lock.
+        root_b = await _load(session_b, root.id)
         child_b = await _load(session_b, child.id)
-        first = asyncio.create_task(ensure_research_id(session_a, root_a, fake))
-        second = asyncio.create_task(ensure_research_id(session_b, child_b, fake))
-        await fake.entered.wait()
-        fake.release.set()
-        ids = await asyncio.gather(first, second)
+        ids = await asyncio.gather(
+            ensure_research_id(session_a, root_a, fake),
+            ensure_research_id(session_b, child_b, fake),
+        )
 
     assert ids == ["S-0001", "S-0001"]
     assert len(fake.calls) == 1
+    assert root_b.metadata_json["research_id"] == "S-0001"
+
+
+async def test_pending_metadata_change_on_the_root_survives(db):
+    async with db() as session:
+        root = await _make_strategy(session, "orb_root")
+    _write_hypothesis("orb_root")
+    _freeze_boundary("orb_root")
+
+    async with db() as session:
+        loaded = await _load(session, root.id)
+        loaded.metadata_json = {**loaded.metadata_json, "operator_flag": True}
+        await ensure_research_id(session, loaded, _CardFake())
+    async with db() as session:
+        stored = await _load(session, root.id)
+
+    assert stored.metadata_json == {
+        "asset_specific": False,
+        "operator_flag": True,
+        "research_id": "S-0001",
+    }
+
+
+async def test_response_without_card_id_raises(db):
+    async with db() as session:
+        root = await _make_strategy(session, "orb_root")
+    _write_hypothesis("orb_root")
+    _freeze_boundary("orb_root")
+    fake = _CardFake(response={"card": {"title": "Opening range breakout"}})
+
+    async with db() as session:
+        with pytest.raises(ResearchCardError, match="no card id"):
+            await ensure_research_id(session, await _load(session, root.id), fake)
+        stored = await _load(session, root.id)
+
+    assert "research_id" not in stored.metadata_json
+
+
+@pytest.mark.parametrize("content", [b'{"title": "cut off', b"\xff\xfe not utf-8"])
+async def test_unparseable_hypothesis_raises_without_a_call(db, content):
+    async with db() as session:
+        root = await _make_strategy(session, "orb_root")
+    path = strategy_dir("orb_root") / "iteration_001" / "hypothesis.json"
+    path.parent.mkdir(parents=True)
+    path.write_bytes(content)
+    _freeze_boundary("orb_root")
+    fake = _CardFake()
+
+    async with db() as session:
+        with pytest.raises(ResearchCardError, match=r"hypothesis\.json"):
+            await ensure_research_id(session, await _load(session, root.id), fake)
+
+    assert fake.calls == []
 
 
 async def test_missing_hypothesis_raises_without_a_call(db):
@@ -337,3 +421,34 @@ async def test_universe_attempt_is_appended_and_kept_when_truncating(db):
     assert len(note) <= NOTE_MAX_CHARS
     assert note.startswith("tune_params from orb_root: x x")
     assert note.endswith("; universe asset_class:FOREX: EURUSD, GBPUSD")
+
+
+async def test_long_asset_list_is_capped_and_the_head_keeps_context(db):
+    async with db() as session:
+        root = await _make_strategy(session, "orb_root")
+        child = await _make_strategy(session, "orb_root__it002", parent_id=root.id)
+    _write_recommendation("orb_root", {"kind": "tune_params", "reasoning": "x " * 300})
+    assets = [f"SYMBOL{i:02d}" for i in range(50)]
+
+    async with db() as session:
+        note = await run_note(
+            session, await _load(session, child.id), attempt_label="class:FOREX", assets=assets
+        )
+
+    assert len(note) <= NOTE_MAX_CHARS
+    assert note.startswith("tune_params from orb_root: x x")
+    assert note.endswith("+45 more")
+
+
+async def test_unreadable_recommendation_falls_back(db):
+    async with db() as session:
+        root = await _make_strategy(session, "orb_root")
+        child = await _make_strategy(session, "orb_root__it002", parent_id=root.id)
+    path = strategy_dir("orb_root") / "iteration_001" / "analyst_recommendation.json"
+    path.parent.mkdir(parents=True)
+    path.write_bytes(b"\xff\xfe not utf-8")
+
+    async with db() as session:
+        note = await run_note(session, await _load(session, child.id))
+
+    assert note == "iteration of orb_root__it002"

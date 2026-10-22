@@ -34,9 +34,11 @@ in the cross-asset median.
 - **D1 card per lineage:** the card id lives only on the lineage root,
   `Strategy.metadata_json["research_id"]`; every strategy resolves it via `lineage_root`.
   Created lazily on the lineage's first run from the root's
-  `strategy_dir(root.slug)/iteration_001/hypothesis.json` (`ResearcherHypothesis`: `title`,
-  `tags`, `hypothesis`, `edge_mechanism` → `mechanism`, falling back to the pre-Plan-009
-  `expected_edge_explanation` when `edge_mechanism` is absent or blank), `cutoff = get_or_freeze_boundary(...)`
+  `strategy_dir(root.slug)/iteration_001/hypothesis.json`, validated with a minimal card model
+  rather than `ResearcherHypothesis` (files written before Plan 009 fail the full model on
+  `strategy_family`/`edge_mechanism`): `title`, `tags`, `hypothesis`, `edge_mechanism` →
+  `mechanism`, falling back to the pre-Plan-009 `expected_edge_explanation` when
+  `edge_mechanism` is absent or blank; `cutoff = get_or_freeze_boundary(...)`
   (the lineage boundary B already has the register's cutoff semantics: iterations `[…, B)`,
   holdout `[B, today)`). No criteria: A keeps its own gate. A missing or invalid
   `hypothesis.json` raises a specific error (no invented card). A `warning` in the response is
