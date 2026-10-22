@@ -98,7 +98,16 @@ def test_holdout_pnl_series_reads_every_symbols_tr_trace(tmp_path):
 
 
 def test_holdout_pnl_series_without_symbols_is_empty(tmp_path):
+    (tmp_path / "grid_details").mkdir()
     assert holdout_pnl_series(tmp_path) == []
+
+
+@pytest.mark.parametrize("run_dir", ["missing_run", "run_without_grid_details"])
+def test_holdout_pnl_series_without_the_run_files_is_unreadable(tmp_path, run_dir):
+    """A missing run directory (e.g. fwbg's test_results not mounted) is not a
+    look without trades."""
+    (tmp_path / "run_without_grid_details").mkdir()
+    assert holdout_pnl_series(tmp_path / run_dir) is None
 
 
 @pytest.mark.parametrize(

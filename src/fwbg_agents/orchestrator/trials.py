@@ -82,16 +82,20 @@ def holdout_pnl_series(run_dir: Path) -> list[float] | None:
     holds the frozen setting's raw trade P&L (the unit ``pnl_series`` reads
     from iteration folds), next to a config.json whose ``holdout.evaluated``
     is true. Kept apart from ``pnl_series`` so a look never enters the trial
-    census. Returns None when any trades.json is unreadable or malformed, or
-    its symbol's config.json does not mark an evaluated holdout look: a
-    partial series would judge only the readable symbols, and other trades
-    are not holdout trades. Non-finite values are kept for the caller's
-    fail-closed check.
+    census. Returns None when the run's ``grid_details`` directory is missing
+    (fwbg-agents cannot read fwbg's test_results; not a look without trades), when any
+    trades.json is unreadable or malformed, or its symbol's config.json does
+    not mark an evaluated holdout look: a partial series would judge only the
+    readable symbols, and other trades are not holdout trades. Non-finite
+    values are kept for the caller's fail-closed check.
     """
     pnls: list[float] = []
     grid = run_dir / "grid_details"
     if not grid.is_dir():
-        return pnls
+        log.warning(
+            "holdout_pnl_series: no run files at %s; is fwbg's test_results readable?", grid
+        )
+        return None
     for path in sorted(grid.glob("*/trades.json")):
         config = _json_object(path.with_name("config.json"))
         holdout = config.get("holdout") if config is not None else None

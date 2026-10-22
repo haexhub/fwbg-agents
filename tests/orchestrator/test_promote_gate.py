@@ -58,12 +58,13 @@ _HOLDOUT_PNLS = [1.0, -0.5, 1.2, -0.4, 0.9, -0.6, 1.1, -0.3]
 
 def _write_holdout_trades(settings, run_id: str, symbol: str, pnls: list[float]) -> None:
     """The register holdout look's layout: config.json with the evaluated
-    holdout block and trades.json, no fold_results.json."""
+    holdout block and, if the look traded, trades.json; no fold_results.json."""
     sym_dir = settings.fwbg_test_results_dir / run_id / "grid_details" / symbol
     sym_dir.mkdir(parents=True, exist_ok=True)
-    config = {"status": "ok", "holdout": {"cutoff": "2024-01-01", "evaluated": True}}
-    (sym_dir / "config.json").write_text(json.dumps(config))
-    (sym_dir / "trades.json").write_text(json.dumps({"tr_trace": pnls, "trades_detailed": []}))
+    holdout = {"cutoff": "2024-01-01", "evaluated": True, "trades": len(pnls)}
+    (sym_dir / "config.json").write_text(json.dumps({"status": "ok", "holdout": holdout}))
+    if pnls:
+        (sym_dir / "trades.json").write_text(json.dumps({"tr_trace": pnls, "trades_detailed": []}))
 
 
 class _GateFake:
@@ -700,7 +701,7 @@ async def test_dsr_fails_closed_on_a_holdout_look_without_trades(gate_env):
     """No holdout trades means the DSR cannot vouch for the look: fail, even on
     a cold start."""
     Session, sid, _ = gate_env
-    fake = _GateFake([_run(), _run()], holdout_pnls=None)  # no trades.json written
+    fake = _GateFake([_run(), _run()], holdout_pnls=[])  # looked at, no trades.json
     async with Session() as session:
         strat = (await session.execute(select(Strategy).where(Strategy.id == sid))).scalar_one()
         result = await run_promote_gate(session, strat, fwbg_client=fake)
@@ -709,6 +710,20 @@ async def test_dsr_fails_closed_on_a_holdout_look_without_trades(gate_env):
     dsr = next(r for r in result.runs if r.label == "dsr")
     assert dsr.passed is False
     assert any("made no trades" in f for f in dsr.failures)
+
+
+async def test_dsr_calls_a_missing_holdout_run_dir_unreadable(gate_env):
+    """No run directory points at the deployment (fwbg's test_results not
+    readable by A), not at a look without trades."""
+    Session, sid, _ = gate_env
+    fake = _GateFake([_run(), _run()], holdout_pnls=None)  # nothing written
+    async with Session() as session:
+        strat = (await session.execute(select(Strategy).where(Strategy.id == sid))).scalar_one()
+        result = await run_promote_gate(session, strat, fwbg_client=fake)
+
+    dsr = next(r for r in result.runs if r.label == "dsr")
+    assert dsr.passed is False
+    assert any("unreadable" in f for f in dsr.failures)
 
 
 async def test_dsr_fails_closed_on_a_single_holdout_trade(gate_env):
