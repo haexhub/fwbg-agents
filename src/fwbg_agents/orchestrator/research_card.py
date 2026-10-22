@@ -16,7 +16,7 @@ import logging
 from pathlib import Path
 from typing import Annotated, Any, Protocol
 
-from pydantic import BaseModel, Field, StringConstraints, ValidationError
+from pydantic import BaseModel, Field, StringConstraints, ValidationError, model_validator
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -46,14 +46,27 @@ class _CardHypothesis(BaseModel):
 
     Not ``ResearcherHypothesis``: files written before Plan 009 carry a
     free-text ``strategy_family`` that the current vocabulary rejects, and the
-    card needs none of the fields that changed since. A file without an
-    ``edge_mechanism`` still fails here, since fwbg requires a mechanism.
+    card needs none of the fields that changed since. Those files also predate
+    ``edge_mechanism``; their ``expected_edge_explanation`` states the same
+    thing (why the edge exists), so it stands in. With neither, the file fails
+    here, since fwbg requires a mechanism.
     """
 
     title: _NonBlank
     tags: list[_NonBlank] = Field(min_length=1)
     hypothesis: _NonBlank
-    edge_mechanism: _NonBlank
+    edge_mechanism: str = ""
+    expected_edge_explanation: str = ""
+
+    @model_validator(mode="after")
+    def _has_mechanism(self) -> _CardHypothesis:
+        if not self.mechanism:
+            raise ValueError("needs a non-blank edge_mechanism or expected_edge_explanation")
+        return self
+
+    @property
+    def mechanism(self) -> str:
+        return self.edge_mechanism.strip() or self.expected_edge_explanation.strip()
 
 
 # ponytail: process-local locks keyed by root slug; they serialise card creation
@@ -91,7 +104,7 @@ async def ensure_research_id(session: AsyncSession, strategy: Strategy, fwbg: _C
             title=card_input.title,
             tags=card_input.tags,
             hypothesis=card_input.hypothesis,
-            mechanism=card_input.edge_mechanism,
+            mechanism=card_input.mechanism,
             cutoff=cutoff,
         )
         research_id = _card_id(response, root.slug)

@@ -35,7 +35,8 @@ in the cross-asset median.
   `Strategy.metadata_json["research_id"]`; every strategy resolves it via `lineage_root`.
   Created lazily on the lineage's first run from the root's
   `strategy_dir(root.slug)/iteration_001/hypothesis.json` (`ResearcherHypothesis`: `title`,
-  `tags`, `hypothesis`, `edge_mechanism` → `mechanism`), `cutoff = get_or_freeze_boundary(...)`
+  `tags`, `hypothesis`, `edge_mechanism` → `mechanism`, falling back to the pre-Plan-009
+  `expected_edge_explanation` when `edge_mechanism` is absent or blank), `cutoff = get_or_freeze_boundary(...)`
   (the lineage boundary B already has the register's cutoff semantics: iterations `[…, B)`,
   holdout `[B, today)`). No criteria: A keeps its own gate. A missing or invalid
   `hypothesis.json` raises a specific error (no invented card). A `warning` in the response is
@@ -79,7 +80,7 @@ in the cross-asset median.
 
 ### Task 2: Card per lineage and run note
 - New `orchestrator/research_card.py`: `ensure_research_id(session, strategy, fwbg) -> str`
-  (D1) and `run_note(session, strategy, *, attempt=None) -> str` (D2), plus the specific error
+  (D1) and `run_note(session, strategy, *, attempt_label=None, assets=None) -> str` (D2), plus the specific error
   type for a missing/invalid hypothesis.
 - Tests: creates once and stores on the root; child reuses the root's id without a call;
   concurrent calls for one lineage create one card; missing hypothesis → error, no call;

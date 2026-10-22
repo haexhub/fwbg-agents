@@ -102,6 +102,7 @@ async def _make_strategy(session, slug: str, *, parent_id: int | None = None) ->
 def _write_hypothesis(slug: str, **overrides: Any) -> None:
     # Only the fields the card needs, plus a free-text family as in files
     # written before the family vocabulary existed: such files must still work.
+    # An override of None drops the field.
     payload: dict[str, Any] = {
         "title": "Opening range breakout",
         "strategy_family": "ORB",
@@ -110,6 +111,7 @@ def _write_hypothesis(slug: str, **overrides: Any) -> None:
         "edge_mechanism": "Overnight order imbalance resolves after the open.",
     }
     payload.update(overrides)
+    payload = {key: value for key, value in payload.items() if value is not None}
     path = strategy_dir(slug) / "iteration_001" / "hypothesis.json"
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(payload))
@@ -211,10 +213,30 @@ async def test_missing_hypothesis_raises_without_a_call(db):
     assert "research_id" not in stored.metadata_json
 
 
+async def test_legacy_hypothesis_uses_the_edge_explanation_as_mechanism(db):
+    async with db() as session:
+        root = await _make_strategy(session, "orb_legacy")
+    _write_hypothesis(
+        "orb_legacy",
+        edge_mechanism=None,
+        expected_edge_explanation="Opening auctions leave unfilled orders that drive the trend.",
+    )
+    _freeze_boundary("orb_legacy")
+    fake = _CardFake()
+
+    async with db() as session:
+        research_id = await ensure_research_id(session, await _load(session, root.id), fake)
+
+    assert research_id == "S-0001"
+    assert [call["mechanism"] for call in fake.calls] == [
+        "Opening auctions leave unfilled orders that drive the trend."
+    ]
+
+
 async def test_hypothesis_without_mechanism_raises_without_a_call(db):
     async with db() as session:
         root = await _make_strategy(session, "orb_root")
-    _write_hypothesis("orb_root", edge_mechanism="   ")
+    _write_hypothesis("orb_root", edge_mechanism="   ", expected_edge_explanation=" ")
     _freeze_boundary("orb_root")
     fake = _CardFake()
 
