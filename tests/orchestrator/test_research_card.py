@@ -289,12 +289,14 @@ async def test_missing_hypothesis_raises_without_a_call(db):
     fake = _CardFake()
 
     async with db() as session:
-        with pytest.raises(ResearchCardError, match=r"hypothesis\.json"):
+        with pytest.raises(ResearchCardError, match=r"hypothesis\.json") as excinfo:
             await ensure_research_id(session, await _load(session, root.id), fake)
         stored = await _load(session, root.id)
 
     assert fake.calls == []
     assert "research_id" not in stored.metadata_json
+    # The operator learns both ways to give the lineage a card.
+    assert "POST /strategies with a research_id" in str(excinfo.value)
 
 
 async def test_legacy_hypothesis_uses_the_edge_explanation_as_mechanism(db):

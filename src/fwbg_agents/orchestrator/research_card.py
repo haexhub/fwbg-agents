@@ -136,12 +136,16 @@ async def ensure_research_id(session: AsyncSession, strategy: Strategy, fwbg: _C
 
 def _load_card_hypothesis(root_slug: str) -> _CardHypothesis:
     path = strategy_dir(root_slug) / "iteration_001" / "hypothesis.json"
+    remedy = (
+        f"lineage {root_slug} has no research card; create the strategy via "
+        f"POST /strategies with a research_id, or add a valid {path}"
+    )
     try:
         return _CardHypothesis.model_validate_json(path.read_bytes())
     except OSError as exc:
-        raise ResearchCardError(f"cannot read hypothesis.json of {root_slug}: {exc}") from exc
+        raise ResearchCardError(f"{remedy} (cannot read hypothesis.json: {exc})") from exc
     except ValidationError as exc:
-        raise ResearchCardError(f"invalid hypothesis.json of {root_slug}: {exc}") from exc
+        raise ResearchCardError(f"{remedy} (invalid hypothesis.json: {exc})") from exc
 
 
 def _card_id(response: dict[str, Any], root_slug: str) -> str:

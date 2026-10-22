@@ -27,7 +27,7 @@ register for prior art before proposing, and mapping abandon decisions to regist
 
 **Decisions (operator, 2026-10-22):** step 6 split into 6a (this plan) and 6b; a card is created
 automatically per hypothesis (lineage root), children inherit it; a `null` Sharpe counts as 0
-in the cross-asset median.
+in the cross-asset median; a strategy may be created with an existing card id (D8).
 
 ## Design
 
@@ -53,8 +53,9 @@ in the cross-asset median.
   through `Runner.run(strategy, reason=...)` to every start. The promote gate sends
   `reason="promote gate: further holdout look (<slug>)"` when the card already has a holdout
   trial (`GET /api/research/{id}` trials with `kind == "holdout"`).
-- **D4 run start:** `start_run` uses a 150 s timeout for that request only (preflight 120 s +
-  margin; a module constant with that why-comment); other calls keep theirs.
+- **D4 run start:** `start_run` waits up to 150 s for fwbg's answer (preflight 120 s + margin;
+  a module constant with that why-comment); connect/write/pool and other calls keep the
+  client's timeouts.
   `_acquire_run` adopts active runs with status `starting` or `running`.
 - **D5 refusals:** `ResearchGateRefused(RunnerError)` carries `status` and the list of
   `(code, message)` denials (or the preflight `message`/`output`); raised by the Runner for
@@ -68,6 +69,11 @@ in the cross-asset median.
   the fingerprint; no `end_date` → clamped to the cutoff).
 - **D7 null Sharpe:** `median_metrics_across_assets` counts a `sharpe` of `None` as `0.0` for an
   asset that has `unified_metrics`; other keys unchanged.
+- **D8 card given at creation:** `POST /strategies` accepts an optional `research_id`
+  (`S-` + 4 digits, else 422) and stores it on the new root's `metadata_json`;
+  `ensure_research_id` returns a stored id before building a card. A root with neither a
+  `research_id` nor a usable `hypothesis.json` fails its run with a `ResearchCardError` that
+  names both remedies.
 
 ## Tasks
 
@@ -95,7 +101,8 @@ in the cross-asset median.
   note per attempt, passes `research_id/note/reason` through `execute_backtest` →
   `_acquire_run` → `start_run`; adopts `starting` runs; maps refusals to
   `ResearchGateRefused` (D5). `api/runs.py` run endpoint accepts optional `reason`. Other
-  `Runner.run` callers unchanged.
+  `Runner.run` callers unchanged. `start_run` requires `research_id` and `note`; the
+  start timeout covers only the read wait. `POST /strategies` takes `research_id` (D8).
 - Tests: fields reach `start_run`; a `starting` run is adopted; 409 refusal on the first
   attempt falls back to the next; all attempts refused → AgentRun failed with the codes;
   504 → `ResearchGateRefused`; 429 behaviour unchanged.

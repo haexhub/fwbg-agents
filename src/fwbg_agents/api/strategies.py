@@ -57,6 +57,9 @@ class StrategyCreate(BaseModel):
     strategy_family: str = Field(min_length=1, max_length=64)
     strategy_json: dict[str, Any]
     tags: list[str] = Field(default_factory=list)
+    # An existing fwbg research card (Plan 028 D8): the lineage runs against it
+    # instead of a card built from iteration_001/hypothesis.json.
+    research_id: str | None = Field(default=None, pattern=r"^S-[0-9]{4}$")
 
     @field_validator("slug")
     @classmethod
@@ -129,6 +132,7 @@ async def create_strategy(
         iteration_count=0,
         asset_class=body.asset_class,
         strategy_family=body.strategy_family,
+        metadata_json={"research_id": body.research_id} if body.research_id else {},
         created_at=now,
         updated_at=now,
     )

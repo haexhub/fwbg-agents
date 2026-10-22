@@ -983,4 +983,7 @@ async def test_missing_card_ends_the_run_without_fallback(runner_env):
 
     assert fake.calls_of("start_run") == []
     assert fake.calls_of("create_research_card") == []
-    assert "hypothesis.json" in await _runner_error(SessionMaker)
+    error = await _runner_error(SessionMaker)
+    # Tells the operator how to give the lineage a card.
+    assert "research_id" in error
+    assert "hypothesis.json" in error
