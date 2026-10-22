@@ -871,6 +871,34 @@ async def test_adopts_a_run_still_in_its_preflight(runner_env):
     assert fake.calls_of("start_run") == []
 
 
+async def test_holdout_does_not_adopt_an_active_ordinary_run(runner_env):
+    """A holdout look must start its own register run, not reuse an iteration."""
+    SessionMaker, _, _ = runner_env
+    fake = FakeFwbgClient(
+        list_runs_response=[
+            {
+                "run_id": "job_iteration",
+                "status": "running",
+                "strategy_name": "demo_orb_v1__it001",
+            },
+        ],
+    )
+
+    async with SessionMaker() as session:
+        result = await Runner(fake, session).execute_backtest(
+            "demo_orb_v1__it001",
+            assets=None,
+            asset_classes=None,
+            agent_run_id=1,
+            research_id="S-0001",
+            note="promote gate holdout look",
+            holdout=True,
+        )
+
+    assert result[0] == "job_test_42"
+    assert len(fake.calls_of("start_run")) == 1
+
+
 async def test_refused_attempt_falls_back_to_the_next(runner_env):
     SessionMaker, make_strategy, _ = runner_env
     sid = await make_strategy()  # rungs: class, unconstrained

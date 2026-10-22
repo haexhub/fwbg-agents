@@ -511,6 +511,7 @@ class Runner:
                     for r in await self.fwbg.list_runs()
                     if r.get("status") in _ACTIVE_FWBG_STATUSES
                     and r.get("strategy_name") == fwbg_name
+                    and not holdout
                 ]
             except (httpx.TransportError, FwbgClientError):
                 active = []
