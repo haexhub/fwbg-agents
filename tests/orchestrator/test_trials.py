@@ -79,11 +79,12 @@ def test_per_trade_sharpe_zero_variance_is_none():
     assert per_trade_sharpe([1.0, 1.0, 1.0]) is None
 
 
-def _holdout_symbol(run_dir, symbol, *, trades=None, evaluated=True):
+def _holdout_symbol(run_dir, symbol, *, trades=None, evaluated=True, holdout_trades=0):
     """A symbol directory of a register holdout look (config.json + trades.json)."""
     sym_dir = run_dir / "grid_details" / symbol
     sym_dir.mkdir(parents=True)
-    config = {"status": "ok", "holdout": {"cutoff": "2024-01-01", "evaluated": evaluated}}
+    holdout = {"cutoff": "2024-01-01", "evaluated": evaluated, "trades": holdout_trades}
+    config = {"status": "ok", "holdout": holdout}
     (sym_dir / "config.json").write_text(json.dumps(config))
     if trades is not None:
         (sym_dir / "trades.json").write_text(json.dumps(trades))
@@ -136,6 +137,14 @@ def test_holdout_pnl_series_only_reads_an_evaluated_holdout_look(tmp_path):
     """Trades of a symbol whose config.json does not mark an evaluated look
     (an ordinary run, or a look that never happened) are not holdout trades."""
     _holdout_symbol(tmp_path, "EURUSD", trades={"tr_trace": [1.0, -0.5]}, evaluated=False)
+    assert holdout_pnl_series(tmp_path) is None
+
+
+def test_holdout_pnl_series_rejects_a_look_whose_trades_file_is_missing(tmp_path):
+    """fwbg's holdout phase can fail after the look traded (status error, no
+    trades.json): the look happened, its trades are unknown."""
+    _holdout_symbol(tmp_path, "EURUSD", trades={"tr_trace": [1.0, -0.5]}, holdout_trades=2)
+    _holdout_symbol(tmp_path, "GBPUSD", holdout_trades=3)
     assert holdout_pnl_series(tmp_path) is None
 
 

@@ -83,11 +83,12 @@ def holdout_pnl_series(run_dir: Path) -> list[float] | None:
     from iteration folds), next to a config.json whose ``holdout.evaluated``
     is true. Kept apart from ``pnl_series`` so a look never enters the trial
     census. Returns None when the run's ``grid_details`` directory is missing
-    (fwbg-agents cannot read fwbg's test_results; not a look without trades), when any
-    trades.json is unreadable or malformed, or its symbol's config.json does
-    not mark an evaluated holdout look: a partial series would judge only the
-    readable symbols, and other trades are not holdout trades. Non-finite
-    values are kept for the caller's fail-closed check.
+    (fwbg-agents cannot read fwbg's test_results; not a look without trades),
+    when any trades.json is unreadable or malformed, when its symbol's
+    config.json does not mark an evaluated holdout look, or when an evaluated
+    look whose ``holdout.trades`` is not 0 has no trades.json: a partial series
+    would judge only the readable symbols, and other trades are not holdout
+    trades. Non-finite values are kept for the caller's fail-closed check.
     """
     pnls: list[float] = []
     grid = run_dir / "grid_details"
@@ -96,10 +97,21 @@ def holdout_pnl_series(run_dir: Path) -> list[float] | None:
             "holdout_pnl_series: no run files at %s; is fwbg's test_results readable?", grid
         )
         return None
-    for path in sorted(grid.glob("*/trades.json")):
-        config = _json_object(path.with_name("config.json"))
+    for sym_dir in sorted(p for p in grid.iterdir() if p.is_dir()):
+        path = sym_dir / "trades.json"
+        config = _json_object(sym_dir / "config.json")
         holdout = config.get("holdout") if config is not None else None
-        if not (isinstance(holdout, dict) and holdout.get("evaluated") is True):
+        if not isinstance(holdout, dict):
+            holdout = {}
+        evaluated = holdout.get("evaluated") is True
+        if not path.exists():
+            # fwbg's holdout phase can fail after the look traded: it then
+            # writes no trades.json, and the look's trades are unknown.
+            if evaluated and holdout.get("trades") != 0:
+                log.warning("holdout_pnl_series: %s missing for a look that traded", path)
+                return None
+            continue
+        if not evaluated:
             log.warning("holdout_pnl_series: %s is not from an evaluated holdout look", path)
             return None
         trades = _json_object(path)
