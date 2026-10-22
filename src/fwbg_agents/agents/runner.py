@@ -55,6 +55,12 @@ import httpx
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from fwbg_agents.agents.research_gate import research_gate_refusal
+from fwbg_agents.agents.runner_errors import (
+    RunnerConfigError,
+    RunnerError,
+    UnrunnableStrategyError,
+)
 from fwbg_agents.config import settings
 from fwbg_agents.orchestrator.lifecycle import strategy_dir, transition_strategy
 from fwbg_agents.orchestrator.lineage_boundary import get_or_freeze_boundary
@@ -84,39 +90,6 @@ from fwbg_agents.run_events import emit_run_event
 from fwbg_agents.tools.fwbg_client import FwbgClientError, safe_fwbg_strategy_name
 
 log = logging.getLogger(__name__)
-
-
-class RunnerError(RuntimeError):
-    """Raised when every universe attempt fails (fwbg errors / no results)."""
-
-
-class UnrunnableStrategyError(RunnerError):
-    """The strategy cannot produce a meaningful backtest and must not be
-    dispatched — e.g. a signal model with no entry-signal source (no
-    signal_rules, no model.required_features, no allowed_hours/allowed_days).
-
-    Broadening the universe or retrying cannot help; fwbg would skip every fold
-    with an empty feature pool and "complete" in seconds. We short-circuit
-    before creating the run so no wasted backtest is dispatched.
-    """
-
-
-class RunnerConfigError(RunnerError):
-    """fwbg completed the run but every asset errored on a fixable
-    strategy-config problem (e.g. a plugin missing its pipeline dependency).
-
-    Broadening the universe cannot fix such an error — the same pipeline fails
-    on every symbol — so the Runner short-circuits and raises this instead of
-    exhausting all rungs. It carries the parsed dependency (`dependent` needs
-    `dependency` upstream) so the orchestrator can auto-repair by reiteration.
-    """
-
-    def __init__(
-        self, message: str, *, dependent: str | None = None, dependency: str | None = None
-    ):
-        super().__init__(message)
-        self.dependent = dependent
-        self.dependency = dependency
 
 
 # fwbg's pipeline builder rejects a plugin whose declared dependency is absent
@@ -569,10 +542,6 @@ class Runner:
                 )
             except FwbgClientError as exc:
                 if exc.status != 429:
-                    # Local import: research_gate subclasses RunnerError from
-                    # this module, so a module-level import would be circular.
-                    from fwbg_agents.agents.research_gate import research_gate_refusal
-
                     refusal = research_gate_refusal(exc)
                     if refusal is not None:
                         raise refusal from exc

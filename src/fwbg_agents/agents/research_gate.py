@@ -11,7 +11,7 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass
 
-from fwbg_agents.agents.runner import RunnerError
+from fwbg_agents.agents.runner_errors import RunnerError
 from fwbg_agents.tools.fwbg_client import FwbgClientError
 
 
