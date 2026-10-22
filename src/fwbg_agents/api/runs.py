@@ -16,10 +16,10 @@ import json
 import logging
 import re
 from pathlib import Path
-from typing import Any
+from typing import Annotated, Any
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, StringConstraints
 from sqlalchemy import asc, desc, nulls_last, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -74,14 +74,14 @@ def _serialize_agent_run(ar: AgentRun) -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 
-async def _run_runner_background(strategy_id: int) -> None:
+async def _run_runner_background(strategy_id: int, reason: str | None = None) -> None:
     """Run the backtest runner task in the background."""
     async with SessionLocal() as session:
         s = (await session.execute(select(Strategy).where(Strategy.id == strategy_id))).scalar_one()
         client = FwbgClient(base_url=settings.fwbg_api_url, api_key=settings.fwbg_api_key)
         try:
             runner = Runner(client, session)
-            await runner.run(s)
+            await runner.run(s, reason=reason)
         except Exception:
             log.exception("runner background task failed for strategy %s", strategy_id)
         finally:
@@ -236,10 +236,19 @@ async def put_runner_queue(
     return {"ok": True}
 
 
+class RunRequest(BaseModel):
+    """Optional body for POST /strategies/{id}/run."""
+
+    # Justifies a deliberate repeat to fwbg's research register (e.g. a run the
+    # register would refuse as a duplicate); sent with every start of the run.
+    reason: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)] | None = None
+
+
 @router.post("/strategies/{strategy_id}/run", status_code=202)
 async def post_strategy_run(
     strategy_id: int,
     background_tasks: BackgroundTasks,
+    body: RunRequest | None = None,
     session: AsyncSession = Depends(get_session),
 ) -> dict[str, Any]:
     """Kick off a backtest run for a strategy. Returns a scheduled AgentRun."""
@@ -256,7 +265,9 @@ async def post_strategy_run(
         status=AgentRunStatus.PENDING,
     )
 
-    background_tasks.add_task(_run_runner_background, strategy_id)
+    background_tasks.add_task(
+        _run_runner_background, strategy_id, reason=body.reason if body else None
+    )
     return {"strategy_id": strategy_id, "agent_run_id": ar.id, "status": "scheduled"}
 
 

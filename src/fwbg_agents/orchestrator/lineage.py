@@ -26,6 +26,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from fwbg_agents.orchestrator.lifecycle import strategy_dir
+from fwbg_agents.orchestrator.metrics import asset_sharpe
 from fwbg_agents.persistence.models import Strategy, Transition
 
 log = logging.getLogger(__name__)
@@ -138,7 +139,8 @@ def _per_asset_summary(slug: str) -> str | None:
 
 
 def _per_asset_sharpe(slug: str) -> dict[str, float]:
-    """symbol → sharpe from a member's iteration_001/fwbg_results.json."""
+    """symbol → sharpe from a member's iteration_001/fwbg_results.json (a
+    no-edge symbol's null sharpe counts as 0.0, see ``asset_sharpe``)."""
     results_path = strategy_dir(slug) / "iteration_001" / "fwbg_results.json"
     if not results_path.is_file():
         return {}
@@ -148,9 +150,9 @@ def _per_asset_sharpe(slug: str) -> dict[str, float]:
         return {}
     out: dict[str, float] = {}
     for sym, data in (results.get("assets") or {}).items():
-        sh = (data.get("unified_metrics") or {}).get("sharpe")
-        if isinstance(sh, (int, float)):
-            out[sym] = float(sh)
+        sharpe = asset_sharpe(data)
+        if sharpe is not None:
+            out[sym] = sharpe
     return out
 
 

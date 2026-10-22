@@ -24,6 +24,7 @@ import pytest_asyncio
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
+from fwbg_agents.agents.research_gate import ResearchGateRefusedError
 from fwbg_agents.agents.runner import (
     Runner,
     RunnerError,
@@ -31,6 +32,7 @@ from fwbg_agents.agents.runner import (
     _median_metrics_across_assets,
     _months_ago_iso,
 )
+from fwbg_agents.orchestrator.research_card import ResearchCardError
 from fwbg_agents.persistence.database import Base
 from fwbg_agents.persistence.models import (
     AgentRun,
@@ -134,6 +136,10 @@ class FakeFwbgClient:
     def calls_of(self, name: str) -> list[tuple[str, tuple, dict]]:
         return [c for c in self.calls if c[0] == name]
 
+    async def create_research_card(self, **kwargs):
+        self.calls.append(("create_research_card", (), kwargs))
+        return {"card": {"id": "S-0001"}}
+
     async def create_strategy(self, name, data):
         self.calls.append(("create_strategy", (name,), {"data": data}))
         if self.create_strategy_error is not None:
@@ -189,6 +195,21 @@ class FakeFwbgClient:
         return {"status": "ready"}
 
 
+_HYPOTHESIS = {
+    "title": "Opening range breakout",
+    "tags": ["orb"],
+    "hypothesis": "The opening range break carries the session's direction.",
+    "edge_mechanism": "Overnight orders cluster at the open.",
+}
+
+
+def _refusal(status: int, *codes: str) -> FwbgClientError:
+    """A research gate refusal of /api/runs/start, as fwbg sends it."""
+    denials = [{"code": c, "status": status, "message": f"{c} denied"} for c in codes]
+    detail = {"message": "research gate refused the run", "denials": denials}
+    return FwbgClientError(status, json.dumps({"detail": detail}))
+
+
 # ---------------------------------------------------------------------------
 
 
@@ -211,7 +232,12 @@ async def runner_env(tmp_path, monkeypatch):
     Session = async_sessionmaker(engine, expire_on_commit=False)
 
     async def make_strategy(
-        *, slug="demo_orb_v1", asset_class="FOREX", suggested_universe=None, seed_json=True
+        *,
+        slug="demo_orb_v1",
+        asset_class="FOREX",
+        suggested_universe=None,
+        seed_json=True,
+        seed_hypothesis=True,
     ) -> int:
         async with Session() as setup:
             now = datetime.now(UTC)
@@ -233,6 +259,10 @@ async def runner_env(tmp_path, monkeypatch):
             it_dir = settings.data_dir / "strategies" / slug / "iteration_001"
             it_dir.mkdir(parents=True, exist_ok=True)
             (it_dir / "strategy.json").write_text(json.dumps({"name": slug}))
+        if seed_hypothesis:
+            it_dir = settings.data_dir / "strategies" / slug / "iteration_001"
+            it_dir.mkdir(parents=True, exist_ok=True)
+            (it_dir / "hypothesis.json").write_text(json.dumps(_HYPOTHESIS))
         return sid
 
     yield Session, make_strategy, tmp_path
@@ -240,10 +270,19 @@ async def runner_env(tmp_path, monkeypatch):
     await engine.dispose()
 
 
-async def _run(SessionMaker, sid, fake) -> Any:
+async def _run(SessionMaker, sid, fake, **kwargs) -> Any:
     async with SessionMaker() as session:
         s = (await session.execute(select(Strategy).where(Strategy.id == sid))).scalar_one()
-        return await Runner(fake, session).run(s)
+        return await Runner(fake, session).run(s, **kwargs)
+
+
+async def _runner_error(SessionMaker) -> str:
+    async with SessionMaker() as session:
+        ar = (
+            await session.execute(select(AgentRun).where(AgentRun.agent_name == "runner"))
+        ).scalar_one()
+    assert ar.status == AgentRunStatus.FAILED.value
+    return ar.error or ""
 
 
 async def test_runner_happy_path_transitions_to_backtested(runner_env):
@@ -708,19 +747,24 @@ def test_months_ago_iso_subtracts_calendar_months():
     assert d.month == today.month
 
 
-async def test_runner_reserves_holdout_window(runner_env):
-    """Iteration backtests must end at today - holdout_months so no iteration
-    ever sees the reserved holdout tail."""
-    from datetime import date
-
+async def test_runner_leaves_the_iteration_end_to_the_cards_cutoff(runner_env):
+    """An operator-linked card (D8) may have a cutoff before the lineage
+    boundary; an end_date of B would then be refused as after_cutoff. With no
+    end_date fwbg clamps the iteration to the card's cutoff."""
     SessionMaker, make_strategy, _ = runner_env
-    sid = await make_strategy()
+    sid = await make_strategy(seed_hypothesis=False)
+    async with SessionMaker() as session:
+        s = (await session.execute(select(Strategy).where(Strategy.id == sid))).scalar_one()
+        s.metadata_json = {"research_id": "S-0007"}
+        await session.commit()
     fake = FakeFwbgClient()
+
     await _run(SessionMaker, sid, fake)
 
-    end_date = fake.calls_of("start_run")[0][2]["end_date"]
-    assert end_date is not None
-    assert date.fromisoformat(end_date) < date.today()
+    start = fake.calls_of("start_run")[0][2]
+    assert start["research_id"] == "S-0007"
+    assert start.get("end_date") is None
+    assert start.get("start_date") is None
 
 
 def _write_strategy_json(tmp_path, slug: str, data: dict) -> None:
@@ -774,3 +818,157 @@ async def test_runner_dispatches_signal_model_with_time_filter(runner_env):
 
     assert result.fwbg_run_id == "job_test_42"
     assert fake.calls_of("start_run")  # dispatched
+
+
+# ---------------------------------------------------------------------------
+# Research register (Plan 028): every start carries the lineage's card id and a
+# note per universe attempt; a gate refusal ends only that attempt.
+# ---------------------------------------------------------------------------
+
+
+async def test_register_fields_reach_every_start(runner_env):
+    SessionMaker, make_strategy, _ = runner_env
+    sid = await make_strategy(
+        suggested_universe=[{"scope": "symbol", "value": "EURUSD", "rationale": "x"}],
+    )
+    fake = FakeFwbgClient(run_responses=[_empty_run(), _metrics_run()])
+
+    await _run(SessionMaker, sid, fake)
+
+    assert len(fake.calls_of("create_research_card")) == 1  # once per run, not per attempt
+    first, second = (c[2] for c in fake.calls_of("start_run"))
+    assert first["research_id"] == second["research_id"] == "S-0001"
+    assert first["note"] == "initial backtest: Opening range breakout; universe suggested: EURUSD"
+    assert second["note"] == "initial backtest: Opening range breakout; universe class"
+    assert first["reason"] is None
+
+
+async def test_reason_reaches_every_start(runner_env):
+    SessionMaker, make_strategy, _ = runner_env
+    sid = await make_strategy()
+    fake = FakeFwbgClient(run_responses=[_empty_run(), _metrics_run()])
+
+    await _run(SessionMaker, sid, fake, reason="re-run after a data fix")
+
+    assert [c[2]["reason"] for c in fake.calls_of("start_run")] == [
+        "re-run after a data fix",
+        "re-run after a data fix",
+    ]
+
+
+async def test_adopts_a_run_still_in_its_preflight(runner_env):
+    SessionMaker, make_strategy, _ = runner_env
+    sid = await make_strategy()
+    fake = FakeFwbgClient(
+        list_runs_response=[
+            {"run_id": "job_preflight", "status": "starting", "strategy_name": "demo_orb_v1__it001"}
+        ],
+    )
+
+    result = await _run(SessionMaker, sid, fake)
+
+    assert result.fwbg_run_id == "job_preflight"
+    assert fake.calls_of("start_run") == []
+
+
+async def test_holdout_does_not_adopt_an_active_ordinary_run(runner_env):
+    """A holdout look must start its own register run, not reuse an iteration."""
+    SessionMaker, _, _ = runner_env
+    fake = FakeFwbgClient(
+        list_runs_response=[
+            {
+                "run_id": "job_iteration",
+                "status": "running",
+                "strategy_name": "demo_orb_v1__it001",
+            },
+        ],
+    )
+
+    async with SessionMaker() as session:
+        result = await Runner(fake, session).execute_backtest(
+            "demo_orb_v1__it001",
+            assets=None,
+            asset_classes=None,
+            agent_run_id=1,
+            research_id="S-0001",
+            note="promote gate holdout look",
+            holdout=True,
+        )
+
+    assert result[0] == "job_test_42"
+    assert len(fake.calls_of("start_run")) == 1
+
+
+async def test_refused_attempt_falls_back_to_the_next(runner_env):
+    SessionMaker, make_strategy, _ = runner_env
+    sid = await make_strategy()  # rungs: class, unconstrained
+    fake = FakeFwbgClient(start_errors=[_refusal(409, "duplicate_fingerprint")])
+
+    result = await _run(SessionMaker, sid, fake)
+
+    assert result.universe["label"] == "unconstrained"
+    assert len(fake.calls_of("start_run")) == 2
+
+
+async def test_all_attempts_refused_fails_the_agent_run_with_the_codes(runner_env):
+    SessionMaker, make_strategy, _ = runner_env
+    sid = await make_strategy()
+    fake = FakeFwbgClient(
+        start_errors=[
+            _refusal(409, "duplicate_fingerprint"),
+            _refusal(422, "after_cutoff", "card_closed"),
+        ],
+    )
+
+    with pytest.raises(RunnerError, match="exhausted"):
+        await _run(SessionMaker, sid, fake)
+
+    error = await _runner_error(SessionMaker)
+    # Every attempt's reason is named, not only the last one.
+    assert "attempt 'class': fwbg research gate (409)" in error
+    assert "[duplicate_fingerprint]" in error
+    assert "attempt 'unconstrained': fwbg research gate (422)" in error
+    assert "[after_cutoff, card_closed]" in error
+
+
+async def _start(SessionMaker, sid, fake) -> None:
+    async with SessionMaker() as session:
+        await Runner(fake, session).execute_backtest(
+            "demo_orb_v1__it001",
+            assets=None,
+            asset_classes=None,
+            agent_run_id=1,
+            research_id="S-0001",
+            note="initial backtest: x",
+        )
+
+
+async def test_start_refusal_surfaces_as_research_gate_refused(runner_env):
+    """The body shapes are covered in test_research_gate.py; this checks the
+    Runner raises the refusal instead of a plain client error."""
+    SessionMaker, make_strategy, _ = runner_env
+    sid = await make_strategy()
+    body = json.dumps({"detail": "research preflight timed out"})
+    fake = FakeFwbgClient(start_errors=[FwbgClientError(504, body)])
+
+    with pytest.raises(ResearchGateRefusedError) as excinfo:
+        await _start(SessionMaker, sid, fake)
+
+    assert excinfo.value.status == 504
+    assert "timed out" in str(excinfo.value)
+
+
+async def test_missing_card_ends_the_run_without_fallback(runner_env):
+    SessionMaker, make_strategy, _ = runner_env
+    sid = await make_strategy(seed_hypothesis=False)
+    fake = FakeFwbgClient()
+
+    with pytest.raises(ResearchCardError):
+        await _run(SessionMaker, sid, fake)
+
+    assert fake.calls_of("start_run") == []
+    assert fake.calls_of("create_research_card") == []
+    error = await _runner_error(SessionMaker)
+    # Tells the operator how to give the lineage a card.
+    assert "research_id" in error
+    assert "hypothesis.json" in error

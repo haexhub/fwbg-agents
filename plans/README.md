@@ -40,6 +40,7 @@ starting, honor its STOP conditions, and update your row when done.
 | 025  | Establish dashboard identity, authorization, and service boundaries | P0 | L | 011 | TODO — completion design for blocked 024 |
 | 026  | Add a versioned, selection-free final evaluation contract | P0 | L | 014, 015, 023 leakage subset | TODO |
 | 027  | Isolate plugin validation and require hash-bound human adoption | P0 | L | 004, 011, 022, 025, 026 | TODO |
+| 028  | Research register run path (fwbg register step 6a): card per lineage, research fields on every run, gate refusals, register holdout look at the promote gate, no-edge Sharpe as 0 — needs fwbg with the research register (origin/develop) | P0 | M | 014, 015 | DONE (branch feat/research-register) |
 
 Status values: TODO | IN PROGRESS | DONE | BLOCKED (with one-line reason) | REJECTED (with one-line rationale)
 

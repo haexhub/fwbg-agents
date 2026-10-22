@@ -169,6 +169,23 @@ async def test_render_family_history_includes_per_asset_series(chain):
     assert "GBPUSD: sharpe -0.20 → -0.20" in history
 
 
+async def test_per_asset_series_counts_a_no_edge_symbol_as_zero(chain, tmp_path):
+    """A no_edge symbol's null sharpe renders as 0.00 (Plan 028 D7); a symbol
+    without a sharpe stays out."""
+    Session, _root_id, child_id = chain
+    results = tmp_path / "data" / "strategies" / "fam_child" / "iteration_001" / "fwbg_results.json"
+    data = json.loads(results.read_text())
+    data["assets"]["USDJPY"] = {"unified_metrics": {"sharpe": None, "total_trades": 0}}
+    data["assets"]["XAUUSD"] = {"unified_metrics": {}}
+    results.write_text(json.dumps(data))
+    async with Session() as s:
+        child = (await s.execute(select(Strategy).where(Strategy.id == child_id))).scalar_one()
+        _depth, history = await render_family_history(s, child)
+
+    assert "USDJPY: sharpe n/a → 0.00" in history
+    assert "XAUUSD: sharpe" not in history
+
+
 async def test_render_family_history_first_iteration(chain):
     Session, _root_id, _child_id = chain
     async with Session() as s:
