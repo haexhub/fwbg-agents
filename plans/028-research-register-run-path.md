@@ -74,7 +74,7 @@ in the cross-asset median; a strategy may be created with an existing card id (D
   (`S-` + 4 digits, else 422) and stores it on the new root's `metadata_json`;
   `ensure_research_id` returns a stored id before building a card. A root with neither a
   `research_id` nor a usable `hypothesis.json` fails its run with a `ResearchCardError` that
-  names both remedies.
+  asks for a valid `hypothesis.json` and names the `research_id` route for new strategies.
 
 ## Tasks
 

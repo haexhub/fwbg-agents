@@ -137,8 +137,8 @@ async def ensure_research_id(session: AsyncSession, strategy: Strategy, fwbg: _C
 def _load_card_hypothesis(root_slug: str) -> _CardHypothesis:
     path = strategy_dir(root_slug) / "iteration_001" / "hypothesis.json"
     remedy = (
-        f"lineage {root_slug} has no research card; create the strategy via "
-        f"POST /strategies with a research_id, or add a valid {path}"
+        f"lineage {root_slug} has no research card; add a valid {path} (new strategies "
+        "can instead be created via POST /strategies with a research_id)"
     )
     try:
         return _CardHypothesis.model_validate_json(path.read_bytes())

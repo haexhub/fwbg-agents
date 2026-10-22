@@ -295,8 +295,13 @@ async def test_missing_hypothesis_raises_without_a_call(db):
 
     assert fake.calls == []
     assert "research_id" not in stored.metadata_json
-    # The operator learns both ways to give the lineage a card.
-    assert "POST /strategies with a research_id" in str(excinfo.value)
+    # The operator learns how to give this lineage a card, and the creation
+    # alternative for new strategies.
+    message = str(excinfo.value)
+    assert "add a valid" in message
+    assert "new strategies can instead be created via POST /strategies with a research_id" in (
+        message
+    )
 
 
 async def test_legacy_hypothesis_uses_the_edge_explanation_as_mechanism(db):
