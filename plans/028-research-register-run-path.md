@@ -85,6 +85,18 @@ in the cross-asset median; a strategy may be created with an existing card id (D
   cost-stress run is recorded as before.
 - A lineage without a card at the promote gate (`ResearchCardError`) is a configuration error,
   not a failed gate run: the AgentRun fails, the error propagates, the attempt budget is untouched.
+- **D11 holdout median (operator, 2026-10-22):** in the promote gate's holdout look, a symbol
+  without holdout metrics (empty `unified_metrics` in fwbg's `get_run`: development not ok, e.g.
+  `no_edge`, or no trades after the cutoff) counts with `sharpe` 0.0; its other metrics stay left
+  out. Iterations and the cost-stress run keep D7.
+- The holdout DSR reads only symbols whose `config.json` has `holdout.evaluated == true`.
+
+**Known limitations:**
+- A gate retry on the very same strategy repeats the identical cost-stress configuration; fwbg
+  refuses it as `duplicate_fingerprint` (the result would be identical anyway). That counts as a
+  failed gate run and uses an attempt. No automatic reason is sent.
+- A holdout look still pending in fwbg (started, not yet recorded) is not among the card's
+  trials, so no reason is sent; fwbg refuses it as `holdout_repeat`, a failed gate run.
 
 ## Tasks
 

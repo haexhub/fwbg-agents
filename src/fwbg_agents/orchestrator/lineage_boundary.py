@@ -12,8 +12,9 @@ strategy in a lineage needs one, and persists it as a sidecar at the lineage
 root's directory. From then on:
 
 - iteration backtests train/test on ``[..., B)`` (exclusive upper bound),
-- the promote gate's holdout backtest runs on ``[B, today)`` (inclusive lower
-  bound),
+- ``B`` is the cutoff of the lineage's auto-created research card (Plan 028
+  D1), so the promote gate's register holdout look develops on data before
+  ``B`` and evaluates the frozen setting once on ``[B, today)``,
 
 so no iteration of the lineage ever sees the holdout data, no matter how many
 generations later the promote gate runs.

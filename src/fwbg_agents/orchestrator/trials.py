@@ -80,28 +80,42 @@ def holdout_pnl_series(run_dir: Path) -> list[float] | None:
     A holdout look writes no fold_results.json; each symbol that traded after
     the cutoff has ``grid_details/<symbol>/trades.json`` whose ``tr_trace``
     holds the frozen setting's raw trade P&L (the unit ``pnl_series`` reads
-    from iteration folds). Kept apart from ``pnl_series`` so a look never
-    enters the trial census. Returns None when any trades.json is unreadable
-    or malformed: a partial series would judge only the readable symbols.
-    Non-finite values are kept for the caller's fail-closed check.
+    from iteration folds), next to a config.json whose ``holdout.evaluated``
+    is true. Kept apart from ``pnl_series`` so a look never enters the trial
+    census. Returns None when any trades.json is unreadable or malformed, or
+    its symbol's config.json does not mark an evaluated holdout look: a
+    partial series would judge only the readable symbols, and other trades
+    are not holdout trades. Non-finite values are kept for the caller's
+    fail-closed check.
     """
     pnls: list[float] = []
     grid = run_dir / "grid_details"
     if not grid.is_dir():
         return pnls
     for path in sorted(grid.glob("*/trades.json")):
-        try:
-            trace = json.loads(path.read_text()).get("tr_trace")
-        except (OSError, ValueError, AttributeError) as exc:
-            log.warning("holdout_pnl_series: unreadable %s (%s)", path, exc)
+        config = _json_object(path.with_name("config.json"))
+        holdout = config.get("holdout") if config is not None else None
+        if not (isinstance(holdout, dict) and holdout.get("evaluated") is True):
+            log.warning("holdout_pnl_series: %s is not from an evaluated holdout look", path)
             return None
+        trades = _json_object(path)
+        trace = trades.get("tr_trace") if trades is not None else None
         if not isinstance(trace, list) or not all(
             isinstance(v, (int, float)) and not isinstance(v, bool) for v in trace
         ):
-            log.warning("holdout_pnl_series: malformed tr_trace in %s", path)
+            log.warning("holdout_pnl_series: unreadable or malformed tr_trace in %s", path)
             return None
         pnls.extend(float(v) for v in trace)
     return pnls
+
+
+def _json_object(path: Path) -> dict | None:
+    """The JSON object in ``path``; None if it is missing, unreadable or no object."""
+    try:
+        data = json.loads(path.read_text())
+    except (OSError, ValueError):
+        return None
+    return data if isinstance(data, dict) else None
 
 
 def per_trade_sharpe(pnls: list[float]) -> float | None:

@@ -57,9 +57,12 @@ _HOLDOUT_PNLS = [1.0, -0.5, 1.2, -0.4, 0.9, -0.6, 1.1, -0.3]
 
 
 def _write_holdout_trades(settings, run_id: str, symbol: str, pnls: list[float]) -> None:
-    """The register holdout look's layout: trades.json, no fold_results.json."""
+    """The register holdout look's layout: config.json with the evaluated
+    holdout block and trades.json, no fold_results.json."""
     sym_dir = settings.fwbg_test_results_dir / run_id / "grid_details" / symbol
     sym_dir.mkdir(parents=True, exist_ok=True)
+    config = {"status": "ok", "holdout": {"cutoff": "2024-01-01", "evaluated": True}}
+    (sym_dir / "config.json").write_text(json.dumps(config))
     (sym_dir / "trades.json").write_text(json.dumps({"tr_trace": pnls, "trades_detailed": []}))
 
 
@@ -77,6 +80,7 @@ class _GateFake:
         holdout_pnls=_HOLDOUT_PNLS,
         trials=(),
         card_error=None,
+        card_response=None,
         start_error=None,
     ):
         self._runs = list(run_responses)
@@ -84,6 +88,7 @@ class _GateFake:
         self._holdout_pnls = holdout_pnls
         self._trials = list(trials)
         self._card_error = card_error
+        self._card_response = card_response
         self._start_error = start_error
         self.start_calls: list[dict] = []
         self.card_calls: list[str] = []
@@ -95,6 +100,8 @@ class _GateFake:
         self.card_calls.append(research_id)
         if self._card_error is not None:
             raise self._card_error
+        if self._card_response is not None:
+            return self._card_response
         return {"card": {"id": research_id}, "trials": self._trials}
 
     async def start_run(self, strategy_name, *, assets=None, asset_classes=None, **kwargs):
@@ -258,6 +265,46 @@ async def test_unreadable_card_fails_the_holdout_without_running_it(gate_env):
     assert holdout.passed is False and holdout.fwbg_run_id is None
     assert "register unreadable" in (holdout.error or "")
     assert [bool(c.get("holdout")) for c in fake.start_calls] == [False]  # only cost stress ran
+
+
+async def test_malformed_card_fails_the_holdout_without_aborting_the_gate(gate_env):
+    Session, sid, _ = gate_env
+    fake = _GateFake([_run()], card_response=["not", "a", "card"])
+    async with Session() as session:
+        strat = (await session.execute(select(Strategy).where(Strategy.id == sid))).scalar_one()
+        result = await run_promote_gate(session, strat, fwbg_client=fake)
+
+    assert result.passed is False
+    holdout = next(r for r in result.runs if r.label == "holdout")
+    assert holdout.passed is False and holdout.fwbg_run_id is None
+    assert [r.label for r in result.runs] == ["holdout", "cost_stress", "dsr"]
+
+
+def _universe_run(sharpe=1.5):
+    """EURUSD with metrics; GBPUSD's development found no edge; USDJPY was
+    looked at but made no trades after the cutoff (fwbg's get_run shape)."""
+    run = _run(sharpe=sharpe)
+    run["assets"]["GBPUSD"] = {"status": "no_edge", "unified_metrics": {}}
+    run["assets"]["USDJPY"] = {"status": "no_unified_trades", "unified_metrics": {}}
+    return run
+
+
+async def test_holdout_symbol_without_holdout_metrics_counts_as_no_edge(gate_env):
+    """A universe member without holdout metrics showed no edge after the
+    cutoff; leaving it out would let the symbols that worked carry the median."""
+    Session, sid, _ = gate_env
+    fake = _GateFake([_universe_run(), _universe_run()])
+    async with Session() as session:
+        strat = (await session.execute(select(Strategy).where(Strategy.id == sid))).scalar_one()
+        result = await run_promote_gate(session, strat, fwbg_client=fake)
+
+    holdout = next(r for r in result.runs if r.label == "holdout")
+    assert holdout.metrics["sharpe"] == 0.0  # median of 1.5, 0.0, 0.0
+    assert holdout.metrics["profit_factor"] == 1.5  # other metrics: EURUSD only
+    assert holdout.passed is False
+    # The cost-stress development run keeps the shared rule (D7): left out.
+    cost = next(r for r in result.runs if r.label == "cost_stress")
+    assert cost.metrics["sharpe"] == 1.5
 
 
 async def test_gate_refusal_counts_as_failed_gate_run(gate_env):
@@ -649,9 +696,9 @@ async def test_dsr_reads_the_holdout_look_trades(gate_env):
     assert result.dsr is not None and result.dsr > 0.5
 
 
-async def test_dsr_fails_closed_without_a_holdout_trade_series(gate_env):
-    """No readable holdout trades means the DSR cannot vouch for the look: fail,
-    even on a cold start."""
+async def test_dsr_fails_closed_on_a_holdout_look_without_trades(gate_env):
+    """No holdout trades means the DSR cannot vouch for the look: fail, even on
+    a cold start."""
     Session, sid, _ = gate_env
     fake = _GateFake([_run(), _run()], holdout_pnls=None)  # no trades.json written
     async with Session() as session:
@@ -661,7 +708,7 @@ async def test_dsr_fails_closed_without_a_holdout_trade_series(gate_env):
     assert result.passed is False
     dsr = next(r for r in result.runs if r.label == "dsr")
     assert dsr.passed is False
-    assert any("no holdout trade series" in f for f in dsr.failures)
+    assert any("made no trades" in f for f in dsr.failures)
 
 
 async def test_dsr_fails_closed_on_a_single_holdout_trade(gate_env):
@@ -691,7 +738,7 @@ async def test_dsr_fails_closed_on_an_unreadable_holdout_trade_file(gate_env):
 
     dsr = next(r for r in result.runs if r.label == "dsr")
     assert dsr.passed is False
-    assert any("no holdout trade series" in f for f in dsr.failures)
+    assert any("unreadable or not from an evaluated holdout look" in f for f in dsr.failures)
 
 
 async def _seed_trial_sharpes(Session) -> None:

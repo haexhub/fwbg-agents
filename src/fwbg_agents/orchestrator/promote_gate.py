@@ -4,8 +4,8 @@ Before a BACKTESTED strategy may advance to paper trading it must clear two
 extra sequential backtests (one fwbg run at a time — no fan-out):
 
 1. **Holdout** — a register holdout look of the same universe (Plan 028
-   D6): fwbg develops on data before the research card's cutoff (the
-   lineage's frozen boundary ``B``, where every iteration ended) and
+   D6): fwbg develops on data before the research card's cutoff (``B``, the
+   lineage's frozen boundary, for an auto-created card) and
    evaluates the frozen setting once on ``[cutoff, today)``, data no
    iteration of this lineage ever saw. Catches in-sample overfitting from the
    iteration chain that the in-sample metrics cannot. A further look on the
@@ -129,12 +129,31 @@ async def _holdout_reason(fwbg_client, research_id: str, slug: str) -> str | Non
     # holdout_repeat — a failed gate run. Upgrade path: fwbg lists the kind of
     # the card's pending runs.
     card = await fwbg_client.get_research_card(research_id)
-    trials = card.get("trials")
+    trials = card.get("trials") if isinstance(card, dict) else None
     if not isinstance(trials, list):
         raise ValueError(f"research card {research_id} carries no trial list")
     if any(isinstance(trial, dict) and trial.get("kind") == "holdout" for trial in trials):
         return f"promote gate: further holdout look ({slug})"
     return None
+
+
+def _holdout_median_metrics(run_data: dict[str, Any]) -> dict[str, float]:
+    """Cross-asset median of a holdout look, where every symbol counts.
+
+    A symbol of the look without holdout metrics (its development found no
+    edge or failed, or it made no trades after the cutoff) has empty
+    ``unified_metrics`` in fwbg's ``get_run`` and counts with a sharpe of 0.0:
+    it showed no edge after the cutoff, and leaving it out would let the
+    symbols that worked carry the median. Its other metrics stay left out.
+    """
+    assets = {
+        sym: asset
+        if asset.get("unified_metrics")
+        else {**asset, "unified_metrics": {"sharpe": 0.0}}
+        for sym, asset in (run_data.get("assets") or {}).items()
+        if isinstance(asset, dict)
+    }
+    return _median_metrics_across_assets({"assets": assets})
 
 
 def _failed_gate_run(agent_run_id: int, label: str, exc: Exception) -> GateRun:
@@ -149,19 +168,29 @@ async def _run_dsr_check(
 
     Returns (passed, dsr, n_trials, failures). Without a holdout job (the look
     itself failed, which already fails the gate) there is nothing to judge.
-    A look without a readable trade series, or one too short or flat for the
-    moments, fails closed, as do non-finite inputs. The visible cold-start
+    Unreadable holdout trades, a look without trades and a series too short
+    or flat for the moments each fail closed, as do non-finite inputs. The visible cold-start
     branch passes with fewer than two historical Sharpes.
     """
     if not holdout_job_id:
         return True, None, None, []
     raw_pnls = holdout_pnl_series(settings.fwbg_test_results_dir / holdout_job_id)
+    if raw_pnls is None:
+        return (
+            False,
+            None,
+            None,
+            [
+                f"dsr: holdout trades of run {holdout_job_id} unreadable or not from an "
+                "evaluated holdout look; failing closed"
+            ],
+        )
     if not raw_pnls:
         return (
             False,
             None,
             None,
-            [f"dsr: no holdout trade series readable for run {holdout_job_id}; failing closed"],
+            [f"dsr: holdout look {holdout_job_id} made no trades; failing closed"],
         )
     if any(not math.isfinite(value) for value in raw_pnls):
         counts = await count_trials(session)
@@ -257,6 +286,11 @@ async def run_promote_gate(
         # the holdout look, and fwbg clamps the cost-stress run to it.
         specs: list[tuple[str, str, dict[str, Any]]] = [
             ("holdout", "promote_holdout", {"holdout": True, "note": HOLDOUT_NOTE}),
+            # ponytail: a gate retry on the very same strategy repeats this exact
+            # configuration; fwbg refuses it as duplicate_fingerprint (the result
+            # would be identical anyway), a failed gate run that uses an attempt.
+            # Upgrade path: reuse the earlier cost-stress result for the same
+            # fingerprint instead of rerunning it.
             (
                 "cost_stress",
                 "promote_cost_stress",
@@ -298,11 +332,11 @@ async def run_promote_gate(
                     run_data=run_data,
                     run_dir=settings.fwbg_test_results_dir / job_id,
                 )
-            # ponytail: a holdout symbol that was looked at but made no trades
-            # after the cutoff (no_unified_trades) has no unified_metrics and is
-            # left out of the median instead of counting as no edge. Upgrade
-            # path: count an evaluated symbol without trades as zero.
-            metrics = _median_metrics_across_assets(run_data)
+            metrics = (
+                _holdout_median_metrics(run_data)
+                if label == "holdout"
+                else _median_metrics_across_assets(run_data)
+            )
             ok, failures = check_criteria_section(
                 asset_class=strategy.asset_class,  # type: ignore[arg-type]  # set for any BACKTESTED strategy
                 metrics=metrics,
