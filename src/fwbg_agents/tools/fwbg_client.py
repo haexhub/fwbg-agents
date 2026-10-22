@@ -149,8 +149,8 @@ class FwbgClient:
         start_date: str | None = None,
         end_date: str | None = None,
         cost_multiplier: float | None = None,
-        research_id: str | None = None,
-        note: str | None = None,
+        research_id: str,
+        note: str,
         reason: str | None = None,
         holdout: bool = False,
     ) -> dict[str, Any]:
@@ -160,9 +160,9 @@ class FwbgClient:
         gating); ``cost_multiplier`` scales spread/slippage (cost-stress gating).
         ``research_id`` (register card ``S-NNNN``) and ``note`` (single line)
         are required by fwbg's research gate, which refuses a start without
-        them; each is omitted from the body when None. ``reason`` justifies a
-        deliberate repeat; ``holdout`` requests the card's holdout look. A gate
-        refusal (409/422) or preflight timeout (504) raises FwbgClientError.
+        them. ``reason`` justifies a deliberate repeat; ``holdout`` requests
+        the card's holdout look. A gate refusal (409/422) or preflight timeout
+        (504) raises FwbgClientError.
         """
         body: dict[str, Any] = {"strategy_name": strategy_name}
         if asset_classes is not None:
@@ -177,10 +177,8 @@ class FwbgClient:
             body["end_date"] = end_date
         if cost_multiplier is not None:
             body["cost_multiplier"] = cost_multiplier
-        if research_id is not None:
-            body["research_id"] = research_id
-        if note is not None:
-            body["note"] = note
+        body["research_id"] = research_id
+        body["note"] = note
         if reason is not None:
             body["reason"] = reason
         if holdout:

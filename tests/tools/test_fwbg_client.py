@@ -68,11 +68,16 @@ async def test_start_run_posts_strategy_name_and_returns_job():
     http = _mock_client(handler)
     client = FwbgClient(base_url="http://fwbg-test", http=http)
 
-    job = await client.start_run("demo_v1", asset_classes=["FOREX"])
+    job = await client.start_run("demo_v1", asset_classes=["FOREX"], research_id="S-0001", note="n")
 
     assert captured["method"] == "POST"
     assert captured["url"].endswith("/api/runs/start")
-    assert captured["body"] == {"strategy_name": "demo_v1", "asset_classes": ["FOREX"]}
+    assert captured["body"] == {
+        "strategy_name": "demo_v1",
+        "asset_classes": ["FOREX"],
+        "research_id": "S-0001",
+        "note": "n",
+    }
     assert job["job_id"] == "20260624_120000_abcdef"
     assert job["status"] == "running"
     await http.aclose()
@@ -88,9 +93,9 @@ async def test_start_run_omits_asset_classes_when_none():
     http = _mock_client(handler)
     client = FwbgClient(base_url="http://fwbg-test", http=http)
 
-    await client.start_run("demo_v1")
+    await client.start_run("demo_v1", research_id="S-0001", note="n")
 
-    assert captured["body"] == {"strategy_name": "demo_v1"}
+    assert captured["body"] == {"strategy_name": "demo_v1", "research_id": "S-0001", "note": "n"}
     await http.aclose()
 
 

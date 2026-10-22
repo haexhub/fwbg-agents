@@ -17,16 +17,21 @@ Flow:
        strategy file on its side). Normally the research flow has already
        published it — a 409 means it's there (possibly edited by the user in
        the dashboard) and is left untouched.
-    3. For each universe attempt (most-specific first):
+    3. Resolve the lineage's research card id (created on its first run; see
+       orchestrator/research_card.py). Without one the run fails: fwbg
+       refuses every start that names no card.
+    4. For each universe attempt (most-specific first):
          a. ensure data for the attempt's symbols (drop the unavailable ones);
-         b. fwbg_client.start_run(name, assets=..., asset_classes=...) → job_id;
+         b. fwbg_client.start_run(name, assets=..., asset_classes=...,
+            research_id=..., note=...) → job_id. fwbg's research register
+            gates the start; a refusal ends only this attempt;
          c. poll get_progress() until terminal / timeout;
          d. on completion, fetch the run and extract metrics.
        The first attempt that produces non-empty metrics wins; others fall
        through to the next rung.
-    4. On success: write fwbg_results.json, transition to BACKTESTED (payload
+    5. On success: write fwbg_results.json, transition to BACKTESTED (payload
        records the winning universe), mark AgentRun done.
-    5. If every attempt is exhausted: mark AgentRun failed; strategy stays
+    6. If every attempt is exhausted: mark AgentRun failed; strategy stays
        PROPOSED.
 
 Metrics extraction: fwbg returns one unified_metrics dict per symbol. M3 picks
@@ -42,6 +47,7 @@ import json
 import logging
 import re
 import time
+from dataclasses import dataclass
 from datetime import date
 from pathlib import Path
 from typing import Any, Protocol
@@ -56,6 +62,7 @@ from fwbg_agents.orchestrator.lineage_boundary import get_or_freeze_boundary
 from fwbg_agents.orchestrator.metrics import (
     median_metrics_across_assets as _median_metrics_across_assets,
 )
+from fwbg_agents.orchestrator.research_card import ensure_research_id, run_note
 from fwbg_agents.orchestrator.strategy_validator import signal_model_has_source
 from fwbg_agents.orchestrator.trade_diagnostics import compute_trade_diagnostics
 from fwbg_agents.orchestrator.trials import record_trial_stat
@@ -113,6 +120,79 @@ class RunnerConfigError(RunnerError):
         self.dependency = dependency
 
 
+@dataclass(frozen=True)
+class GateDenial:
+    """One reason fwbg's research gate gave for refusing a run."""
+
+    code: str
+    message: str
+
+
+class ResearchGateRefused(RunnerError):  # noqa: N818  # name fixed by Plan 028 D5
+    """fwbg's research register refused a run start (Plan 028 D5).
+
+    Covers a gate refusal (409/422 with ``denials``), a preflight that failed
+    before the gate (422 with ``output``) and a preflight timeout (504). Being
+    a RunnerError, it ends only the current universe attempt: the next one
+    has another fingerprint.
+    """
+
+    def __init__(
+        self,
+        status: int,
+        *,
+        detail: str,
+        denials: list[GateDenial] | None = None,
+        output: str | None = None,
+    ):
+        self.status = status
+        self.detail = detail
+        self.denials = denials or []
+        self.output = output
+        message = f"fwbg research gate ({status}): {detail}"
+        if self.denials:
+            message += f" [{', '.join(d.code for d in self.denials)}]"
+            message += "; " + "; ".join(d.message for d in self.denials)
+        if output:
+            message += f"; output: {' '.join(output.split())}"
+        super().__init__(message)
+
+
+def _research_gate_refusal(exc: FwbgClientError) -> ResearchGateRefused | None:
+    """Translate a /api/runs/start error into a refusal, or None if it is none.
+
+    fwbg's refusal body is ``{"detail": {"message", "denials" | "output"}}``.
+    A 409/422 of another shape (e.g. FastAPI's request validation, whose
+    ``detail`` is a list) stays a client error.
+    """
+    try:
+        body = json.loads(exc.body)
+    except ValueError:
+        body = None
+    detail = body.get("detail") if isinstance(body, dict) else None
+    if exc.status == 504:
+        return ResearchGateRefused(
+            504, detail=detail if isinstance(detail, str) else "research preflight timed out"
+        )
+    if exc.status not in (409, 422) or not isinstance(detail, dict):
+        return None
+    message = detail.get("message")
+    if not isinstance(message, str):
+        return None
+    raw_denials = detail.get("denials")
+    if isinstance(raw_denials, list):
+        denials = [
+            GateDenial(code=str(d.get("code")), message=str(d.get("message", "")))
+            for d in raw_denials
+            if isinstance(d, dict)
+        ]
+        return ResearchGateRefused(exc.status, detail=message, denials=denials)
+    output = detail.get("output")
+    return ResearchGateRefused(
+        exc.status, detail=message, output=output if isinstance(output, str) else None
+    )
+
+
 # fwbg's pipeline builder rejects a plugin whose declared dependency is absent
 # with a stable message; we parse it to drive the deterministic auto-repair.
 _DEP_ERROR_RE = re.compile(
@@ -148,6 +228,13 @@ class _FwbgClientProto(Protocol):
         start_date: str | None = ...,
         end_date: str | None = ...,
         cost_multiplier: float | None = ...,
+        research_id: str,
+        note: str,
+        reason: str | None = ...,
+        holdout: bool = ...,
+    ) -> dict[str, Any]: ...
+    async def create_research_card(
+        self, *, title: str, tags: list[str], hypothesis: str, mechanism: str, cutoff: str
     ) -> dict[str, Any]: ...
     async def list_runs(self) -> list[dict[str, Any]]: ...
     async def get_progress(self, run_id: str) -> dict[str, Any]: ...
@@ -175,6 +262,8 @@ class RunnerResult(BaseModel):
 
 
 _TERMINAL_FWBG_STATUSES = frozenset({"completed", "failed", "error", "cancelled"})
+# A run is "starting" while fwbg's research preflight runs, then "running".
+_ACTIVE_FWBG_STATUSES = frozenset({"starting", "running"})
 
 
 def _months_ago_iso(months: int) -> str:
@@ -220,8 +309,12 @@ class Runner:
         self.fwbg = fwbg_client
         self.session = session
 
-    async def run(self, strategy: Strategy) -> RunnerResult:
-        """Execute backtests across universe attempts and return the first successful result."""
+    async def run(self, strategy: Strategy, *, reason: str | None = None) -> RunnerResult:
+        """Execute backtests across universe attempts and return the first successful result.
+
+        ``reason`` justifies a deliberate repeat to fwbg's research register
+        and is sent with every start of this run.
+        """
         ar = await start_agent_run(self.session, agent_name="runner", strategy_id=strategy.id)
 
         try:
@@ -249,6 +342,8 @@ class Runner:
                     "or allowed_hours/allowed_days) — not dispatching a backtest "
                     "that would produce zero results."
                 )
+
+            research_id = await ensure_research_id(self.session, strategy, self.fwbg)
 
             # Ensure the strategy exists in fwbg (once for all attempts). The
             # research flow normally publishes it right after translation; a
@@ -288,6 +383,9 @@ class Runner:
                     log.info("runner: %s; falling back", last_reason)
                     continue
 
+                note = await run_note(
+                    self.session, strategy, attempt_label=attempt.label, assets=assets
+                )
                 log.info(
                     "runner: attempt %r for %s (assets=%s, asset_classes=%s)",
                     attempt.label,
@@ -307,6 +405,9 @@ class Runner:
                         # orchestrator/lineage_boundary.py), not recomputed
                         # from today() on every run.
                         end_date=boundary,
+                        research_id=research_id,
+                        note=note,
+                        reason=reason,
                     )
                 except RunnerError as exc:
                     last_reason = f"attempt {attempt.label!r}: {exc}"
@@ -485,6 +586,9 @@ class Runner:
         start_date: str | None = None,
         end_date: str | None = None,
         cost_multiplier: float | None = None,
+        research_id: str,
+        note: str,
+        reason: str | None = None,
     ) -> str:
         """Get a job_id for this strategy: adopt an already-active fwbg run
         of the same strategy, or start a new one — waiting while fwbg's
@@ -496,7 +600,9 @@ class Runner:
         The contract with fwbg is a single backtest slot: the paired server is
         configured with FWBG_MAX_CONCURRENT_RUNS=1 (its default) and answers
         429 while busy — the intended behaviour then is to wait for the slot,
-        not to burn a universe attempt.
+        not to burn a universe attempt. A run still in fwbg's research
+        preflight ("starting") is active too. A research gate refusal raises
+        ResearchGateRefused.
         """
         deadline = time.monotonic() + settings.runner_poll_timeout_seconds
         while True:
@@ -504,7 +610,8 @@ class Runner:
                 active = [
                     r
                     for r in await self.fwbg.list_runs()
-                    if r.get("status") == "running" and r.get("strategy_name") == fwbg_name
+                    if r.get("status") in _ACTIVE_FWBG_STATUSES
+                    and r.get("strategy_name") == fwbg_name
                 ]
             except (httpx.TransportError, FwbgClientError):
                 active = []
@@ -525,9 +632,15 @@ class Runner:
                     start_date=start_date,
                     end_date=end_date,
                     cost_multiplier=cost_multiplier,
+                    research_id=research_id,
+                    note=note,
+                    reason=reason,
                 )
             except FwbgClientError as exc:
                 if exc.status != 429:
+                    refusal = _research_gate_refusal(exc)
+                    if refusal is not None:
+                        raise refusal from exc
                     raise
                 if time.monotonic() >= deadline:
                     raise RunnerError(
@@ -551,9 +664,12 @@ class Runner:
         start_date: str | None = None,
         end_date: str | None = None,
         cost_multiplier: float | None = None,
+        research_id: str,
+        note: str,
+        reason: str | None = None,
     ) -> tuple[str, dict[str, Any]]:
         """Start one fwbg run and poll it to completion. Raises RunnerError on
-        a failed/errored run or a polling timeout."""
+        a failed/errored run, a research gate refusal or a polling timeout."""
         job_id = await self._acquire_run(
             fwbg_name,
             assets=assets,
@@ -561,6 +677,9 @@ class Runner:
             start_date=start_date,
             end_date=end_date,
             cost_multiplier=cost_multiplier,
+            research_id=research_id,
+            note=note,
+            reason=reason,
         )
         # Anchor event for the dashboard's link to /runs/<fwbg_run_id>.
         emit_run_event(

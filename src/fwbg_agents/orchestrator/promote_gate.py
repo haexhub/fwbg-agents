@@ -49,6 +49,7 @@ from fwbg_agents.agents.runner import Runner, RunnerError
 from fwbg_agents.config import settings
 from fwbg_agents.orchestrator.lifecycle import check_criteria_section, strategy_dir
 from fwbg_agents.orchestrator.lineage_boundary import get_or_freeze_boundary, lineage_root
+from fwbg_agents.orchestrator.research_card import ensure_research_id
 from fwbg_agents.orchestrator.trials import (
     count_trials,
     deflated_sharpe_ratio,
@@ -198,6 +199,7 @@ async def run_promote_gate(
             await finish_agent_run(session, ar, status=AgentRunStatus.DONE)
             return result
 
+        research_id = await ensure_research_id(session, strategy, fwbg_client)
         runner = Runner(fwbg_client, session)
         fwbg_name = _fwbg_name(strategy)
         assets = _universe_assets(strategy) or None
@@ -205,8 +207,23 @@ async def run_promote_gate(
         holdout_start = await get_or_freeze_boundary(session, strategy)
 
         specs: list[tuple[str, str, dict[str, Any]]] = [
-            ("holdout", "promote_holdout", {"start_date": holdout_start, "end_date": today}),
-            ("cost_stress", "promote_cost_stress", {"cost_multiplier": COST_STRESS_MULTIPLIER}),
+            (
+                "holdout",
+                "promote_holdout",
+                {
+                    "start_date": holdout_start,
+                    "end_date": today,
+                    "note": "promote gate holdout look",
+                },
+            ),
+            (
+                "cost_stress",
+                "promote_cost_stress",
+                {
+                    "cost_multiplier": COST_STRESS_MULTIPLIER,
+                    "note": f"promote gate cost stress x{COST_STRESS_MULTIPLIER:g}",
+                },
+            ),
         ]
         runs: list[GateRun] = []
         holdout_job_id: str | None = None
@@ -218,6 +235,7 @@ async def run_promote_gate(
                     assets=assets,
                     asset_classes=None,
                     agent_run_id=ar.id,
+                    research_id=research_id,
                     **kwargs,
                 )
             except RunnerError as exc:

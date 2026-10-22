@@ -25,12 +25,14 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from fwbg_agents.agents.runner import (
+    ResearchGateRefused,
     Runner,
     RunnerError,
     UnrunnableStrategyError,
     _median_metrics_across_assets,
     _months_ago_iso,
 )
+from fwbg_agents.orchestrator.research_card import ResearchCardError
 from fwbg_agents.persistence.database import Base
 from fwbg_agents.persistence.models import (
     AgentRun,
@@ -134,6 +136,10 @@ class FakeFwbgClient:
     def calls_of(self, name: str) -> list[tuple[str, tuple, dict]]:
         return [c for c in self.calls if c[0] == name]
 
+    async def create_research_card(self, **kwargs):
+        self.calls.append(("create_research_card", (), kwargs))
+        return {"card": {"id": "S-0001"}}
+
     async def create_strategy(self, name, data):
         self.calls.append(("create_strategy", (name,), {"data": data}))
         if self.create_strategy_error is not None:
@@ -189,6 +195,21 @@ class FakeFwbgClient:
         return {"status": "ready"}
 
 
+_HYPOTHESIS = {
+    "title": "Opening range breakout",
+    "tags": ["orb"],
+    "hypothesis": "The opening range break carries the session's direction.",
+    "edge_mechanism": "Overnight orders cluster at the open.",
+}
+
+
+def _refusal(status: int, *codes: str) -> FwbgClientError:
+    """A research gate refusal of /api/runs/start, as fwbg sends it."""
+    denials = [{"code": c, "status": status, "message": f"{c} denied"} for c in codes]
+    detail = {"message": "research gate refused the run", "denials": denials}
+    return FwbgClientError(status, json.dumps({"detail": detail}))
+
+
 # ---------------------------------------------------------------------------
 
 
@@ -211,7 +232,12 @@ async def runner_env(tmp_path, monkeypatch):
     Session = async_sessionmaker(engine, expire_on_commit=False)
 
     async def make_strategy(
-        *, slug="demo_orb_v1", asset_class="FOREX", suggested_universe=None, seed_json=True
+        *,
+        slug="demo_orb_v1",
+        asset_class="FOREX",
+        suggested_universe=None,
+        seed_json=True,
+        seed_hypothesis=True,
     ) -> int:
         async with Session() as setup:
             now = datetime.now(UTC)
@@ -233,6 +259,10 @@ async def runner_env(tmp_path, monkeypatch):
             it_dir = settings.data_dir / "strategies" / slug / "iteration_001"
             it_dir.mkdir(parents=True, exist_ok=True)
             (it_dir / "strategy.json").write_text(json.dumps({"name": slug}))
+        if seed_hypothesis:
+            it_dir = settings.data_dir / "strategies" / slug / "iteration_001"
+            it_dir.mkdir(parents=True, exist_ok=True)
+            (it_dir / "hypothesis.json").write_text(json.dumps(_HYPOTHESIS))
         return sid
 
     yield Session, make_strategy, tmp_path
@@ -240,10 +270,19 @@ async def runner_env(tmp_path, monkeypatch):
     await engine.dispose()
 
 
-async def _run(SessionMaker, sid, fake) -> Any:
+async def _run(SessionMaker, sid, fake, **kwargs) -> Any:
     async with SessionMaker() as session:
         s = (await session.execute(select(Strategy).where(Strategy.id == sid))).scalar_one()
-        return await Runner(fake, session).run(s)
+        return await Runner(fake, session).run(s, **kwargs)
+
+
+async def _runner_error(SessionMaker) -> str:
+    async with SessionMaker() as session:
+        ar = (
+            await session.execute(select(AgentRun).where(AgentRun.agent_name == "runner"))
+        ).scalar_one()
+    assert ar.status == AgentRunStatus.FAILED.value
+    return ar.error or ""
 
 
 async def test_runner_happy_path_transitions_to_backtested(runner_env):
@@ -774,3 +813,174 @@ async def test_runner_dispatches_signal_model_with_time_filter(runner_env):
 
     assert result.fwbg_run_id == "job_test_42"
     assert fake.calls_of("start_run")  # dispatched
+
+
+# ---------------------------------------------------------------------------
+# Research register (Plan 028): every start carries the lineage's card id and a
+# note per universe attempt; a gate refusal ends only that attempt.
+# ---------------------------------------------------------------------------
+
+
+async def test_register_fields_reach_every_start(runner_env):
+    SessionMaker, make_strategy, _ = runner_env
+    sid = await make_strategy(
+        suggested_universe=[{"scope": "symbol", "value": "EURUSD", "rationale": "x"}],
+    )
+    fake = FakeFwbgClient(run_responses=[_empty_run(), _metrics_run()])
+
+    await _run(SessionMaker, sid, fake)
+
+    assert len(fake.calls_of("create_research_card")) == 1  # once per run, not per attempt
+    first, second = (c[2] for c in fake.calls_of("start_run"))
+    assert first["research_id"] == second["research_id"] == "S-0001"
+    assert first["note"] == "initial backtest: Opening range breakout; universe suggested: EURUSD"
+    assert second["note"] == "initial backtest: Opening range breakout; universe class"
+    assert first["reason"] is None
+
+
+async def test_reason_reaches_every_start(runner_env):
+    SessionMaker, make_strategy, _ = runner_env
+    sid = await make_strategy()
+    fake = FakeFwbgClient(run_responses=[_empty_run(), _metrics_run()])
+
+    await _run(SessionMaker, sid, fake, reason="re-run after a data fix")
+
+    assert [c[2]["reason"] for c in fake.calls_of("start_run")] == [
+        "re-run after a data fix",
+        "re-run after a data fix",
+    ]
+
+
+async def test_adopts_a_run_still_in_its_preflight(runner_env):
+    SessionMaker, make_strategy, _ = runner_env
+    sid = await make_strategy()
+    fake = FakeFwbgClient(
+        list_runs_response=[
+            {"run_id": "job_preflight", "status": "starting", "strategy_name": "demo_orb_v1__it001"}
+        ],
+    )
+
+    result = await _run(SessionMaker, sid, fake)
+
+    assert result.fwbg_run_id == "job_preflight"
+    assert fake.calls_of("start_run") == []
+
+
+async def test_refused_attempt_falls_back_to_the_next(runner_env):
+    SessionMaker, make_strategy, _ = runner_env
+    sid = await make_strategy()  # rungs: class, unconstrained
+    fake = FakeFwbgClient(start_errors=[_refusal(409, "duplicate_fingerprint")])
+
+    result = await _run(SessionMaker, sid, fake)
+
+    assert result.universe["label"] == "unconstrained"
+    assert len(fake.calls_of("start_run")) == 2
+
+
+async def test_all_attempts_refused_fails_the_agent_run_with_the_codes(runner_env):
+    SessionMaker, make_strategy, _ = runner_env
+    sid = await make_strategy()
+    fake = FakeFwbgClient(
+        start_errors=[
+            _refusal(409, "duplicate_fingerprint"),
+            _refusal(422, "after_cutoff", "card_closed"),
+        ],
+    )
+
+    with pytest.raises(RunnerError, match="exhausted"):
+        await _run(SessionMaker, sid, fake)
+
+    error = await _runner_error(SessionMaker)
+    assert "after_cutoff" in error
+    assert "card_closed" in error
+
+
+async def _start(SessionMaker, sid, fake) -> None:
+    async with SessionMaker() as session:
+        await Runner(fake, session).execute_backtest(
+            "demo_orb_v1__it001",
+            assets=None,
+            asset_classes=None,
+            agent_run_id=1,
+            research_id="S-0001",
+            note="initial backtest: x",
+        )
+
+
+async def test_gate_refusal_keeps_status_codes_and_messages(runner_env):
+    SessionMaker, make_strategy, _ = runner_env
+    sid = await make_strategy()
+    fake = FakeFwbgClient(start_errors=[_refusal(409, "duplicate_fingerprint", "after_cutoff")])
+
+    with pytest.raises(ResearchGateRefused) as excinfo:
+        await _start(SessionMaker, sid, fake)
+
+    refused = excinfo.value
+    assert refused.status == 409
+    assert [(d.code, d.message) for d in refused.denials] == [
+        ("duplicate_fingerprint", "duplicate_fingerprint denied"),
+        ("after_cutoff", "after_cutoff denied"),
+    ]
+    assert "duplicate_fingerprint, after_cutoff" in str(refused)
+
+
+async def test_preflight_failure_is_a_refusal_with_its_message(runner_env):
+    SessionMaker, make_strategy, _ = runner_env
+    sid = await make_strategy()
+    detail = {"message": "research preflight failed", "output": "cannot load strategy"}
+    fake = FakeFwbgClient(start_errors=[FwbgClientError(422, json.dumps({"detail": detail}))])
+
+    with pytest.raises(ResearchGateRefused) as excinfo:
+        await _start(SessionMaker, sid, fake)
+
+    assert excinfo.value.status == 422
+    assert excinfo.value.denials == []
+    assert excinfo.value.output == "cannot load strategy"
+    assert "research preflight failed" in str(excinfo.value)
+    assert "cannot load strategy" in str(excinfo.value)
+
+
+async def test_preflight_timeout_is_a_refusal(runner_env):
+    SessionMaker, make_strategy, _ = runner_env
+    sid = await make_strategy()
+    body = json.dumps({"detail": "research preflight timed out"})
+    fake = FakeFwbgClient(start_errors=[FwbgClientError(504, body)])
+
+    with pytest.raises(ResearchGateRefused) as excinfo:
+        await _start(SessionMaker, sid, fake)
+
+    assert excinfo.value.status == 504
+    assert "timed out" in str(excinfo.value)
+
+
+@pytest.mark.parametrize(
+    ("status", "body"),
+    [
+        (500, "Internal Server Error"),
+        # FastAPI's own request validation: a list detail, not the gate's shape.
+        (422, json.dumps({"detail": [{"loc": ["body", "note"], "msg": "field required"}]})),
+    ],
+)
+async def test_other_start_errors_stay_client_errors(runner_env, status, body):
+    SessionMaker, make_strategy, _ = runner_env
+    sid = await make_strategy()
+    fake = FakeFwbgClient(start_errors=[FwbgClientError(status, body)])
+
+    with pytest.raises(FwbgClientError) as excinfo:
+        await _start(SessionMaker, sid, fake)
+
+    assert not isinstance(excinfo.value, ResearchGateRefused)
+    assert excinfo.value.status == status
+
+
+async def test_missing_card_ends_the_run_without_fallback(runner_env):
+    SessionMaker, make_strategy, _ = runner_env
+    sid = await make_strategy(seed_hypothesis=False)
+    fake = FakeFwbgClient()
+
+    with pytest.raises(ResearchCardError):
+        await _run(SessionMaker, sid, fake)
+
+    assert fake.calls_of("start_run") == []
+    assert fake.calls_of("create_research_card") == []
+    assert "hypothesis.json" in await _runner_error(SessionMaker)

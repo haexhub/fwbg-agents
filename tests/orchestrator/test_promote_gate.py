@@ -113,6 +113,7 @@ async def gate_env(tmp_path, monkeypatch):
             iteration_count=0,
             asset_class="FOREX",
             strategy_family="ORB",
+            metadata_json={"research_id": "S-0001"},
             created_at=now,
             updated_at=now,
         )
@@ -147,6 +148,17 @@ async def test_gate_passes_when_both_runs_clear(gate_env):
     # missing data).
     dsr = next(r for r in result.runs if r.label == "dsr")
     assert dsr.passed is True
+
+
+async def test_gate_runs_carry_the_lineage_card_and_a_note(gate_env):
+    Session, sid, _ = gate_env
+    fake = _GateFake([_run(), _run()])
+    async with Session() as session:
+        strat = (await session.execute(select(Strategy).where(Strategy.id == sid))).scalar_one()
+        await run_promote_gate(session, strat, fwbg_client=fake)
+
+    assert [c["research_id"] for c in fake.start_calls] == ["S-0001", "S-0001"]
+    assert all(c["note"].strip() for c in fake.start_calls)
 
 
 async def test_gate_fails_on_weak_holdout(gate_env):
