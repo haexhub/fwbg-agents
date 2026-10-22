@@ -5,8 +5,12 @@ Pure transport layer — no lifecycle logic. The Runner agent owns the
 HTTP calls and parses JSON.
 
 fwbg's API (see ~/Projekte/fwbg/src/fwbg/api/runs.py):
-- POST /api/runs/start         body: {strategy_name, asset_classes?, ...}
+- POST /api/runs/start         body: {strategy_name, research_id, note,
+                                      reason?, holdout?, asset_classes?, ...}
                                returns: {job_id, status, ...}
+- POST /api/research           body: {title, tags, hypothesis, mechanism, cutoff}
+                               returns: {card, warning?}
+- GET  /api/research/{id}      returns: {card, trials, ...}
 - GET  /api/runs/{run_id}/progress
                                returns: {status, progress?, phase?, ...}
 - GET  /api/runs/{run_id}      returns: {run_id, status, assets, ...}
@@ -39,6 +43,11 @@ log = logging.getLogger(__name__)
 # used to kill a backtest that was still running fine on the fwbg side.
 _GET_RETRIES = 3
 _GET_RETRY_BACKOFF_SECONDS = 1.0
+
+# fwbg answers /api/runs/start only after its research-register preflight,
+# which may take up to 120 s (fwbg's PREFLIGHT_TIMEOUT); the margin keeps the
+# client from abandoning a start that fwbg is still about to accept.
+_START_RUN_TIMEOUT_SECONDS = 150.0
 
 
 def safe_fwbg_strategy_name(slug: str, iteration: int) -> str:
@@ -115,9 +124,16 @@ class FwbgClient:
             return r.json()
         raise AssertionError("unreachable")
 
-    async def _post(self, path: str, body: dict[str, Any]) -> dict[str, Any]:
-        """Perform a POST request and return the JSON response."""
-        r = await self._http.post(path, json=body)
+    async def _post(
+        self, path: str, body: dict[str, Any], *, timeout: float | None = None
+    ) -> dict[str, Any]:
+        """Perform a POST request and return the JSON response.
+
+        ``timeout`` overrides the HTTP client's timeout for this request only.
+        """
+        r = await self._http.post(
+            path, json=body, timeout=self._http.timeout if timeout is None else timeout
+        )
         if r.status_code // 100 != 2:
             raise FwbgClientError(r.status_code, r.text)
         return r.json()
@@ -132,11 +148,20 @@ class FwbgClient:
         start_date: str | None = None,
         end_date: str | None = None,
         cost_multiplier: float | None = None,
+        research_id: str | None = None,
+        note: str | None = None,
+        reason: str | None = None,
+        holdout: bool = False,
     ) -> dict[str, Any]:
         """Start a fwbg backtest run for a strategy (POST /api/runs/start).
 
         ``start_date``/``end_date`` (ISO) restrict the backtest window (holdout
         gating); ``cost_multiplier`` scales spread/slippage (cost-stress gating).
+        ``research_id`` (register card ``S-NNNN``) and ``note`` (single line)
+        are required by fwbg's research gate, which refuses a start without
+        them; each is omitted from the body when None. ``reason`` justifies a
+        deliberate repeat; ``holdout`` requests the card's holdout look. A gate
+        refusal (409/422) or preflight timeout (504) raises FwbgClientError.
         """
         body: dict[str, Any] = {"strategy_name": strategy_name}
         if asset_classes is not None:
@@ -151,7 +176,45 @@ class FwbgClient:
             body["end_date"] = end_date
         if cost_multiplier is not None:
             body["cost_multiplier"] = cost_multiplier
-        return await self._post("/api/runs/start", body)
+        if research_id is not None:
+            body["research_id"] = research_id
+        if note is not None:
+            body["note"] = note
+        if reason is not None:
+            body["reason"] = reason
+        if holdout:
+            body["holdout"] = True
+        return await self._post("/api/runs/start", body, timeout=_START_RUN_TIMEOUT_SECONDS)
+
+    async def create_research_card(
+        self,
+        *,
+        title: str,
+        tags: list[str],
+        hypothesis: str,
+        mechanism: str,
+        cutoff: str,
+    ) -> dict[str, Any]:
+        """Create a research register card (POST /api/research).
+
+        ``cutoff`` is an ISO date. Returns ``{"card": {...}, "warning"?}``; a
+        ``warning`` means fwbg wrote the card but did not commit it, so the
+        caller must not retry.
+        """
+        return await self._post(
+            "/api/research",
+            {
+                "title": title,
+                "tags": tags,
+                "hypothesis": hypothesis,
+                "mechanism": mechanism,
+                "cutoff": cutoff,
+            },
+        )
+
+    async def get_research_card(self, research_id: str) -> dict[str, Any]:
+        """Return a register card with its trials (GET /api/research/{research_id})."""
+        return await self._get(f"/api/research/{research_id}")
 
     async def get_plugins(self) -> list[dict[str, Any]]:
         """Return all registered plugins (GET /api/plugins).
