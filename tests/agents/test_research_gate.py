@@ -40,6 +40,15 @@ def test_gate_refusal_keeps_status_codes_and_messages():
     assert "duplicate_fingerprint, after_cutoff" in str(refusal)
 
 
+def test_denial_without_a_code_is_unknown():
+    refusal = research_gate_refusal(
+        _error(422, {"message": "research gate refused the run", "denials": [{"message": "no"}]})
+    )
+
+    assert refusal is not None
+    assert refusal.denials == [GateDenial("unknown", "no")]
+
+
 def test_preflight_failure_keeps_its_message_and_output():
     refusal = research_gate_refusal(
         _error(422, {"message": "research preflight failed", "output": "cannot load\nstrategy"})

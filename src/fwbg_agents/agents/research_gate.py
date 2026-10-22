@@ -77,7 +77,7 @@ def research_gate_refusal(exc: FwbgClientError) -> ResearchGateRefusedError | No
     raw_denials = detail.get("denials")
     if isinstance(raw_denials, list):
         denials = [
-            GateDenial(code=str(d.get("code")), message=str(d.get("message", "")))
+            GateDenial(code=str(d.get("code") or "unknown"), message=str(d.get("message", "")))
             for d in raw_denials
             if isinstance(d, dict)
         ]
