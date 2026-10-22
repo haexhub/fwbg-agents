@@ -104,6 +104,27 @@ in the cross-asset median; a strategy may be created with an existing card id (D
   failed gate run and uses an attempt. No automatic reason is sent.
 - A holdout look still pending in fwbg (started, not yet recorded) is not among the card's
   trials, so no reason is sent; fwbg refuses it as `holdout_repeat`, a failed gate run.
+- A Runner failure on A's side after fwbg recorded the trial as ok (e.g. polling gave up, or a
+  step after the run raised): the auto-runner's retry repeats the same configuration, fwbg
+  refuses it as `duplicate_fingerprint`, and the Runner falls back to the next, broader
+  universe rung. No automatic reason is sent.
+- D3's automatic reason lets every later holdout look in a lineage pass fwbg's
+  `holdout_repeat` guard, and with D10 those looks are not counted in A's census. Explicit
+  decision: no worse than before (the old gate re-ran its holdout on every gate run); the
+  lineage's gate attempt budget (`promote_max_attempts`, Plan 014) still bounds failed gate runs.
+- An existing root without `hypothesis.json` cannot be attached to an existing card except by
+  writing `hypothesis.json` (which then creates a new card). Follow-up: an endpoint that sets
+  `research_id` on an existing root.
+
+## Deployment
+
+- Needs fwbg with the research register (origin/develop) and its research directory
+  configured; otherwise every run start is refused.
+- A must be able to read fwbg's `test_results` (`fwbg_test_results_dir`), or every holdout DSR
+  fails closed as unreadable.
+- Any proxy between A and fwbg must allow more than 150 s for `POST /api/runs/start`
+  (preflight up to 120 s, D4).
+- No DB migration: the card id lives in `Strategy.metadata_json`.
 
 ## Tasks
 
