@@ -29,6 +29,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from fwbg_agents.config import settings
 from fwbg_agents.orchestrator.lifecycle import strategy_dir
+from fwbg_agents.orchestrator.metrics import asset_sharpe
 from fwbg_agents.persistence.models import Strategy, Transition
 
 log = logging.getLogger(__name__)
@@ -42,7 +43,8 @@ def _interventions_path() -> Path:
 
 
 def _median_sharpe(slug: str) -> float | None:
-    """Median Sharpe across assets from a strategy's iteration_001 backtest."""
+    """Median Sharpe across assets from a strategy's iteration_001 backtest
+    (a no-edge symbol's null sharpe counts as 0.0, see ``asset_sharpe``)."""
     path = strategy_dir(slug) / "iteration_001" / "fwbg_results.json"
     if not path.is_file():
         return None
@@ -50,13 +52,11 @@ def _median_sharpe(slug: str) -> float | None:
         data = json.loads(path.read_text())
     except (OSError, json.JSONDecodeError):
         return None
-    values = [
-        m["sharpe"]
-        for asset in (data.get("assets") or {}).values()
-        if isinstance(asset, dict)
-        for m in [asset.get("unified_metrics") or {}]
-        if isinstance(m.get("sharpe"), (int, float))
-    ]
+    values = []
+    for asset in (data.get("assets") or {}).values():
+        sharpe = asset_sharpe(asset)
+        if sharpe is not None:
+            values.append(sharpe)
     return statistics.median(values) if values else None
 
 

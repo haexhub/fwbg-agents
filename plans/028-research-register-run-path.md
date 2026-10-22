@@ -72,7 +72,10 @@ in the cross-asset median; a strategy may be created with an existing card id (D
   evaluates once after it). Cost stress stays a development run (`cost_multiplier` is part of
   the fingerprint; no `end_date` → clamped to the cutoff).
 - **D7 null Sharpe:** `median_metrics_across_assets` counts a `sharpe` of `None` as `0.0` for an
-  asset that has `unified_metrics`; other keys unchanged.
+  asset that has `unified_metrics`; other keys unchanged. The same rule (`metrics.asset_sharpe`)
+  feeds the interventions digest's median Sharpe and the lineage's per-asset Sharpe series. The
+  Analyst's per-asset criteria lines stay as they are: a no-edge symbol failing its criteria is
+  the correct verdict.
 - **D8 card given at creation:** `POST /strategies` accepts an optional `research_id`
   (`S-` + 4 digits, else 422) and stores it on the new root's `metadata_json`;
   `ensure_research_id` returns a stored id before building a card, and that card's cutoff
