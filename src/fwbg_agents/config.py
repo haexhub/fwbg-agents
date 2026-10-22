@@ -211,10 +211,11 @@ class Settings(BaseSettings):
         default=24,
         ge=1,
         description=(
-            "Months of most-recent data reserved as an out-of-sample holdout. "
-            "Iteration backtests end at today - holdout_months (no iteration ever "
-            "sees this window); the promote gate then runs a holdout backtest on "
-            "[today - holdout_months, today] before a strategy may advance to paper."
+            "Sets the lineage boundary B = today - holdout_months, frozen on a "
+            "lineage's first run and used as the cutoff of its auto-created research "
+            "card. Iterations end at the card's cutoff (fwbg clamps them); the "
+            "promote gate makes a register holdout look after the card's cutoff "
+            "before a strategy may advance to paper."
         ),
     )
     dsr_min: float = Field(
