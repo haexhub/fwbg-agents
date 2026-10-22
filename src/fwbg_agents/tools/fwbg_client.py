@@ -125,11 +125,12 @@ class FwbgClient:
         raise AssertionError("unreachable")
 
     async def _post(
-        self, path: str, body: dict[str, Any], *, timeout: float | None = None
+        self, path: str, body: dict[str, Any], *, timeout: httpx.Timeout | None = None
     ) -> dict[str, Any]:
         """Perform a POST request and return the JSON response.
 
-        ``timeout`` overrides the HTTP client's timeout for this request only.
+        ``timeout`` overrides the HTTP client's timeout for this request only;
+        None keeps the client's own timeout (it never means "no timeout").
         """
         r = await self._http.post(
             path, json=body, timeout=self._http.timeout if timeout is None else timeout
@@ -184,7 +185,16 @@ class FwbgClient:
             body["reason"] = reason
         if holdout:
             body["holdout"] = True
-        return await self._post("/api/runs/start", body, timeout=_START_RUN_TIMEOUT_SECONDS)
+        default = self._http.timeout
+        # Only the wait for the answer covers the preflight; connecting, sending
+        # and the pool keep the client's limits.
+        timeout = httpx.Timeout(
+            connect=default.connect,
+            read=_START_RUN_TIMEOUT_SECONDS,
+            write=default.write,
+            pool=default.pool,
+        )
+        return await self._post("/api/runs/start", body, timeout=timeout)
 
     async def create_research_card(
         self,

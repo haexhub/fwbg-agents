@@ -355,7 +355,7 @@ async def test_start_run_omits_reason_when_none_and_holdout_when_false():
     await http.aclose()
 
 
-async def test_start_run_uses_long_timeout_for_the_preflight():
+async def test_start_run_waits_long_for_the_preflight_answer_only():
     timeouts: dict[str, dict] = {}
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -364,19 +364,29 @@ async def test_start_run_uses_long_timeout_for_the_preflight():
             return httpx.Response(200, json={"job_id": "job_1", "status": "starting"})
         return httpx.Response(200, json={"run_id": "job_1", "status": "running"})
 
-    http = _mock_client(handler)
+    transport = httpx.MockTransport(handler)
+    http = httpx.AsyncClient(
+        transport=transport,
+        base_url="http://fwbg-test",
+        timeout=httpx.Timeout(connect=3.0, read=7.0, write=11.0, pool=13.0),
+    )
     client = FwbgClient(base_url="http://fwbg-test", http=http)
 
     await client.start_run("demo_v1", research_id="S-0001", note="n")
     await client.get_run("job_1")
     await client.create_strategy("s1", {"name": "s1"})
 
-    assert timeouts["/api/runs/start"]["read"] == 150.0
-    assert timeouts["/api/runs/start"]["write"] == 150.0
-    default_read = http.timeout.read
-    assert default_read != 150.0
-    assert timeouts["/api/runs/job_1"]["read"] == default_read
-    assert timeouts["/api/strategies"]["read"] == default_read
+    # Only the wait for fwbg's answer covers the preflight; connecting,
+    # sending and the pool keep the client's own limits.
+    assert timeouts["/api/runs/start"] == {
+        "connect": 3.0,
+        "read": 150.0,
+        "write": 11.0,
+        "pool": 13.0,
+    }
+    client_default = {"connect": 3.0, "read": 7.0, "write": 11.0, "pool": 13.0}
+    assert timeouts["/api/runs/job_1"] == client_default
+    assert timeouts["/api/strategies"] == client_default
     await http.aclose()
 
 
