@@ -185,12 +185,11 @@ class FwbgClient:
             body["holdout"] = True
         default = self._http.timeout
         # Only the wait for the answer covers the preflight; connecting, sending
-        # and the pool keep the client's limits.
+        # and the pool keep the client's limits. A client that already waits
+        # longer (None: without limit) keeps its wait.
+        read = None if default.read is None else max(default.read, _START_RUN_TIMEOUT_SECONDS)
         timeout = httpx.Timeout(
-            connect=default.connect,
-            read=_START_RUN_TIMEOUT_SECONDS,
-            write=default.write,
-            pool=default.pool,
+            connect=default.connect, read=read, write=default.write, pool=default.pool
         )
         return await self._post("/api/runs/start", body, timeout=timeout)
 

@@ -395,6 +395,29 @@ async def test_start_run_waits_long_for_the_preflight_answer_only():
     await http.aclose()
 
 
+@pytest.mark.parametrize(("client_read", "expected_read"), [(300.0, 300.0), (None, None)])
+async def test_start_run_keeps_a_longer_client_read_timeout(client_read, expected_read):
+    """An injected client that already waits longer (or without limit) keeps
+    that wait; the preflight timeout is a floor, not a cap."""
+    timeouts: dict[str, dict] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        timeouts[request.url.path] = request.extensions["timeout"]
+        return httpx.Response(200, json={"job_id": "job_1", "status": "starting"})
+
+    http = httpx.AsyncClient(
+        transport=httpx.MockTransport(handler),
+        base_url="http://fwbg-test",
+        timeout=httpx.Timeout(5.0, read=client_read),
+    )
+    client = FwbgClient(base_url="http://fwbg-test", http=http)
+
+    await client.start_run("demo_v1", research_id="S-0001", note="n")
+
+    assert timeouts["/api/runs/start"]["read"] == expected_read
+    await http.aclose()
+
+
 async def test_start_run_refusal_raises_fwbg_client_error():
     refusal = {
         "detail": {
