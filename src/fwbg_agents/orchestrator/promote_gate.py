@@ -173,9 +173,10 @@ async def _run_dsr_check(
 ) -> tuple[bool, float | None, int | None, list[str]]:
     """Deflated-Sharpe check on the holdout look's trade-P&L series.
 
-    Returns (passed, dsr, n_trials, failures). Unreadable holdout trades, a look without trades and a series too short
-    or flat for the moments each fail closed, as do non-finite inputs. The visible cold-start
-    branch passes with fewer than two historical Sharpes.
+    Returns (passed, dsr, n_trials, failures). Unreadable holdout trades, a look
+    without trades and a series too short or flat for the moments each fail
+    closed, as do non-finite inputs. The visible cold-start branch passes with
+    fewer than two historical Sharpes.
     """
     raw_pnls = holdout_pnl_series(settings.fwbg_test_results_dir / holdout_job_id)
     if raw_pnls is None:
