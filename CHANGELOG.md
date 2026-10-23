@@ -1,5 +1,56 @@
 # Changelog
 
+## [0.34.0](https://github.com/haexhub/fwbg-agents/compare/v0.33.1...v0.34.0) (2026-10-23)
+
+
+### Features
+
+* **api:** accept a research card id when creating a strategy ([20fa371](https://github.com/haexhub/fwbg-agents/commit/20fa371c448a75d76d2da95d1991f12b1e12c4d7))
+* **api:** pass a run reason through POST /strategies/{id}/run ([d38b182](https://github.com/haexhub/fwbg-agents/commit/d38b18275eb17c16cd92b1496f7e63c4bcb02736))
+* **client:** send research register fields to fwbg ([9c5af78](https://github.com/haexhub/fwbg-agents/commit/9c5af785924385352a421a2f32754a3521de85e6))
+* **orchestrator:** one research card per lineage ([ebc039f](https://github.com/haexhub/fwbg-agents/commit/ebc039fb42c741b613ed7bcc960f4921398ea05b))
+* run backtests through fwbg's research register ([aeebf24](https://github.com/haexhub/fwbg-agents/commit/aeebf24498f5fcb015331ae99839248bfb1e2787))
+* **runner:** run through the research register gate ([4e7fe51](https://github.com/haexhub/fwbg-agents/commit/4e7fe51ec7a55f7a2de5b67f2937ef5405f4b6de))
+
+
+### Bug Fixes
+
+* **ci:** use RELEASE_PAT for main auto-merge, not GITHUB_TOKEN ([467e973](https://github.com/haexhub/fwbg-agents/commit/467e973d0f48fb59aec932c492cc4437de2af998))
+* **ci:** use RELEASE_PAT for main auto-merge, not GITHUB_TOKEN ([3b36c9a](https://github.com/haexhub/fwbg-agents/commit/3b36c9a44e8051d86058df1e64e450e2218b808b))
+* **client:** apply the preflight timeout to the read wait only ([5b07f5c](https://github.com/haexhub/fwbg-agents/commit/5b07f5c5452f715fef13cc30182aaa226520ef05))
+* **client:** keep an injected client's longer read timeout on run start ([0525791](https://github.com/haexhub/fwbg-agents/commit/05257916c77c0161bd433305814be506dd975dd6))
+* **metrics:** count a no-edge sharpe as zero ([3fa5e3e](https://github.com/haexhub/fwbg-agents/commit/3fa5e3ea3eaa48d3a36c4c9fbed4a93b834d2023))
+* **orchestrator:** card mechanism falls back to the legacy edge explanation ([c97b1ea](https://github.com/haexhub/fwbg-agents/commit/c97b1eae547a02fdf53244aedbbe92051d187fe0))
+* **orchestrator:** count a no-edge sharpe as zero in digest and lineage ([41131b1](https://github.com/haexhub/fwbg-agents/commit/41131b11da3ab3fbe8a3e3085992ba4b9a3b04c5))
+* **orchestrator:** harden research card creation ([1ca6a34](https://github.com/haexhub/fwbg-agents/commit/1ca6a3410799222b3b21e1213eb4f7eaf5ee79bb))
+* **orchestrator:** point an existing lineage at hypothesis.json ([12eb442](https://github.com/haexhub/fwbg-agents/commit/12eb442fc1157a5362b74c12f249934ce7186d3e))
+* **promote-gate:** judge every looked-at symbol and only holdout trades ([78e4cdf](https://github.com/haexhub/fwbg-agents/commit/78e4cdf47ed39eff3ddf83ad58024fbebf322eb8))
+* **promote-gate:** look at the holdout through the register ([63bc8e9](https://github.com/haexhub/fwbg-agents/commit/63bc8e978b40a2c264d0cc90e76bd8a8a2c8a1e8))
+* **prompts:** document DataFrame index shape and output dtype rules ([5a938c7](https://github.com/haexhub/fwbg-agents/commit/5a938c73a9ade0ed4daf1c018d711df86aff9035))
+* **prompts:** document DataFrame index shape and output dtype rules ([c896843](https://github.com/haexhub/fwbg-agents/commit/c89684377e94101a4ecb13d5fc8897a700b74afe))
+* reapply local Spec Kit skill patches the CLI refresh dropped ([dd305e0](https://github.com/haexhub/fwbg-agents/commit/dd305e0b12dfaa84ed79d5c641cfde1ab0e925bd))
+* refresh Spec Kit bootstrap and bundled workflow with current specify-cli ([2066792](https://github.com/haexhub/fwbg-agents/commit/20667920036904c652126b46a4ab2c7b0b4349aa))
+* **researcher:** replace exhaustive prior-art enumeration with a duplicate threshold ([adc1862](https://github.com/haexhub/fwbg-agents/commit/adc18625385a0b2a307fc3825b241e06264e205c))
+* **researcher:** replace exhaustive prior-art enumeration with a duplicate threshold ([0fa5433](https://github.com/haexhub/fwbg-agents/commit/0fa54336ff008bfd503adcc9c6ffb466c837d89c))
+* **researcher:** update ResearcherHypothesis docstring for optional differentiates_from ([96794ec](https://github.com/haexhub/fwbg-agents/commit/96794ec4c8d61a08bfd48038c3121fe4136eeb54))
+* **runner:** keep holdout runs independent ([6c3685b](https://github.com/haexhub/fwbg-agents/commit/6c3685ba1afbdde3c45d66ddcbef72543e3f0f97))
+* **runner:** let the card's cutoff end iteration data ([c870591](https://github.com/haexhub/fwbg-agents/commit/c8705915093a366b58222996e04e23b30b3d508a))
+* **runner:** name every universe attempt's reason when all fail ([2522aa4](https://github.com/haexhub/fwbg-agents/commit/2522aa4664afbe6ed92ba644bd59d382653415c2))
+* **runner:** show a denial without a code as unknown ([cda3029](https://github.com/haexhub/fwbg-agents/commit/cda302978f092bd12a04a81e65aa627aba730310))
+* stop advertising unimplemented filter/label args on speckit-taskstoissues ([ea1d7c5](https://github.com/haexhub/fwbg-agents/commit/ea1d7c57b3f126510dc751f3787172a2a7af3405))
+* **trials:** call a missing holdout run dir unreadable ([a5cf9f1](https://github.com/haexhub/fwbg-agents/commit/a5cf9f1da2f523438633c3698f99fb5c38a79db0))
+* **trials:** fail closed on a holdout look that traded without trades.json ([1b35076](https://github.com/haexhub/fwbg-agents/commit/1b3507611c72500eeccd875fd3960459fce20523))
+
+
+### Documentation
+
+* **config:** describe holdout_months as the lineage boundary ([b9430de](https://github.com/haexhub/fwbg-agents/commit/b9430de9ffb566a553a6d1d552d51d659b6976f3))
+* document Spec Kit shell helper behavior ([bd620a6](https://github.com/haexhub/fwbg-agents/commit/bd620a694ef55c6d9fc3353f0e381b477c1e225e))
+* list plan 028 ([a0f10db](https://github.com/haexhub/fwbg-agents/commit/a0f10db6eaf4b8ba882a2b2ffb01973d6b09dc2c))
+* plan 028 limitations and deployment ([34b8b4c](https://github.com/haexhub/fwbg-agents/commit/34b8b4caba225bdecb2c86109605ef595f844d76))
+* plan research register run path ([d41495b](https://github.com/haexhub/fwbg-agents/commit/d41495bb16500083be2b0b8ca2e33c5b326af36e))
+* sketch the runner split and widen the adoption note ([f6eac7c](https://github.com/haexhub/fwbg-agents/commit/f6eac7c9d6f7e0b9779c4ffa8214c7838981b939))
+
 ## [0.33.1](https://github.com/haexhub/fwbg-agents/compare/v0.33.0...v0.33.1) (2026-07-30)
 
 
