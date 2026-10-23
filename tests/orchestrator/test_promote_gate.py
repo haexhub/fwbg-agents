@@ -269,6 +269,7 @@ async def test_unreadable_card_fails_the_holdout_without_running_it(gate_env):
 
 
 async def test_malformed_card_fails_the_holdout_without_aborting_the_gate(gate_env):
+    """A malformed research card fails only the holdout step."""
     Session, sid, _ = gate_env
     fake = _GateFake([_run()], card_response=["not", "a", "card"])
     async with Session() as session:
@@ -410,6 +411,7 @@ async def test_gate_fails_on_cost_stress(gate_env):
 
 
 async def test_gate_run_error_counts_as_failure(gate_env):
+    """Failed holdout and cost-stress jobs retain their fwbg run IDs."""
     Session, sid, _ = gate_env
     fake = _GateFake([_run(), _run()], progress_status="failed")  # runs never complete
     async with Session() as session:

@@ -11,6 +11,7 @@ class RunnerError(RuntimeError):
     """
 
     def __init__(self, message: str, *, fwbg_run_id: str | None = None):
+        """Create an error and retain the fwbg run that produced it, if any."""
         super().__init__(message)
         self.fwbg_run_id = fwbg_run_id
 

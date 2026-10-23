@@ -157,6 +157,7 @@ def _holdout_median_metrics(run_data: dict[str, Any]) -> dict[str, float]:
 
 
 def _failed_gate_run(agent_run_id: int, label: str, exc: Exception) -> GateRun:
+    """Turn a gate exception into a failed result while preserving its run ID."""
     emit_run_event(agent_run_id, "promote_gate_failed", label=label, reason=str(exc))
     return GateRun(
         label=label,
