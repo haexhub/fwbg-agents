@@ -617,7 +617,8 @@ class Runner:
                     raise RunnerError(
                         f"fwbg unreachable for "
                         f"{settings.runner_poll_outage_tolerance_seconds:.0f}s "
-                        f"while polling {job_id}: {exc}"
+                        f"while polling {job_id}: {exc}",
+                        fwbg_run_id=job_id,
                     ) from exc
                 log.warning("runner: poll for %s failed (%s), tolerating", job_id, exc)
                 await asyncio.sleep(settings.runner_poll_interval_seconds)
@@ -638,10 +639,12 @@ class Runner:
                 break
             await asyncio.sleep(settings.runner_poll_interval_seconds)
         else:
-            raise RunnerError(f"polling timeout for {job_id} (last status={status!r})")
+            raise RunnerError(
+                f"polling timeout for {job_id} (last status={status!r})", fwbg_run_id=job_id
+            )
 
         if status != "completed":
             msg = last_progress.get("message") or last_progress.get("error_message") or status
-            raise RunnerError(f"fwbg reported status={status!r}: {msg}")
+            raise RunnerError(f"fwbg reported status={status!r}: {msg}", fwbg_run_id=job_id)
 
         return job_id, await self.fwbg.get_run(job_id)

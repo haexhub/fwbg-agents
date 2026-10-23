@@ -157,23 +157,28 @@ def _holdout_median_metrics(run_data: dict[str, Any]) -> dict[str, float]:
 
 
 def _failed_gate_run(agent_run_id: int, label: str, exc: Exception) -> GateRun:
+    """Turn a gate exception into a failed result while preserving its run ID."""
     emit_run_event(agent_run_id, "promote_gate_failed", label=label, reason=str(exc))
-    return GateRun(label=label, passed=False, metrics={}, failures=[str(exc)], error=str(exc))
+    return GateRun(
+        label=label,
+        passed=False,
+        metrics={},
+        failures=[str(exc)],
+        error=str(exc),
+        fwbg_run_id=getattr(exc, "fwbg_run_id", None),
+    )
 
 
 async def _run_dsr_check(
-    session: AsyncSession, holdout_job_id: str | None
+    session: AsyncSession, holdout_job_id: str
 ) -> tuple[bool, float | None, int | None, list[str]]:
     """Deflated-Sharpe check on the holdout look's trade-P&L series.
 
-    Returns (passed, dsr, n_trials, failures). Without a holdout job (the look
-    itself failed, which already fails the gate) there is nothing to judge.
-    Unreadable holdout trades, a look without trades and a series too short
-    or flat for the moments each fail closed, as do non-finite inputs. The visible cold-start
-    branch passes with fewer than two historical Sharpes.
+    Returns (passed, dsr, n_trials, failures). Unreadable holdout trades, a look
+    without trades and a series too short or flat for the moments each fail
+    closed, as do non-finite inputs. The visible cold-start branch passes with
+    fewer than two historical Sharpes.
     """
-    if not holdout_job_id:
-        return True, None, None, []
     raw_pnls = holdout_pnl_series(settings.fwbg_test_results_dir / holdout_job_id)
     if raw_pnls is None:
         return (
@@ -354,23 +359,28 @@ async def run_promote_gate(
                 passed=ok,
             )
 
-        emit_run_event(ar.id, "promote_gate_submitted", label="dsr")
-        dsr_ok, dsr, n_trials, dsr_failures = await _run_dsr_check(session, holdout_job_id)
-        runs.append(
-            GateRun(
+        dsr: float | None = None
+        n_trials: int | None = None
+        if holdout_job_id:
+            # Without a look there are no trades to judge; the failed holdout
+            # run already fails the gate, so no DSR row pretends to have passed.
+            emit_run_event(ar.id, "promote_gate_submitted", label="dsr")
+            dsr_ok, dsr, n_trials, dsr_failures = await _run_dsr_check(session, holdout_job_id)
+            runs.append(
+                GateRun(
+                    label="dsr",
+                    passed=dsr_ok,
+                    metrics={"dsr": dsr} if dsr is not None else {},
+                    failures=dsr_failures,
+                    fwbg_run_id=holdout_job_id,
+                )
+            )
+            emit_run_event(
+                ar.id,
+                "promote_gate_done" if dsr_ok else "promote_gate_failed",
                 label="dsr",
                 passed=dsr_ok,
-                metrics={"dsr": dsr} if dsr is not None else {},
-                failures=dsr_failures,
-                fwbg_run_id=holdout_job_id,
             )
-        )
-        emit_run_event(
-            ar.id,
-            "promote_gate_done" if dsr_ok else "promote_gate_failed",
-            label="dsr",
-            passed=dsr_ok,
-        )
 
         passed = bool(runs) and all(r.passed for r in runs)
         fail_count = fail_count_so_far + (0 if passed else 1)

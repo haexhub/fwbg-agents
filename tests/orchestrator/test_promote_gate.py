@@ -269,6 +269,7 @@ async def test_unreadable_card_fails_the_holdout_without_running_it(gate_env):
 
 
 async def test_malformed_card_fails_the_holdout_without_aborting_the_gate(gate_env):
+    """A malformed research card fails only the holdout step."""
     Session, sid, _ = gate_env
     fake = _GateFake([_run()], card_response=["not", "a", "card"])
     async with Session() as session:
@@ -278,7 +279,7 @@ async def test_malformed_card_fails_the_holdout_without_aborting_the_gate(gate_e
     assert result.passed is False
     holdout = next(r for r in result.runs if r.label == "holdout")
     assert holdout.passed is False and holdout.fwbg_run_id is None
-    assert [r.label for r in result.runs] == ["holdout", "cost_stress", "dsr"]
+    assert [r.label for r in result.runs] == ["holdout", "cost_stress"]
 
 
 def _universe_run(sharpe=1.5):
@@ -410,6 +411,7 @@ async def test_gate_fails_on_cost_stress(gate_env):
 
 
 async def test_gate_run_error_counts_as_failure(gate_env):
+    """Failed holdout and cost-stress jobs retain their fwbg run IDs."""
     Session, sid, _ = gate_env
     fake = _GateFake([_run(), _run()], progress_status="failed")  # runs never complete
     async with Session() as session:
@@ -420,10 +422,12 @@ async def test_gate_run_error_counts_as_failure(gate_env):
     holdout = next(r for r in result.runs if r.label == "holdout")
     cost = next(r for r in result.runs if r.label == "cost_stress")
     assert holdout.error and cost.error
-    # DSR has no holdout job_id to inspect (the backtest itself errored); the
-    # holdout's own failure already fails the gate.
-    dsr = next(r for r in result.runs if r.label == "dsr")
-    assert dsr.passed is True
+    # A failed run still points at its fwbg logs.
+    assert holdout.fwbg_run_id and cost.fwbg_run_id
+    # The holdout never produced trades, so no DSR row claims to have passed;
+    # the failed holdout already fails the gate.
+    assert [r.label for r in result.runs] == ["holdout", "cost_stress"]
+    assert result.dsr is None and result.n_trials is None
 
 
 async def test_fail_count_accumulates_across_runs(gate_env):
