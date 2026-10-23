@@ -31,7 +31,7 @@ async def db(tmp_path, monkeypatch):
     await engine.dispose()
 
 
-def _write_results(settings, slug: str, sharpes: list[float]) -> None:
+def _write_results(settings, slug: str, sharpes: list[float | None]) -> None:
     it_dir = settings.data_dir / "strategies" / slug / "iteration_001"
     it_dir.mkdir(parents=True, exist_ok=True)
     (it_dir / "fwbg_results.json").write_text(
@@ -262,3 +262,26 @@ async def test_max_chars_caps_digest(db):
         await regenerate_interventions_digest(session)
     digest = interventions_digest(max_chars=100)
     assert len(digest) <= 100
+
+
+async def test_a_no_edge_symbol_counts_as_zero_sharpe(db):
+    """fwbg writes sharpe null for a no_edge symbol; like the Runner's median
+    (Plan 028 D7) it counts as 0.0 instead of dropping out."""
+    Session, settings = db
+    await _seed_edge(
+        Session,
+        settings,
+        parent_slug="orb_a",
+        parent_sharpes=[1.0, None, 0.6],
+        child_slug="orb_a__it002",
+        child_sharpes=[None],
+        family="ORB",
+        kind="tune_params",
+    )
+
+    async with Session() as session:
+        await regenerate_interventions_digest(session)
+    digest = interventions_digest()
+
+    # parent median of [1.0, 0.0, 0.6] = 0.6, child 0.0 -> delta -0.6
+    assert "ORB x tune_params: median Δsharpe=-0.60 (n=1)" in digest

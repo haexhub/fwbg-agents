@@ -482,6 +482,38 @@ def test_median_metrics_ignores_assets_without_metrics():
     assert _median_metrics_across_assets(run) == {}
 
 
+def test_median_metrics_counts_a_no_edge_sharpe_as_zero():
+    """fwbg writes sharpe null for a no_edge symbol: it has no edge, not no result."""
+    run = {
+        "assets": {
+            "EURUSD": {"unified_metrics": {"sharpe": 2.0, "trades": 400}},
+            "GBPUSD": {"unified_metrics": {"sharpe": None, "trades": 200}},
+            "USDJPY": {"unified_metrics": {"sharpe": None, "trades": 600}},
+        }
+    }
+    assert _median_metrics_across_assets(run) == {"sharpe": 0.0, "trades": 400.0}
+
+
+def test_median_metrics_all_null_sharpes_give_zero():
+    run = {
+        "assets": {
+            "EURUSD": {"unified_metrics": {"sharpe": None}},
+            "GBPUSD": {"unified_metrics": {"sharpe": None}},
+        }
+    }
+    assert _median_metrics_across_assets(run) == {"sharpe": 0.0}
+
+
+def test_median_metrics_leaves_a_missing_sharpe_out():
+    run = {
+        "assets": {
+            "EURUSD": {"unified_metrics": {"sharpe": 2.0, "trades": 400}},
+            "GBPUSD": {"unified_metrics": {"trades": 200, "calmar": None}},
+        }
+    }
+    assert _median_metrics_across_assets(run) == {"sharpe": 2.0, "trades": 300.0}
+
+
 def _seed_forex_criteria(tmp_path, monkeypatch):
     from fwbg_agents.config import settings
 

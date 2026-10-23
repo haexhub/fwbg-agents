@@ -17,16 +17,21 @@ Flow:
        strategy file on its side). Normally the research flow has already
        published it — a 409 means it's there (possibly edited by the user in
        the dashboard) and is left untouched.
-    3. For each universe attempt (most-specific first):
+    3. Resolve the lineage's research card id (created on its first run; see
+       orchestrator/research_card.py). Without one the run fails: fwbg
+       refuses every start that names no card.
+    4. For each universe attempt (most-specific first):
          a. ensure data for the attempt's symbols (drop the unavailable ones);
-         b. fwbg_client.start_run(name, assets=..., asset_classes=...) → job_id;
+         b. fwbg_client.start_run(name, assets=..., asset_classes=...,
+            research_id=..., note=...) → job_id. fwbg's research register
+            gates the start; a refusal ends only this attempt;
          c. poll get_progress() until terminal / timeout;
          d. on completion, fetch the run and extract metrics.
        The first attempt that produces non-empty metrics wins; others fall
        through to the next rung.
-    4. On success: write fwbg_results.json, transition to BACKTESTED (payload
+    5. On success: write fwbg_results.json, transition to BACKTESTED (payload
        records the winning universe), mark AgentRun done.
-    5. If every attempt is exhausted: mark AgentRun failed; strategy stays
+    6. If every attempt is exhausted: mark AgentRun failed; strategy stays
        PROPOSED.
 
 Metrics extraction: fwbg returns one unified_metrics dict per symbol. M3 picks
@@ -50,12 +55,18 @@ import httpx
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from fwbg_agents.agents.research_gate import research_gate_refusal
+from fwbg_agents.agents.runner_errors import (
+    RunnerConfigError,
+    RunnerError,
+    UnrunnableStrategyError,
+)
 from fwbg_agents.config import settings
 from fwbg_agents.orchestrator.lifecycle import strategy_dir, transition_strategy
-from fwbg_agents.orchestrator.lineage_boundary import get_or_freeze_boundary
 from fwbg_agents.orchestrator.metrics import (
     median_metrics_across_assets as _median_metrics_across_assets,
 )
+from fwbg_agents.orchestrator.research_card import ensure_research_id, run_note
 from fwbg_agents.orchestrator.strategy_validator import signal_model_has_source
 from fwbg_agents.orchestrator.trade_diagnostics import compute_trade_diagnostics
 from fwbg_agents.orchestrator.trials import record_trial_stat
@@ -78,39 +89,6 @@ from fwbg_agents.run_events import emit_run_event
 from fwbg_agents.tools.fwbg_client import FwbgClientError, safe_fwbg_strategy_name
 
 log = logging.getLogger(__name__)
-
-
-class RunnerError(RuntimeError):
-    """Raised when every universe attempt fails (fwbg errors / no results)."""
-
-
-class UnrunnableStrategyError(RunnerError):
-    """The strategy cannot produce a meaningful backtest and must not be
-    dispatched — e.g. a signal model with no entry-signal source (no
-    signal_rules, no model.required_features, no allowed_hours/allowed_days).
-
-    Broadening the universe or retrying cannot help; fwbg would skip every fold
-    with an empty feature pool and "complete" in seconds. We short-circuit
-    before creating the run so no wasted backtest is dispatched.
-    """
-
-
-class RunnerConfigError(RunnerError):
-    """fwbg completed the run but every asset errored on a fixable
-    strategy-config problem (e.g. a plugin missing its pipeline dependency).
-
-    Broadening the universe cannot fix such an error — the same pipeline fails
-    on every symbol — so the Runner short-circuits and raises this instead of
-    exhausting all rungs. It carries the parsed dependency (`dependent` needs
-    `dependency` upstream) so the orchestrator can auto-repair by reiteration.
-    """
-
-    def __init__(
-        self, message: str, *, dependent: str | None = None, dependency: str | None = None
-    ):
-        super().__init__(message)
-        self.dependent = dependent
-        self.dependency = dependency
 
 
 # fwbg's pipeline builder rejects a plugin whose declared dependency is absent
@@ -148,6 +126,13 @@ class _FwbgClientProto(Protocol):
         start_date: str | None = ...,
         end_date: str | None = ...,
         cost_multiplier: float | None = ...,
+        research_id: str,
+        note: str,
+        reason: str | None = ...,
+        holdout: bool = ...,
+    ) -> dict[str, Any]: ...
+    async def create_research_card(
+        self, *, title: str, tags: list[str], hypothesis: str, mechanism: str, cutoff: str
     ) -> dict[str, Any]: ...
     async def list_runs(self) -> list[dict[str, Any]]: ...
     async def get_progress(self, run_id: str) -> dict[str, Any]: ...
@@ -175,13 +160,15 @@ class RunnerResult(BaseModel):
 
 
 _TERMINAL_FWBG_STATUSES = frozenset({"completed", "failed", "error", "cancelled"})
+# A run is "starting" while fwbg's research preflight runs, then "running".
+_ACTIVE_FWBG_STATUSES = frozenset({"starting", "running"})
 
 
 def _months_ago_iso(months: int) -> str:
     """ISO date (YYYY-MM-DD) `months` calendar months before today.
 
-    Used to end iteration backtests before the reserved holdout window so no
-    iteration ever trains/tests on the most recent `holdout_months` of data.
+    Used to freeze the lineage boundary B (orchestrator/lineage_boundary.py),
+    the cutoff of an auto-created research card.
     """
     today = date.today()
     year, month = today.year, today.month - months
@@ -220,8 +207,12 @@ class Runner:
         self.fwbg = fwbg_client
         self.session = session
 
-    async def run(self, strategy: Strategy) -> RunnerResult:
-        """Execute backtests across universe attempts and return the first successful result."""
+    async def run(self, strategy: Strategy, *, reason: str | None = None) -> RunnerResult:
+        """Execute backtests across universe attempts and return the first successful result.
+
+        ``reason`` justifies a deliberate repeat to fwbg's research register
+        and is sent with every start of this run.
+        """
         ar = await start_agent_run(self.session, agent_name="runner", strategy_id=strategy.id)
 
         try:
@@ -250,6 +241,8 @@ class Runner:
                     "that would produce zero results."
                 )
 
+            research_id = await ensure_research_id(self.session, strategy, self.fwbg)
+
             # Ensure the strategy exists in fwbg (once for all attempts). The
             # research flow normally publishes it right after translation; a
             # 409 means it's already there — possibly hand-edited in the
@@ -270,12 +263,9 @@ class Runner:
 
             attempts = plan_universe_attempts(strategy)
             tf_by_symbol = timeframes_by_symbol(strategy)
-            last_reason = "no universe attempts produced results"
-            # Frozen per-lineage boundary — every iteration of every
-            # generation ends its in-sample data at the same date, so the
-            # promote gate's holdout later never overlaps with anything an
-            # iteration trained/tested on.
-            boundary = await get_or_freeze_boundary(self.session, strategy)
+            # One reason per failed attempt; all of them end up in the final
+            # error, so every attempt's refusal codes stay visible.
+            reasons: list[str] = []
 
             for attempt in attempts:
                 assets = await self._resolve_assets(attempt, tf_by_symbol)
@@ -284,10 +274,16 @@ class Runner:
                     # Rung was symbol-only and no symbol had data — nothing to
                     # run, so broaden. (A rung that also names classes still runs
                     # on those, dropping only the dataless symbols.)
-                    last_reason = f"no data for suggested symbols {list(attempt.assets)}"
-                    log.info("runner: %s; falling back", last_reason)
+                    reasons.append(
+                        f"attempt {attempt.label!r}: no data for suggested symbols "
+                        f"{list(attempt.assets)}"
+                    )
+                    log.info("runner: %s; falling back", reasons[-1])
                     continue
 
+                note = await run_note(
+                    self.session, strategy, attempt_label=attempt.label, assets=assets
+                )
                 log.info(
                     "runner: attempt %r for %s (assets=%s, asset_classes=%s)",
                     attempt.label,
@@ -301,16 +297,18 @@ class Runner:
                         assets=assets,
                         asset_classes=asset_classes,
                         agent_run_id=ar.id,
-                        # Reserve the frozen lineage boundary onward as an
-                        # unseen holdout — the promote gate validates on it
-                        # later. Frozen once per lineage (see
-                        # orchestrator/lineage_boundary.py), not recomputed
-                        # from today() on every run.
-                        end_date=boundary,
+                        # No end_date: fwbg clamps an open-ended iteration to
+                        # the research card's cutoff, the source of truth for
+                        # the split. An operator-linked card (Plan 028 D8) may
+                        # cut off before the lineage boundary B; ending at B
+                        # would then be refused as after_cutoff.
+                        research_id=research_id,
+                        note=note,
+                        reason=reason,
                     )
                 except RunnerError as exc:
-                    last_reason = f"attempt {attempt.label!r}: {exc}"
-                    log.info("runner: %s; falling back", last_reason)
+                    reasons.append(f"attempt {attempt.label!r}: {exc}")
+                    log.info("runner: %s; falling back", reasons[-1])
                     continue
 
                 metrics = _median_metrics_across_assets(run_data)
@@ -338,10 +336,12 @@ class Runner:
                                 dependent=dep[0],
                                 dependency=dep[1],
                             )
-                        last_reason = f"attempt {attempt.label!r}: {detail}"
+                        reasons.append(f"attempt {attempt.label!r}: {detail}")
                     else:
-                        last_reason = f"attempt {attempt.label!r} completed but produced no metrics"
-                    log.info("runner: %s; falling back", last_reason)
+                        reasons.append(
+                            f"attempt {attempt.label!r} completed but produced no metrics"
+                        )
+                    log.info("runner: %s; falling back", reasons[-1])
                     continue
 
                 # Success — persist and transition.
@@ -397,7 +397,8 @@ class Runner:
                 )
 
             raise RunnerError(
-                f"all {len(attempts)} universe attempt(s) exhausted; last: {last_reason}"
+                f"all {len(attempts)} universe attempt(s) exhausted: "
+                + ("; ".join(reasons) or "no universe attempts produced results")
             )
         except Exception as exc:
             await fail_agent_run(
@@ -482,9 +483,11 @@ class Runner:
         *,
         assets: list[str] | None,
         asset_classes: list[str] | None,
-        start_date: str | None = None,
-        end_date: str | None = None,
         cost_multiplier: float | None = None,
+        research_id: str,
+        note: str,
+        reason: str | None = None,
+        holdout: bool = False,
     ) -> str:
         """Get a job_id for this strategy: adopt an already-active fwbg run
         of the same strategy, or start a new one — waiting while fwbg's
@@ -496,7 +499,9 @@ class Runner:
         The contract with fwbg is a single backtest slot: the paired server is
         configured with FWBG_MAX_CONCURRENT_RUNS=1 (its default) and answers
         429 while busy — the intended behaviour then is to wait for the slot,
-        not to burn a universe attempt.
+        not to burn a universe attempt. A run still in fwbg's research
+        preflight ("starting") is active too. A research gate refusal raises
+        ResearchGateRefusedError.
         """
         deadline = time.monotonic() + settings.runner_poll_timeout_seconds
         while True:
@@ -504,11 +509,22 @@ class Runner:
                 active = [
                     r
                     for r in await self.fwbg.list_runs()
-                    if r.get("status") == "running" and r.get("strategy_name") == fwbg_name
+                    if r.get("status") in _ACTIVE_FWBG_STATUSES
+                    and r.get("strategy_name") == fwbg_name
+                    and not holdout
                 ]
             except (httpx.TransportError, FwbgClientError):
                 active = []
             if active:
+                # ponytail: adoption matches by strategy_name only. (1) Should
+                # fwbg's preflight refuse an adopted "starting" run, fwbg drops
+                # the job and polling sees 404s until the outage tolerance ends
+                # it as "unreachable", not as a refusal. (2) A start that a
+                # proxy timed out (fwbg still started it) can be adopted by the
+                # next universe attempt and recorded under that attempt's
+                # label. Both rare; upgrade path: treat a 404 for an adopted
+                # starting run as a refusal, and match adoption on the run's
+                # universe (assets/asset_classes) as well.
                 job_id = active[0].get("run_id") or active[0].get("job_id")
                 log.info(
                     "runner: adopting already-active fwbg job %s for %s",
@@ -522,12 +538,17 @@ class Runner:
                     fwbg_name,
                     assets=assets,
                     asset_classes=asset_classes,
-                    start_date=start_date,
-                    end_date=end_date,
                     cost_multiplier=cost_multiplier,
+                    research_id=research_id,
+                    note=note,
+                    reason=reason,
+                    holdout=holdout,
                 )
             except FwbgClientError as exc:
                 if exc.status != 429:
+                    refusal = research_gate_refusal(exc)
+                    if refusal is not None:
+                        raise refusal from exc
                     raise
                 if time.monotonic() >= deadline:
                     raise RunnerError(
@@ -548,19 +569,24 @@ class Runner:
         assets: list[str] | None,
         asset_classes: list[str] | None,
         agent_run_id: int,
-        start_date: str | None = None,
-        end_date: str | None = None,
         cost_multiplier: float | None = None,
+        research_id: str,
+        note: str,
+        reason: str | None = None,
+        holdout: bool = False,
     ) -> tuple[str, dict[str, Any]]:
         """Start one fwbg run and poll it to completion. Raises RunnerError on
-        a failed/errored run or a polling timeout."""
+        a failed/errored run, a research gate refusal or a polling timeout.
+        ``holdout`` asks fwbg for the research card's holdout look."""
         job_id = await self._acquire_run(
             fwbg_name,
             assets=assets,
             asset_classes=asset_classes,
-            start_date=start_date,
-            end_date=end_date,
             cost_multiplier=cost_multiplier,
+            research_id=research_id,
+            note=note,
+            reason=reason,
+            holdout=holdout,
         )
         # Anchor event for the dashboard's link to /runs/<fwbg_run_id>.
         emit_run_event(

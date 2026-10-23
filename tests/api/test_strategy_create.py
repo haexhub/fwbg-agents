@@ -124,3 +124,34 @@ async def test_post_strategy_rejects_invalid_slug(client_with_db):
     body = {**_BASE_BODY, "slug": "Demo Strategy 2 !!"}
     r = await client.post("/strategies", json=body)
     assert r.status_code == 422
+
+
+async def test_post_strategy_stores_a_given_research_id_on_the_root(client_with_db):
+    client, session, _tmp_path = client_with_db
+    r = await client.post("/strategies", json={**_BASE_BODY, "research_id": "S-0042"})
+    assert r.status_code == 201, r.text
+
+    row = (
+        await session.execute(select(Strategy).where(Strategy.slug == "demo_orb_v1"))
+    ).scalar_one()
+    assert row.metadata_json == {"research_id": "S-0042"}
+
+
+async def test_post_strategy_without_research_id_keeps_empty_metadata(client_with_db):
+    client, session, _tmp_path = client_with_db
+    r = await client.post("/strategies", json=_BASE_BODY)
+    assert r.status_code == 201, r.text
+
+    row = (
+        await session.execute(select(Strategy).where(Strategy.slug == "demo_orb_v1"))
+    ).scalar_one()
+    assert row.metadata_json == {}
+
+
+async def test_post_strategy_rejects_a_malformed_research_id(client_with_db):
+    client, session, _tmp_path = client_with_db
+    r = await client.post("/strategies", json={**_BASE_BODY, "research_id": "S-42"})
+    assert r.status_code == 422
+
+    rows = (await session.execute(select(Strategy))).scalars().all()
+    assert rows == []

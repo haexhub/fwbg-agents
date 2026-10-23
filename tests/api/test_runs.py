@@ -13,6 +13,7 @@ covered by their own tests.
 from __future__ import annotations
 
 import json
+from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 
 import pytest_asyncio
@@ -99,8 +100,8 @@ async def test_post_run_creates_agent_run_and_returns_202(runs_client, monkeypat
 
     captured = []
 
-    async def fake_run_runner(strategy_id: int):
-        captured.append(("runner", strategy_id))
+    async def fake_run_runner(strategy_id: int, reason: str | None = None):
+        captured.append(("runner", strategy_id, reason))
 
     from fwbg_agents.api import runs as runs_api
 
@@ -119,7 +120,68 @@ async def test_post_run_creates_agent_run_and_returns_202(runs_client, monkeypat
     assert ar.agent_name == "runner"
     assert ar.strategy_id == proposed_id
 
-    assert captured == [("runner", proposed_id)]
+    assert captured == [("runner", proposed_id, None)]
+
+
+async def test_post_run_passes_the_reason_to_the_runner(runs_client, monkeypatch):
+    client, _, proposed_id, _, _ = runs_client
+    captured = []
+
+    async def fake_run_runner(strategy_id: int, reason: str | None = None):
+        captured.append(reason)
+
+    from fwbg_agents.api import runs as runs_api
+
+    monkeypatch.setattr(runs_api, "_run_runner_background", fake_run_runner)
+
+    r = await client.post(
+        f"/strategies/{proposed_id}/run", json={"reason": "re-run after a data fix"}
+    )
+
+    assert r.status_code == 202, r.text
+    assert captured == ["re-run after a data fix"]
+
+
+async def test_post_run_rejects_a_blank_reason(runs_client, monkeypatch):
+    client, _, proposed_id, _, _ = runs_client
+    captured = []
+
+    async def fake_run_runner(strategy_id: int, reason: str | None = None):
+        captured.append(reason)
+
+    from fwbg_agents.api import runs as runs_api
+
+    monkeypatch.setattr(runs_api, "_run_runner_background", fake_run_runner)
+
+    r = await client.post(f"/strategies/{proposed_id}/run", json={"reason": "  "})
+
+    assert r.status_code == 422
+    assert captured == []
+
+
+async def test_runner_background_hands_the_reason_to_the_runner(runs_client, monkeypatch):
+    _, session, proposed_id, _, _ = runs_client
+    seen = []
+
+    class _Runner:
+        def __init__(self, client, session):
+            pass
+
+        async def run(self, strategy, *, reason=None):
+            seen.append((strategy.id, reason))
+
+    @asynccontextmanager
+    async def _session():
+        yield session
+
+    from fwbg_agents.api import runs as runs_api
+
+    monkeypatch.setattr(runs_api, "Runner", _Runner)
+    monkeypatch.setattr(runs_api, "SessionLocal", _session)
+
+    await runs_api._run_runner_background(proposed_id, reason="re-run after a data fix")
+
+    assert seen == [(proposed_id, "re-run after a data fix")]
 
 
 async def test_post_run_unknown_strategy_404(runs_client):

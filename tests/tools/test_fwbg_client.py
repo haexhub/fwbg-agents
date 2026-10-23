@@ -68,11 +68,16 @@ async def test_start_run_posts_strategy_name_and_returns_job():
     http = _mock_client(handler)
     client = FwbgClient(base_url="http://fwbg-test", http=http)
 
-    job = await client.start_run("demo_v1", asset_classes=["FOREX"])
+    job = await client.start_run("demo_v1", asset_classes=["FOREX"], research_id="S-0001", note="n")
 
     assert captured["method"] == "POST"
     assert captured["url"].endswith("/api/runs/start")
-    assert captured["body"] == {"strategy_name": "demo_v1", "asset_classes": ["FOREX"]}
+    assert captured["body"] == {
+        "strategy_name": "demo_v1",
+        "asset_classes": ["FOREX"],
+        "research_id": "S-0001",
+        "note": "n",
+    }
     assert job["job_id"] == "20260624_120000_abcdef"
     assert job["status"] == "running"
     await http.aclose()
@@ -88,9 +93,9 @@ async def test_start_run_omits_asset_classes_when_none():
     http = _mock_client(handler)
     client = FwbgClient(base_url="http://fwbg-test", http=http)
 
-    await client.start_run("demo_v1")
+    await client.start_run("demo_v1", research_id="S-0001", note="n")
 
-    assert captured["body"] == {"strategy_name": "demo_v1"}
+    assert captured["body"] == {"strategy_name": "demo_v1", "research_id": "S-0001", "note": "n"}
     await http.aclose()
 
 
@@ -287,4 +292,230 @@ async def test_post_is_not_retried():
         await client.create_strategy("s1", {"name": "s1"})
 
     assert attempts["n"] == 1  # POSTs are not idempotent — never auto-retry
+    await http.aclose()
+
+
+# ---------------------------------------------------------------------------
+# Research register: run-start fields, card endpoints, start timeout.
+# ---------------------------------------------------------------------------
+
+
+async def test_start_run_sends_research_id_and_note():
+    captured: dict = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["body"] = json.loads(request.content)
+        return httpx.Response(200, json={"job_id": "x", "status": "starting"})
+
+    http = _mock_client(handler)
+    client = FwbgClient(base_url="http://fwbg-test", http=http)
+
+    await client.start_run("demo_v1", research_id="S-0001", note="initial backtest: demo")
+
+    assert captured["body"] == {
+        "strategy_name": "demo_v1",
+        "research_id": "S-0001",
+        "note": "initial backtest: demo",
+    }
+    await http.aclose()
+
+
+async def test_start_run_sends_reason_and_holdout_when_given():
+    captured: dict = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["body"] = json.loads(request.content)
+        return httpx.Response(200, json={"job_id": "x", "status": "starting"})
+
+    http = _mock_client(handler)
+    client = FwbgClient(base_url="http://fwbg-test", http=http)
+
+    await client.start_run(
+        "demo_v1",
+        research_id="S-0001",
+        note="promote gate holdout look",
+        reason="promote gate: further holdout look (demo)",
+        holdout=True,
+    )
+
+    assert captured["body"]["reason"] == "promote gate: further holdout look (demo)"
+    assert captured["body"]["holdout"] is True
+    await http.aclose()
+
+
+async def test_start_run_omits_reason_when_none_and_holdout_when_false():
+    captured: dict = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["body"] = json.loads(request.content)
+        return httpx.Response(200, json={"job_id": "x", "status": "starting"})
+
+    http = _mock_client(handler)
+    client = FwbgClient(base_url="http://fwbg-test", http=http)
+
+    await client.start_run("demo_v1", research_id="S-0001", note="n", reason=None, holdout=False)
+
+    assert "reason" not in captured["body"]
+    assert "holdout" not in captured["body"]
+    await http.aclose()
+
+
+async def test_start_run_waits_long_for_the_preflight_answer_only():
+    timeouts: dict[str, dict] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        timeouts[request.url.path] = request.extensions["timeout"]
+        if request.url.path == "/api/runs/start":
+            return httpx.Response(200, json={"job_id": "job_1", "status": "starting"})
+        return httpx.Response(200, json={"run_id": "job_1", "status": "running"})
+
+    transport = httpx.MockTransport(handler)
+    http = httpx.AsyncClient(
+        transport=transport,
+        base_url="http://fwbg-test",
+        timeout=httpx.Timeout(connect=3.0, read=7.0, write=11.0, pool=13.0),
+    )
+    client = FwbgClient(base_url="http://fwbg-test", http=http)
+
+    await client.start_run("demo_v1", research_id="S-0001", note="n")
+    await client.get_run("job_1")
+    await client.create_strategy("s1", {"name": "s1"})
+
+    # Only the wait for fwbg's answer covers the preflight; connecting,
+    # sending and the pool keep the client's own limits.
+    assert timeouts["/api/runs/start"] == {
+        "connect": 3.0,
+        "read": 150.0,
+        "write": 11.0,
+        "pool": 13.0,
+    }
+    client_default = {"connect": 3.0, "read": 7.0, "write": 11.0, "pool": 13.0}
+    assert timeouts["/api/runs/job_1"] == client_default
+    assert timeouts["/api/strategies"] == client_default
+    await http.aclose()
+
+
+@pytest.mark.parametrize(("client_read", "expected_read"), [(300.0, 300.0), (None, None)])
+async def test_start_run_keeps_a_longer_client_read_timeout(client_read, expected_read):
+    """An injected client that already waits longer (or without limit) keeps
+    that wait; the preflight timeout is a floor, not a cap."""
+    timeouts: dict[str, dict] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        timeouts[request.url.path] = request.extensions["timeout"]
+        return httpx.Response(200, json={"job_id": "job_1", "status": "starting"})
+
+    http = httpx.AsyncClient(
+        transport=httpx.MockTransport(handler),
+        base_url="http://fwbg-test",
+        timeout=httpx.Timeout(5.0, read=client_read),
+    )
+    client = FwbgClient(base_url="http://fwbg-test", http=http)
+
+    await client.start_run("demo_v1", research_id="S-0001", note="n")
+
+    assert timeouts["/api/runs/start"]["read"] == expected_read
+    await http.aclose()
+
+
+async def test_start_run_refusal_raises_fwbg_client_error():
+    refusal = {
+        "detail": {
+            "message": "research gate refused the run",
+            "denials": [{"code": "after_cutoff", "status": 409, "message": "ends after cutoff"}],
+        }
+    }
+
+    def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(409, json=refusal)
+
+    http = _mock_client(handler)
+    client = FwbgClient(base_url="http://fwbg-test", http=http)
+
+    with pytest.raises(FwbgClientError) as exc:
+        await client.start_run("demo_v1", research_id="S-0001", note="n")
+    assert exc.value.status == 409
+    assert json.loads(exc.value.body) == refusal
+    await http.aclose()
+
+
+async def test_create_research_card_posts_card_fields_and_returns_json():
+    captured: dict = {}
+    response = {"card": {"id": "S-0042", "title": "Demo idea"}, "warning": "not committed"}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["method"] = request.method
+        captured["path"] = request.url.path
+        captured["body"] = json.loads(request.content)
+        return httpx.Response(201, json=response)
+
+    http = _mock_client(handler)
+    client = FwbgClient(base_url="http://fwbg-test", http=http)
+
+    out = await client.create_research_card(
+        title="Demo idea",
+        tags=["forex", "breakout"],
+        hypothesis="Opening ranges break with momentum.",
+        mechanism="Overnight order flow accumulates at the open.",
+        cutoff="2026-04-22",
+    )
+
+    assert captured["method"] == "POST"
+    assert captured["path"] == "/api/research"
+    assert captured["body"] == {
+        "title": "Demo idea",
+        "tags": ["forex", "breakout"],
+        "hypothesis": "Opening ranges break with momentum.",
+        "mechanism": "Overnight order flow accumulates at the open.",
+        "cutoff": "2026-04-22",
+    }
+    assert out == response
+    await http.aclose()
+
+
+async def test_create_research_card_non_2xx_raises_fwbg_client_error():
+    def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(422, json={"detail": "tags must not be empty"})
+
+    http = _mock_client(handler)
+    client = FwbgClient(base_url="http://fwbg-test", http=http)
+
+    with pytest.raises(FwbgClientError) as exc:
+        await client.create_research_card(
+            title="t", tags=[], hypothesis="h", mechanism="m", cutoff="2026-04-22"
+        )
+    assert exc.value.status == 422
+    await http.aclose()
+
+
+async def test_get_research_card_returns_card_and_trials():
+    response = {
+        "card": {"id": "S-0042"},
+        "trials": [{"kind": "iteration"}, {"kind": "holdout"}],
+    }
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.method == "GET"
+        assert request.url.path == "/api/research/S-0042"
+        return httpx.Response(200, json=response)
+
+    http = _mock_client(handler)
+    client = FwbgClient(base_url="http://fwbg-test", http=http)
+
+    out = await client.get_research_card("S-0042")
+
+    assert out == response
+    await http.aclose()
+
+
+async def test_get_research_card_non_2xx_raises_fwbg_client_error():
+    def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(404, json={"detail": "card not found"})
+
+    http = _mock_client(handler)
+    client = FwbgClient(base_url="http://fwbg-test", http=http)
+
+    with pytest.raises(FwbgClientError) as exc:
+        await client.get_research_card("S-9999")
+    assert exc.value.status == 404
     await http.aclose()

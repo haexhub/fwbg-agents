@@ -14,6 +14,7 @@ from fwbg_agents.orchestrator.trials import (
     count_trials,
     deflated_sharpe_ratio,
     expected_max_sharpe,
+    holdout_pnl_series,
     per_trade_sharpe,
     record_trial_stat,
     series_moments,
@@ -76,6 +77,83 @@ def test_per_trade_sharpe_needs_at_least_two_trades():
 
 def test_per_trade_sharpe_zero_variance_is_none():
     assert per_trade_sharpe([1.0, 1.0, 1.0]) is None
+
+
+def _holdout_symbol(run_dir, symbol, *, trades=None, evaluated=True, holdout_trades=0):
+    """A symbol directory of a register holdout look (config.json + trades.json)."""
+    sym_dir = run_dir / "grid_details" / symbol
+    sym_dir.mkdir(parents=True)
+    holdout = {"cutoff": "2024-01-01", "evaluated": evaluated, "trades": holdout_trades}
+    config = {"status": "ok", "holdout": holdout}
+    (sym_dir / "config.json").write_text(json.dumps(config))
+    if trades is not None:
+        (sym_dir / "trades.json").write_text(json.dumps(trades))
+    return sym_dir
+
+
+def test_holdout_pnl_series_reads_every_symbols_tr_trace(tmp_path):
+    _holdout_symbol(tmp_path, "EURUSD", trades={"tr_trace": [1.0, -0.5], "trades_detailed": []})
+    _holdout_symbol(tmp_path, "GBPUSD", trades={"tr_trace": [2, -1]})
+    _holdout_symbol(tmp_path, "USDJPY")  # looked at, no trades after the cutoff
+    assert holdout_pnl_series(tmp_path) == [1.0, -0.5, 2.0, -1.0]
+
+
+def test_holdout_pnl_series_without_symbols_is_empty(tmp_path):
+    (tmp_path / "grid_details").mkdir()
+    assert holdout_pnl_series(tmp_path) == []
+
+
+@pytest.mark.parametrize("run_dir", ["missing_run", "run_without_grid_details"])
+def test_holdout_pnl_series_without_the_run_files_is_unreadable(tmp_path, run_dir):
+    """A missing run directory (e.g. fwbg's test_results not mounted) is not a
+    look without trades."""
+    (tmp_path / "run_without_grid_details").mkdir()
+    assert holdout_pnl_series(tmp_path / run_dir) is None
+
+
+@pytest.mark.parametrize(
+    "trades",
+    [
+        {"trades_detailed": []},  # no tr_trace
+        {"tr_trace": "1.0,-0.5"},  # not a list
+        {"tr_trace": [1.0, True]},  # bool is not a P&L
+        {"tr_trace": [1.0, None]},
+        [1.0, -0.5],  # top-level list instead of an object
+    ],
+)
+def test_holdout_pnl_series_rejects_a_malformed_trades_file(tmp_path, trades):
+    _holdout_symbol(tmp_path, "EURUSD", trades={"tr_trace": [1.0, -0.5]})
+    _holdout_symbol(tmp_path, "GBPUSD", trades=trades)
+    assert holdout_pnl_series(tmp_path) is None
+
+
+def test_holdout_pnl_series_rejects_invalid_json(tmp_path):
+    sym_dir = _holdout_symbol(tmp_path, "EURUSD")
+    (sym_dir / "trades.json").write_text("{not json")
+    assert holdout_pnl_series(tmp_path) is None
+
+
+def test_holdout_pnl_series_only_reads_an_evaluated_holdout_look(tmp_path):
+    """Trades of a symbol whose config.json does not mark an evaluated look
+    (an ordinary run, or a look that never happened) are not holdout trades."""
+    _holdout_symbol(tmp_path, "EURUSD", trades={"tr_trace": [1.0, -0.5]}, evaluated=False)
+    assert holdout_pnl_series(tmp_path) is None
+
+
+def test_holdout_pnl_series_rejects_a_look_whose_trades_file_is_missing(tmp_path):
+    """fwbg's holdout phase can fail after the look traded (status error, no
+    trades.json): the look happened, its trades are unknown."""
+    _holdout_symbol(tmp_path, "EURUSD", trades={"tr_trace": [1.0, -0.5]}, holdout_trades=2)
+    _holdout_symbol(tmp_path, "GBPUSD", holdout_trades=3)
+    assert holdout_pnl_series(tmp_path) is None
+
+
+def test_holdout_pnl_series_rejects_trades_without_a_holdout_block(tmp_path):
+    sym_dir = tmp_path / "grid_details" / "EURUSD"
+    sym_dir.mkdir(parents=True)
+    (sym_dir / "config.json").write_text(json.dumps({"status": "ok"}))
+    (sym_dir / "trades.json").write_text(json.dumps({"tr_trace": [1.0, -0.5]}))
+    assert holdout_pnl_series(tmp_path) is None
 
 
 def test_series_moments_matches_manual_computation():

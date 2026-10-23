@@ -53,3 +53,8 @@ graphify-out/
 
 # uv
 .uv/
+
+# spaex
+.spaex/manifest.json.lock
+.spaex/composer.log
+.spaex/.stale
