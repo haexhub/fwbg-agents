@@ -4,7 +4,15 @@ from __future__ import annotations
 
 
 class RunnerError(RuntimeError):
-    """Raised when every universe attempt fails (fwbg errors / no results)."""
+    """Raised when every universe attempt fails (fwbg errors / no results).
+
+    ``fwbg_run_id`` names the fwbg run that failed, when there was one, so a
+    caller can still point at its logs.
+    """
+
+    def __init__(self, message: str, *, fwbg_run_id: str | None = None):
+        super().__init__(message)
+        self.fwbg_run_id = fwbg_run_id
 
 
 class UnrunnableStrategyError(RunnerError):
