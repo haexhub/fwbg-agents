@@ -17,14 +17,21 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
+from collections.abc import Collection
 from pathlib import Path
+from typing import Any, Protocol
 
+import httpx
 from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from fwbg_agents.orchestrator.lifecycle import strategy_dir
 from fwbg_agents.persistence.models import Strategy, StrategyTag
+from fwbg_agents.tools.fwbg_client import FwbgClientError
+
+log = logging.getLogger(__name__)
 
 JACCARD_THRESHOLD = 0.2
 MAX_RESULTS = 20
@@ -155,5 +162,79 @@ async def lookup_prior_art(
             )
         )
 
+    matches.sort(key=lambda m: m.jaccard, reverse=True)
+    return matches[:MAX_RESULTS]
+
+
+class RegisterMatch(BaseModel):
+    """A research-register card that overlaps with a new hypothesis.
+
+    Informational only: unlike a ``PriorArtMatch`` it never makes
+    ``validate_hypothesis`` reject anything. The Researcher reads the verdict
+    and the reopen condition and decides whether its idea differs.
+    """
+
+    research_id: str
+    title: str
+    status: str
+    tags_overlap: list[str]
+    jaccard: float
+    hypothesis: str | None = None
+    mechanism: str | None = None
+    verdict_reason: str | None = None
+    reopen_if: str | None = None
+
+
+class _RegisterClient(Protocol):
+    async def list_research_cards(self) -> list[dict[str, Any]]: ...
+
+
+async def own_research_ids(session: AsyncSession) -> set[str]:
+    """Register ids that agent lineages already carry; their strategies are matched directly."""
+    rows = (await session.execute(select(Strategy.metadata_json))).scalars().all()
+    return {m["research_id"] for m in rows if isinstance(m, dict) and m.get("research_id")}
+
+
+async def lookup_register_prior_art(
+    client: _RegisterClient,
+    tags: list[str],
+    *,
+    skip_ids: Collection[str] = (),
+) -> list[RegisterMatch]:
+    """Return register cards whose tags overlap with the candidate's.
+
+    Same Jaccard rule and threshold as :func:`lookup_prior_art`. Cards in
+    ``skip_ids`` are left out (agent lineages, already covered by the strategy
+    lookup). If the register cannot be read the result is empty: prior art from
+    the register is context, so an outage must not stop a research run.
+    """
+    try:
+        cards = await client.list_research_cards()
+    except (FwbgClientError, httpx.HTTPError) as exc:
+        log.warning("register prior art unavailable: %s", exc)
+        return []
+    input_tags = set(tags)
+    matches: list[RegisterMatch] = []
+    for card in cards:
+        if "error" in card or card["id"] in skip_ids:
+            continue
+        found = set(card["tags"])
+        jaccard = _jaccard(input_tags, found)
+        if jaccard < JACCARD_THRESHOLD:
+            continue
+        verdict = card.get("verdict") or {}
+        matches.append(
+            RegisterMatch(
+                research_id=card["id"],
+                title=card["title"],
+                status=card["status"],
+                tags_overlap=sorted(input_tags & found),
+                jaccard=jaccard,
+                hypothesis=card.get("hypothesis"),
+                mechanism=card.get("mechanism"),
+                verdict_reason=verdict.get("reason"),
+                reopen_if=verdict.get("reopen_if"),
+            )
+        )
     matches.sort(key=lambda m: m.jaccard, reverse=True)
     return matches[:MAX_RESULTS]

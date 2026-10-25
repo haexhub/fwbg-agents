@@ -56,6 +56,7 @@ from fwbg_agents.orchestrator.plugin_flow import (
     reiterate_with_plugin,
 )
 from fwbg_agents.orchestrator.recommendations import validate_and_apply
+from fwbg_agents.orchestrator.research_card import record_abandon_verdict
 from fwbg_agents.orchestrator.research_flow import (
     publish_strategy_to_fwbg,
     reiterate,
@@ -590,6 +591,7 @@ async def abandon_capped_proposed(session: AsyncSession) -> int:
                 created_by="auto_runner",
             )
             abandoned += 1
+            await record_abandon_verdict(session, s, reason=summary)
             log.info("runner auto mode: abandoned capped strategy %s (%s)", s.id, reason)
         except Exception:
             log.exception("runner auto mode: could not abandon capped strategy %s", s.id)

@@ -10,6 +10,7 @@ fwbg's API (see ~/Projekte/fwbg/src/fwbg/api/runs.py):
                                returns: {job_id, status, ...}
 - POST /api/research           body: {title, tags, hypothesis, mechanism, cutoff}
                                returns: {card, warning?}
+- GET  /api/research           returns: {cards: [...]}; ?detail=true adds prose
 - GET  /api/research/{id}      returns: {card, trials, ...}
 - GET  /api/runs/{run_id}/progress
                                returns: {status, progress?, phase?, ...}
@@ -222,6 +223,31 @@ class FwbgClient:
     async def get_research_card(self, research_id: str) -> dict[str, Any]:
         """Return a register card with its trials (GET /api/research/{research_id})."""
         return await self._get(f"/api/research/{research_id}")
+
+    async def list_research_cards(self) -> list[dict[str, Any]]:
+        """Return every register card with hypothesis, mechanism and latest verdict.
+
+        GET /api/research?detail=true. A card fwbg could not load comes back as
+        ``{"id", "error"}`` only.
+        """
+        return (await self._get("/api/research?detail=true"))["cards"]
+
+    async def set_research_status(
+        self,
+        research_id: str,
+        *,
+        status: str,
+        reason: str,
+        actor: str,
+        reopen_if: str | None = None,
+    ) -> dict[str, Any]:
+        """Set a card's verdict or reopen it (POST /api/research/{id}/status).
+
+        A ``warning`` in the answer means fwbg wrote the change but did not
+        commit it, so the caller must not retry.
+        """
+        body = {"status": status, "reason": reason, "actor": actor, "reopen_if": reopen_if}
+        return await self._post(f"/api/research/{research_id}/status", body)
 
     async def get_plugins(self) -> list[dict[str, Any]]:
         """Return all registered plugins (GET /api/plugins).

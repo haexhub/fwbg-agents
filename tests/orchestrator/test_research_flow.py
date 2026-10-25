@@ -205,7 +205,15 @@ def _make_flaky_researcher_factory(n_fail: int):
     counter = itertools.count()
 
     class _FlakyResearcher:
-        def __init__(self, session, *, model=None, search_client=None, available_plugins=None):
+        def __init__(
+            self,
+            session,
+            *,
+            model=None,
+            search_client=None,
+            available_plugins=None,
+            register_client=None,
+        ):
             self.session = session
 
         async def run(self, input):
@@ -466,7 +474,15 @@ async def test_fanout_propagates_cancellation_without_retrying(db, monkeypatch):
     attempts = itertools.count()
 
     class _CancellingResearcher:
-        def __init__(self, session, *, model=None, search_client=None, available_plugins=None):
+        def __init__(
+            self,
+            session,
+            *,
+            model=None,
+            search_client=None,
+            available_plugins=None,
+            register_client=None,
+        ):
             pass
 
         async def run(self, input):
@@ -515,7 +531,15 @@ def _make_multi_hypothesis_researcher_factory(titles: list[str]):
     counter = itertools.count()
 
     class _MultiResearcher:
-        def __init__(self, session, *, model=None, search_client=None, available_plugins=None):
+        def __init__(
+            self,
+            session,
+            *,
+            model=None,
+            search_client=None,
+            available_plugins=None,
+            register_client=None,
+        ):
             self.session = session
 
         async def run(self, input):
@@ -692,7 +716,15 @@ async def test_candidates_mode_partial_collection_still_runs_critic(db, monkeypa
     counter = itertools.count()
 
     class _PartialResearcher:
-        def __init__(self, session, *, model=None, search_client=None, available_plugins=None):
+        def __init__(
+            self,
+            session,
+            *,
+            model=None,
+            search_client=None,
+            available_plugins=None,
+            register_client=None,
+        ):
             self.session = session
 
         async def run(self, input):

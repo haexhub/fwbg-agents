@@ -38,7 +38,11 @@ from fwbg_agents.orchestrator.hypotheses import (
     validate_hypothesis,
 )
 from fwbg_agents.orchestrator.lessons import lessons_digest
-from fwbg_agents.orchestrator.prior_art import lookup_prior_art
+from fwbg_agents.orchestrator.prior_art import (
+    lookup_prior_art,
+    lookup_register_prior_art,
+    own_research_ids,
+)
 from fwbg_agents.persistence.agent_runs import (
     fail_agent_run,
     finish_agent_run,
@@ -49,6 +53,7 @@ from fwbg_agents.persistence.models import (
     LlmCall,
 )
 from fwbg_agents.run_events import emit_run_event
+from fwbg_agents.tools.fwbg_client import FwbgClient
 from fwbg_agents.tools.llm import model_for, prompt_path_for, tool_callback_headers
 from fwbg_agents.tools.llm_pricing import estimate_cost_usd
 from fwbg_agents.tools.search import SearchProvider, SearchResult, SearchUnavailableError
@@ -116,6 +121,7 @@ class Researcher:
         search_client: SearchProvider | None = None,
         prompt_path: Path | None = None,
         available_plugins: dict | None = None,
+        register_client: FwbgClient | None = None,
     ):
         """Initialize."""
         self.session = session
@@ -125,6 +131,9 @@ class Researcher:
         # Current fwbg building blocks (fetched by the orchestrator per run) —
         # rendered into the prompt so hypotheses reference real capabilities.
         self.available_plugins = available_plugins
+        # Reads the research register for prior art; without it the register
+        # tool answers with nothing.
+        self.register_client = register_client
 
     async def run(self, input: ResearcherInput) -> ResearcherHypothesis:
         """Run the researcher agent and return a validated hypothesis."""
@@ -149,6 +158,7 @@ class Researcher:
 
             session = self.session
             search_client = self.search_client
+            register_client = self.register_client
             agent_run_id = ar.id
 
             @agent.tool_plain
@@ -162,6 +172,22 @@ class Researcher:
                 # strategy_family is accepted for prompt/tool-schema stability but not
                 # forwarded: matching is tag-Jaccard only (see prior_art.py docstring).
                 matches = await lookup_prior_art(session, asset_class, tags)
+                return [m.model_dump() for m in matches]
+
+            @agent.tool_plain
+            async def lookup_register_tool(tags: list[str]) -> list[dict]:
+                """Search the research register for ideas tested before (tag-based).
+
+                Each match carries the card's hypothesis, mechanism, status and
+                its verdict with the condition for reopening it. Informational:
+                a match never rejects your hypothesis, but if you propose the
+                same idea again, say what is different.
+                """
+                if register_client is None:
+                    return []
+                matches = await lookup_register_prior_art(
+                    register_client, tags, skip_ids=await own_research_ids(session)
+                )
                 return [m.model_dump() for m in matches]
 
             @agent.tool_plain
@@ -210,6 +236,7 @@ class Researcher:
                 ar.id,
                 {
                     "lookup_prior_art_tool": lookup_prior_art_tool,
+                    "lookup_register_tool": lookup_register_tool,
                     "search_web_tool": search_web_tool,
                 },
             ):

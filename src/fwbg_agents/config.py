@@ -238,6 +238,16 @@ class Settings(BaseSettings):
             "Analyst is told the budget is exhausted."
         ),
     )
+    register_reject_min_confidence: float = Field(
+        default=0.8,
+        ge=0.0,
+        le=1.0,
+        description=(
+            "Minimum Analyst confidence for an abandon of a whole lineage to close its "
+            "research-register card as rejected. Below it (and for every operator or "
+            "auto-runner abandon) the card is only parked, which reopens without friction."
+        ),
+    )
     min_iterations_before_abandon: int = Field(
         default=3,
         ge=1,

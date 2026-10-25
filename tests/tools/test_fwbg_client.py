@@ -519,3 +519,43 @@ async def test_get_research_card_non_2xx_raises_fwbg_client_error():
         await client.get_research_card("S-9999")
     assert exc.value.status == 404
     await http.aclose()
+
+
+async def test_list_research_cards_requests_detail_and_unwraps_cards():
+    captured: dict = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["url"] = str(request.url)
+        return httpx.Response(200, json={"cards": [{"id": "S-0001"}], "pending_error": None})
+
+    http = _mock_client(handler)
+    client = FwbgClient(base_url="http://fwbg-test", http=http)
+
+    assert await client.list_research_cards() == [{"id": "S-0001"}]
+    assert captured["url"] == "http://fwbg-test/api/research?detail=true"
+    await http.aclose()
+
+
+async def test_set_research_status_posts_verdict_with_actor():
+    captured: dict = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["path"] = request.url.path
+        captured["body"] = json.loads(request.content)
+        return httpx.Response(200, json={"card": {"id": "S-0042"}})
+
+    http = _mock_client(handler)
+    client = FwbgClient(base_url="http://fwbg-test", http=http)
+
+    await client.set_research_status(
+        "S-0042", status="parked", reason="no edge", actor="fwbg-agents", reopen_if="new entry"
+    )
+
+    assert captured["path"] == "/api/research/S-0042/status"
+    assert captured["body"] == {
+        "status": "parked",
+        "reason": "no edge",
+        "actor": "fwbg-agents",
+        "reopen_if": "new entry",
+    }
+    await http.aclose()

@@ -28,6 +28,7 @@ from fwbg_agents.orchestrator.lifecycle import (
     transition_strategy,
 )
 from fwbg_agents.orchestrator.paper_flow import paper_analyze
+from fwbg_agents.orchestrator.research_card import record_abandon_verdict
 from fwbg_agents.persistence.agent_runs import fail_agent_run, start_agent_run
 from fwbg_agents.persistence.database import SessionLocal, get_session
 from fwbg_agents.persistence.models import (
@@ -610,6 +611,8 @@ async def post_strategy_abandon(
         )
     except InvalidTransitionError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+    await record_abandon_verdict(session, s, reason=body.reason)
 
     return AbandonResponse(
         strategy_id=s.id,

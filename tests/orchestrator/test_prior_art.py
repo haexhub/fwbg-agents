@@ -4,13 +4,19 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
+import httpx
 import pytest
 import pytest_asyncio
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
-from fwbg_agents.orchestrator.prior_art import lookup_prior_art
+from fwbg_agents.orchestrator.prior_art import (
+    lookup_prior_art,
+    lookup_register_prior_art,
+    own_research_ids,
+)
 from fwbg_agents.persistence.database import Base
 from fwbg_agents.persistence.models import Strategy, StrategyState, StrategyTag
+from fwbg_agents.tools.fwbg_client import FwbgClientError
 
 
 @pytest_asyncio.fixture
@@ -201,3 +207,61 @@ async def test_match_surfaces_edge_mechanism_from_hypothesis(db, tmp_path, monke
     )
     matches = await lookup_prior_art(db, "FOREX", ["intraday", "momentum"])
     assert matches[0].edge_mechanism == "London-open liquidity imbalance drives a momentum burst"
+
+
+class _Register:
+    def __init__(self, cards=None, error=None):
+        self.cards, self.error = cards or [], error
+
+    async def list_research_cards(self):
+        if self.error:
+            raise self.error
+        return self.cards
+
+
+def _card(card_id, tags, **extra):
+    return {"id": card_id, "title": f"idea {card_id}", "status": "parked", "tags": tags, **extra}
+
+
+@pytest.mark.asyncio
+async def test_register_matches_carry_prose_and_verdict():
+    card = _card(
+        "S-0001",
+        ["intraday", "momentum"],
+        hypothesis="h",
+        mechanism="m",
+        verdict={"reason": "no edge", "reopen_if": "new entry"},
+    )
+    matches = await lookup_register_prior_art(_Register([card]), ["intraday", "momentum"])
+    assert [(m.research_id, m.jaccard, m.verdict_reason, m.reopen_if) for m in matches] == [
+        ("S-0001", 1.0, "no edge", "new entry")
+    ]
+
+
+@pytest.mark.asyncio
+async def test_register_skips_low_overlap_unreadable_and_own_cards():
+    cards = [
+        _card("S-0001", ["rsi", "mean_reversion"]),
+        {"id": "S-0002", "error": "bad front matter"},
+        _card("S-0003", ["intraday", "momentum"]),
+        _card("S-0004", ["intraday", "momentum"]),
+    ]
+    matches = await lookup_register_prior_art(
+        _Register(cards), ["intraday", "momentum"], skip_ids={"S-0003"}
+    )
+    assert [m.research_id for m in matches] == ["S-0004"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("error", [FwbgClientError(500, "boom"), httpx.ConnectError("down")])
+async def test_register_outage_yields_no_matches(error):
+    assert await lookup_register_prior_art(_Register(error=error), ["intraday"]) == []
+
+
+@pytest.mark.asyncio
+async def test_own_research_ids_reads_lineage_roots(db):
+    a = await _seed(db, "a", "ORB", "FOREX", ["x"])
+    await _seed(db, "b", "ORB", "FOREX", ["x"])
+    a.metadata_json = {"research_id": "S-0007"}
+    await db.commit()
+    assert await own_research_ids(db) == {"S-0007"}

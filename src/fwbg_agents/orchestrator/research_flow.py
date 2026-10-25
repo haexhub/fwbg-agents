@@ -79,6 +79,7 @@ async def _generate_valid_hypothesis(
     search_client: SearchProvider | None,
     fanout_n: int,
     available_plugins: dict | None = None,
+    register_client: FwbgClient | None = None,
 ) -> ResearcherHypothesis:
     """Run up to `fanout_n` Researcher attempts sequentially. Returns the
     first result that passes `validate_hypothesis`; on failure the next
@@ -94,6 +95,7 @@ async def _generate_valid_hypothesis(
                 model=model,
                 search_client=search_client,
                 available_plugins=available_plugins,
+                register_client=register_client,
             )
             return await researcher.run(input)
 
@@ -121,6 +123,7 @@ async def _generate_valid_hypotheses(
     fanout_n: int,
     candidates_n: int,
     available_plugins: dict | None = None,
+    register_client: FwbgClient | None = None,
 ) -> list[ResearcherHypothesis]:
     """Collect up to `candidates_n` valid hypotheses, one per candidate slot,
     each slot getting its own `fanout_n` retry budget (Plan 010 WP3).
@@ -140,6 +143,7 @@ async def _generate_valid_hypotheses(
                     search_client=search_client,
                     fanout_n=fanout_n,
                     available_plugins=available_plugins,
+                    register_client=register_client,
                 )
             )
         except asyncio.CancelledError:
@@ -389,6 +393,7 @@ async def _research_and_translate(
             search_client=search_client,
             fanout_n=fanout_n,
             available_plugins=researcher_summary(live),
+            register_client=fwbg_client,
         )
     else:
         candidates = await _generate_valid_hypotheses(
@@ -398,6 +403,7 @@ async def _research_and_translate(
             fanout_n=fanout_n,
             candidates_n=candidates_n,
             available_plugins=researcher_summary(live),
+            register_client=fwbg_client,
         )
         emit_flow_phase("critiquing")
         hypothesis, critic_report = await _select_hypothesis_via_critic(

@@ -12,6 +12,7 @@ import logging
 from datetime import UTC, datetime
 from typing import Any
 
+import httpx
 import pytest
 import pytest_asyncio
 from sqlalchemy import select
@@ -24,10 +25,12 @@ from fwbg_agents.orchestrator.research_card import (
     NOTE_MAX_CHARS,
     ResearchCardError,
     ensure_research_id,
+    record_abandon_verdict,
     run_note,
 )
 from fwbg_agents.persistence.database import Base
 from fwbg_agents.persistence.models import Strategy, StrategyState
+from fwbg_agents.tools.fwbg_client import FwbgClientError
 
 CUTOFF = "2024-06-01"
 
@@ -459,3 +462,127 @@ async def test_unreadable_recommendation_falls_back(db):
         note = await run_note(session, await _load(session, child.id))
 
     assert note == "iteration of orb_root__it002"
+
+
+class _VerdictFake:
+    def __init__(self, *, error: Exception | None = None, response: dict | None = None) -> None:
+        self.calls: list[dict[str, Any]] = []
+        self._error = error
+        self._response = response or {"card": {}}
+
+    async def set_research_status(self, research_id, *, status, reason, actor, reopen_if):
+        if self._error:
+            raise self._error
+        self.calls.append(
+            {
+                "research_id": research_id,
+                "status": status,
+                "reason": reason,
+                "actor": actor,
+                "reopen_if": reopen_if,
+            }
+        )
+        return self._response
+
+
+async def _abandon(session, strategy) -> None:
+    strategy.current_state = StrategyState.ABANDONED.value
+    await session.commit()
+
+
+async def _lineage(session, *, child_state: StrategyState, card: bool = True):
+    """A root with one child; the root carries the card id and is abandoned."""
+    root = await _make_strategy(session, "root")
+    if card:
+        root.metadata_json = {**root.metadata_json, "research_id": "S-0007"}
+    child = await _make_strategy(session, "child", parent_id=root.id)
+    child.current_state = child_state.value
+    await _abandon(session, root)
+    return root
+
+
+@pytest.mark.asyncio
+async def test_verdict_parks_the_card_once_the_whole_lineage_is_abandoned(db):
+    async with db() as session:
+        root = await _make_strategy(session, "root")
+        root.metadata_json = {**root.metadata_json, "research_id": "S-0007"}
+        child = await _make_strategy(session, "child", parent_id=root.id)
+        await _abandon(session, root)
+        await _abandon(session, child)
+        fake = _VerdictFake()
+
+        await record_abandon_verdict(session, child, reason="  never\nran  ", fwbg=fake)
+
+    assert fake.calls == [
+        {
+            "research_id": "S-0007",
+            "status": "parked",
+            "reason": "never ran",
+            "actor": "fwbg-agents",
+            "reopen_if": research_card._REOPEN_IF_PARKED,
+        }
+    ]
+
+
+@pytest.mark.asyncio
+async def test_verdict_rejects_only_when_asked(db):
+    async with db() as session:
+        root = await _make_strategy(session, "root")
+        root.metadata_json = {**root.metadata_json, "research_id": "S-0007"}
+        await _abandon(session, root)
+        fake = _VerdictFake()
+
+        await record_abandon_verdict(session, root, reason="no edge", rejected=True, fwbg=fake)
+
+    assert [(c["status"], c["reopen_if"]) for c in fake.calls] == [
+        ("rejected", research_card._REOPEN_IF_REJECTED)
+    ]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("alive", [StrategyState.PROPOSED, StrategyState.LIVE_TRADING])
+async def test_verdict_waits_while_a_lineage_member_lives(db, alive):
+    fake = _VerdictFake()
+    async with db() as session:
+        root = await _lineage(session, child_state=alive)
+        await record_abandon_verdict(session, root, reason="no edge", fwbg=fake)
+
+    assert fake.calls == []
+
+
+@pytest.mark.asyncio
+async def test_verdict_needs_a_card(db):
+    fake = _VerdictFake()
+    async with db() as session:
+        root = await _lineage(session, child_state=StrategyState.ABANDONED, card=False)
+        await record_abandon_verdict(session, root, reason="no edge", fwbg=fake)
+
+    assert fake.calls == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "error", [FwbgClientError(409, "card is not active"), httpx.ConnectError("down")]
+)
+async def test_verdict_failure_never_raises(db, error):
+    async with db() as session:
+        root = await _make_strategy(session, "root")
+        root.metadata_json = {**root.metadata_json, "research_id": "S-0007"}
+        await _abandon(session, root)
+
+        await record_abandon_verdict(session, root, reason="x", fwbg=_VerdictFake(error=error))
+
+
+@pytest.mark.asyncio
+async def test_verdict_warning_is_logged_not_retried(db, caplog):
+    async with db() as session:
+        root = await _make_strategy(session, "root")
+        root.metadata_json = {**root.metadata_json, "research_id": "S-0007"}
+        await _abandon(session, root)
+        fake = _VerdictFake(response={"card": {}, "warning": "not committed"})
+
+        with caplog.at_level(logging.WARNING, logger=research_card.log.name):
+            await record_abandon_verdict(session, root, reason="x", fwbg=fake)
+
+    assert len(fake.calls) == 1
+    assert "not committed" in caplog.text

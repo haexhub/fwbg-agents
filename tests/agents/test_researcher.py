@@ -520,3 +520,48 @@ async def test_tool_registry_empties_after_cancellation(db, monkeypatch):
     ar_id = captured["agent_run_id"]
     assert tool_registry.get(ar_id, "lookup_prior_art_tool") is None
     assert tool_registry.get(ar_id, "search_web_tool") is None
+
+
+class _Register:
+    async def list_research_cards(self):
+        return [
+            {
+                "id": "S-0001",
+                "title": "ORB",
+                "status": "parked",
+                "tags": ["intraday", "momentum"],
+                "hypothesis": "h",
+                "mechanism": "m",
+                "verdict": {"reason": "no edge", "reopen_if": "new entry"},
+            }
+        ]
+
+
+@pytest.mark.asyncio
+async def test_register_tool_returns_register_cards_and_never_blocks(db, monkeypatch):
+    from fwbg_agents.agents import researcher as researcher_module
+
+    captured: dict = {}
+    monkeypatch.setattr(researcher_module.tool_registry, "registered", _spy_registered(captured))
+
+    model = FunctionModel(_final_only_handler(_hyp_args()))
+    researcher = Researcher(db, model=model, search_client=None, register_client=_Register())
+    await researcher.run(ResearcherInput(asset_class="FOREX"))
+
+    matches = await captured["during"]["lookup_register_tool"](["intraday", "momentum"])
+    assert [(m["research_id"], m["status"], m["reopen_if"]) for m in matches] == [
+        ("S-0001", "parked", "new entry")
+    ]
+
+
+@pytest.mark.asyncio
+async def test_register_tool_without_client_returns_nothing(db, monkeypatch):
+    from fwbg_agents.agents import researcher as researcher_module
+
+    captured: dict = {}
+    monkeypatch.setattr(researcher_module.tool_registry, "registered", _spy_registered(captured))
+
+    model = FunctionModel(_final_only_handler(_hyp_args()))
+    await Researcher(db, model=model, search_client=None).run(ResearcherInput(asset_class="FOREX"))
+
+    assert await captured["during"]["lookup_register_tool"](["intraday"]) == []
