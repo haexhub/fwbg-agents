@@ -15,6 +15,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+import httpx
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import asc, desc, select
@@ -40,6 +41,7 @@ from fwbg_agents.persistence.models import (
     StrategyTag,
     Transition,
 )
+from fwbg_agents.tools.fwbg_client import FwbgClient, FwbgClientError
 from fwbg_agents.tools.fwbg_paper_reader import read_paper_positions, read_paper_summary
 
 log = logging.getLogger(__name__)
@@ -89,6 +91,8 @@ def _serialize_strategy(s: Strategy, tags: list[str] | None = None) -> dict[str,
         # Set once the strategy was published into fwbg (research flow or
         # runner) — the dashboard links to /strategy/<name> with it.
         "fwbg_strategy_name": (s.metadata_json or {}).get("fwbg_strategy_name"),
+        # The register card, stored on the lineage root only (Plan 028 D1).
+        "research_id": (s.metadata_json or {}).get("research_id"),
         "tags": tags or [],
         "created_at": s.created_at.isoformat() if s.created_at else None,
         "updated_at": s.updated_at.isoformat() if s.updated_at else None,
@@ -223,6 +227,62 @@ async def get_strategy(
         "strategy": _serialize_strategy(s, tags=list(tags)),
         "transitions": [_serialize_transition(t) for t in transitions],
     }
+
+
+class AttachCardBody(BaseModel):
+    """Request body for PUT /strategies/{id}/research — an existing register card."""
+
+    research_id: str = Field(pattern=r"^S-[0-9]{4}$")
+
+
+@router.put("/strategies/{strategy_id}/research")
+async def put_strategy_research(
+    strategy_id: int,
+    body: AttachCardBody,
+    session: AsyncSession = Depends(get_session),
+) -> dict[str, Any]:
+    """Attach an existing register card to a lineage root that has none (Plan 028 D8).
+
+    For a root created without a usable ``hypothesis.json``, whose first run would
+    otherwise fail for lack of a card. Only a root can carry a card; one that
+    already has a different card keeps it (409), the same card is a no-op.
+    """
+    s = (
+        await session.execute(select(Strategy).where(Strategy.id == strategy_id))
+    ).scalar_one_or_none()
+    if s is None:
+        raise HTTPException(status_code=404, detail=f"strategy {strategy_id} not found")
+    if s.parent_strategy_id is not None:
+        raise HTTPException(
+            status_code=409,
+            detail=f"strategy {strategy_id} is not a lineage root; the card belongs to its root",
+        )
+    current = (s.metadata_json or {}).get("research_id")
+    if current == body.research_id:
+        return {"strategy_id": s.id, "research_id": current}
+    if current:
+        raise HTTPException(
+            status_code=409, detail=f"strategy {strategy_id} already has card {current}"
+        )
+
+    fwbg = FwbgClient(base_url=settings.fwbg_api_url, api_key=settings.fwbg_api_key)
+    try:
+        await fwbg.get_research_card(body.research_id)
+    except FwbgClientError as exc:
+        if exc.status == 404:
+            raise HTTPException(
+                status_code=404, detail=f"research card {body.research_id} not found"
+            ) from exc
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    except httpx.HTTPError as exc:
+        raise HTTPException(status_code=502, detail=f"fwbg unreachable: {exc}") from exc
+    finally:
+        await fwbg.aclose()
+
+    # Reassign rather than mutate: JSON columns do not track in-place edits.
+    s.metadata_json = {**(s.metadata_json or {}), "research_id": body.research_id}
+    await session.commit()
+    return {"strategy_id": s.id, "research_id": body.research_id}
 
 
 @router.get("/strategies/{strategy_id}/hypothesis")

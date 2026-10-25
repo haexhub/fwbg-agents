@@ -27,7 +27,10 @@ through fwbg-agents), and abandoning a whole lineage leaves a verdict on its car
   records nothing. It writes only when no member of the lineage is left that is not abandoned
   (a live strategy counts), only for a lineage that has a card, and never raises: the abandon is
   done, a failed verdict is logged, a `warning` is not retried.
-- **Not in this plan:** attaching an existing card to a root afterwards, and its dashboard UI.
+- **Attach a card:** `PUT /strategies/{id}/research` sets an existing card on a lineage root that has
+  none (the follow-up named in plan 028). Only a root, only while it has no other card; fwbg must
+  know the card (404 if not, 502 if fwbg is unreachable). `research_id` is part of the strategy
+  response, so the dashboard can show it.
 
 ## Tasks
 
@@ -35,3 +38,4 @@ through fwbg-agents), and abandoning a whole lineage leaves a verdict on its car
 2. `lookup_register_prior_art`, `own_research_ids`; Researcher tool, prompt rule, `register_client`
    threaded through `research_flow`.
 3. `record_abandon_verdict` and the three call sites; `register_reject_min_confidence`.
+4. `PUT /strategies/{id}/research`, `research_id` in the strategy response.
