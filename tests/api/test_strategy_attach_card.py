@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from datetime import UTC, datetime
 from typing import ClassVar
 
@@ -143,6 +144,7 @@ async def test_attach_unknown_strategy_is_404(api):
         (FwbgClientError(404, "no such card"), 404),
         (FwbgClientError(500, "boom"), 502),
         (httpx.ConnectError("down"), 502),
+        (json.JSONDecodeError("invalid JSON", "", 0), 502),
     ],
 )
 async def test_attach_maps_register_errors_and_stores_nothing(api, error, status):

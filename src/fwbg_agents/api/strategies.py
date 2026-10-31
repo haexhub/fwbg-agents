@@ -274,7 +274,7 @@ async def put_strategy_research(
                 status_code=404, detail=f"research card {body.research_id} not found"
             ) from exc
         raise HTTPException(status_code=502, detail=str(exc)) from exc
-    except httpx.HTTPError as exc:
+    except (httpx.HTTPError, json.JSONDecodeError) as exc:
         raise HTTPException(status_code=502, detail=f"fwbg unreachable: {exc}") from exc
     finally:
         await fwbg.aclose()
