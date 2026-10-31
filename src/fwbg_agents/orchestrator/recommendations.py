@@ -43,6 +43,7 @@ from fwbg_agents.orchestrator.lifecycle import (
 )
 from fwbg_agents.orchestrator.lineage import generation_depth
 from fwbg_agents.orchestrator.promote_gate import run_promote_gate
+from fwbg_agents.orchestrator.research_card import record_abandon_verdict
 from fwbg_agents.persistence.models import (
     Strategy,
     StrategyState,
@@ -211,6 +212,17 @@ async def validate_and_apply(
                 "recommendation": _rec_to_dict(rec),
             },
             created_by="analyst",
+        )
+        await record_abandon_verdict(
+            session,
+            strategy,
+            reason=rec.post_mortem_summary,
+            rejected=(
+                rec.confidence >= settings.register_reject_min_confidence
+                and await generation_depth(session, strategy)
+                >= settings.min_iterations_before_abandon
+            ),
+            fwbg=fwbg_client,
         )
         # Refresh the global lessons digest so the next Researcher sees this
         # failure (Plan 009 WP5). Non-fatal — an abandon must still complete.

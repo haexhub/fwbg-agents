@@ -18,17 +18,26 @@ import weakref
 from pathlib import Path
 from typing import Annotated, Any, Protocol
 
+import httpx
 from pydantic import BaseModel, Field, StringConstraints, ValidationError, model_validator
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from fwbg_agents.config import settings
 from fwbg_agents.orchestrator.lifecycle import strategy_dir
+from fwbg_agents.orchestrator.lineage import family_strategies
 from fwbg_agents.orchestrator.lineage_boundary import get_or_freeze_boundary, lineage_root
-from fwbg_agents.persistence.models import Strategy
+from fwbg_agents.persistence.models import Strategy, StrategyState
+from fwbg_agents.tools.fwbg_client import FwbgClient, FwbgClientError
 
 log = logging.getLogger(__name__)
 
 NOTE_MAX_CHARS = 240
+VERDICT_REASON_MAX_CHARS = 300
+VERDICT_ACTOR = "fwbg-agents"
+# A card cannot be closed without a condition for reopening it.
+_REOPEN_IF_REJECTED = "a different entry, filter or exit mechanism, not further tuning of this one"
+_REOPEN_IF_PARKED = "the reason given here no longer applies, or the idea gets a new mechanism"
 # Few enough that a universe suffix leaves most of the note to the reason.
 _NOTE_MAX_ASSETS = 5
 
@@ -42,6 +51,12 @@ class ResearchCardError(Exception):
 class _CardClient(Protocol):
     async def create_research_card(
         self, *, title: str, tags: list[str], hypothesis: str, mechanism: str, cutoff: str
+    ) -> dict[str, Any]: ...
+
+
+class _VerdictClient(Protocol):
+    async def set_research_status(
+        self, research_id: str, *, status: str, reason: str, actor: str, reopen_if: str | None
     ) -> dict[str, Any]: ...
 
 
@@ -133,6 +148,62 @@ async def ensure_research_id(session: AsyncSession, strategy: Strategy, fwbg: _C
         root.metadata_json = {**(root.metadata_json or {}), "research_id": research_id}
         await session.commit()
     return research_id
+
+
+async def record_abandon_verdict(
+    session: AsyncSession,
+    strategy: Strategy,
+    *,
+    reason: str,
+    rejected: bool = False,
+    fwbg: _VerdictClient | None = None,
+) -> None:
+    """Park (or reject) the lineage's research card once the whole lineage is abandoned.
+
+    Call after ``strategy`` was moved to ABANDONED. A card is one hypothesis, so
+    an abandon only ends it when no other member of the lineage is still alive;
+    a lineage without a card (never run) has nothing to record. ``rejected`` is
+    for a considered Analyst abandon, everything else parks the card, which
+    reopens without friction. Without ``fwbg`` a client is built from the settings.
+
+    Never raises: the abandon is already done and a verdict is bookkeeping. A
+    ``warning`` in fwbg's answer (written, not committed) is logged, and the
+    call is not retried.
+    """
+    try:
+        root = await lineage_root(session, strategy)
+        research_id = (root.metadata_json or {}).get("research_id")
+        if not research_id:
+            return
+        # LIVE_TRADING is terminal in the state machine but very much alive.
+        members = await family_strategies(session, strategy)
+        if any(m.current_state != StrategyState.ABANDONED.value for m in members):
+            return
+        owned_client: FwbgClient | None = None
+        if fwbg is None:
+            owned_client = FwbgClient(base_url=settings.fwbg_api_url, api_key=settings.fwbg_api_key)
+            client: _VerdictClient = owned_client
+        else:
+            client = fwbg
+        try:
+            response = await client.set_research_status(
+                str(research_id),
+                status="rejected" if rejected else "parked",
+                reason=_one_line(reason)[:VERDICT_REASON_MAX_CHARS],
+                actor=VERDICT_ACTOR,
+                reopen_if=_REOPEN_IF_REJECTED if rejected else _REOPEN_IF_PARKED,
+            )
+        finally:
+            if owned_client is not None:
+                await owned_client.aclose()
+        if "warning" in response:
+            log.warning(
+                "research_card: verdict for %s written with warning: %s",
+                research_id,
+                response["warning"],
+            )
+    except (FwbgClientError, httpx.HTTPError, json.JSONDecodeError) as exc:
+        log.warning("research_card: could not record verdict for %s: %s", strategy.slug, exc)
 
 
 def _load_card_hypothesis(root_slug: str) -> _CardHypothesis:

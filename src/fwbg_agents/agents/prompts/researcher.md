@@ -16,6 +16,11 @@ You operate under these hard rules (do not violate even if asked):
    timeframe alone is not enough — different entry logic, different filter,
    different exit mechanism, different regime assumption); listing them in
    `differentiates_from` is optional context, not required.
+   Also call `lookup_register_tool` with your tags: it returns ideas tested
+   before outside this system's own strategies, with their verdict and the
+   condition under which they would be reopened. These never reject your
+   hypothesis, but do not propose a rejected or parked idea again unless its
+   reopen condition applies — say in `hypothesis` which one it is and why.
 
 2. **Web research is optional but strongly preferred.** Use `search_web` to look
    up recent literature, blog posts, or empirical reports about the edge you are

@@ -397,3 +397,39 @@ async def test_phase2_valid_narrowing_recorded(db_and_backtested, monkeypatch):
             session, s, _modify(["EURUSD", "GBPUSD", "USDJPY"]), metrics=_BAD_METRICS
         )
         assert tr is None  # valid narrowing recorded, no rejection
+
+
+@pytest.mark.parametrize(
+    ("confidence", "depth", "rejected"),
+    [(0.85, 3, True), (0.5, 3, False), (0.85, 2, False)],
+)
+async def test_abandon_rejects_the_card_only_when_confident_and_deep_enough(
+    db_and_backtested, monkeypatch, confidence, depth, rejected
+):
+    from fwbg_agents.config import settings
+    from fwbg_agents.orchestrator import recommendations
+
+    SessionMaker, sid, _tmp_path, _criteria = db_and_backtested
+    monkeypatch.setattr(settings, "min_iterations_before_abandon", 3)
+    calls: list[dict] = []
+
+    async def spy(session, strategy, **kwargs):
+        calls.append(kwargs)
+
+    async def fake_depth(session, strategy):
+        return depth
+
+    monkeypatch.setattr(recommendations, "record_abandon_verdict", spy)
+    monkeypatch.setattr(recommendations, "generation_depth", fake_depth)
+
+    async with SessionMaker() as session:
+        s = (await session.execute(select(Strategy).where(Strategy.id == sid))).scalar_one()
+        rec = Abandon(
+            confidence=confidence,
+            post_mortem_summary="failed across regimes",
+            lessons=["a", "b"],
+        )
+        await validate_and_apply(session, s, rec, metrics=_BAD_METRICS)
+
+    assert [c["rejected"] for c in calls] == [rejected]
+    assert calls[0]["reason"] == "failed across regimes"
