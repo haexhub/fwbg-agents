@@ -210,7 +210,7 @@ async def lookup_register_prior_art(
     """
     try:
         cards = await client.list_research_cards()
-    except (FwbgClientError, httpx.HTTPError) as exc:
+    except (FwbgClientError, httpx.HTTPError, json.JSONDecodeError) as exc:
         log.warning("register prior art unavailable: %s", exc)
         return []
     input_tags = set(tags)

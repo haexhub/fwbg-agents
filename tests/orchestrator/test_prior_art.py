@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from datetime import UTC, datetime
 
 import httpx
@@ -253,7 +254,14 @@ async def test_register_skips_low_overlap_unreadable_and_own_cards():
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("error", [FwbgClientError(500, "boom"), httpx.ConnectError("down")])
+@pytest.mark.parametrize(
+    "error",
+    [
+        FwbgClientError(500, "boom"),
+        httpx.ConnectError("down"),
+        json.JSONDecodeError("invalid json", "", 0),
+    ],
+)
 async def test_register_outage_yields_no_matches(error):
     assert await lookup_register_prior_art(_Register(error=error), ["intraday"]) == []
 

@@ -179,7 +179,12 @@ async def record_abandon_verdict(
         members = await family_strategies(session, strategy)
         if any(m.current_state != StrategyState.ABANDONED.value for m in members):
             return
-        client = fwbg or FwbgClient(base_url=settings.fwbg_api_url, api_key=settings.fwbg_api_key)
+        owned_client: FwbgClient | None = None
+        if fwbg is None:
+            owned_client = FwbgClient(base_url=settings.fwbg_api_url, api_key=settings.fwbg_api_key)
+            client: _VerdictClient = owned_client
+        else:
+            client = fwbg
         try:
             response = await client.set_research_status(
                 str(research_id),
@@ -189,15 +194,15 @@ async def record_abandon_verdict(
                 reopen_if=_REOPEN_IF_REJECTED if rejected else _REOPEN_IF_PARKED,
             )
         finally:
-            if fwbg is None:
-                await client.aclose()
+            if owned_client is not None:
+                await owned_client.aclose()
         if "warning" in response:
             log.warning(
                 "research_card: verdict for %s written with warning: %s",
                 research_id,
                 response["warning"],
             )
-    except (FwbgClientError, httpx.HTTPError) as exc:
+    except (FwbgClientError, httpx.HTTPError, json.JSONDecodeError) as exc:
         log.warning("research_card: could not record verdict for %s: %s", strategy.slug, exc)
 
 

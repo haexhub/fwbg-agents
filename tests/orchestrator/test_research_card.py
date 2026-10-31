@@ -562,7 +562,12 @@ async def test_verdict_needs_a_card(db):
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    "error", [FwbgClientError(409, "card is not active"), httpx.ConnectError("down")]
+    "error",
+    [
+        FwbgClientError(409, "card is not active"),
+        httpx.ConnectError("down"),
+        json.JSONDecodeError("invalid json", "", 0),
+    ],
 )
 async def test_verdict_failure_never_raises(db, error):
     async with db() as session:
