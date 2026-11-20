@@ -20,8 +20,8 @@ def _load_backfill_module():
 
 def _fake_fwbg_tree(root: Path) -> Path:
     """Core bundle with a manifest declaring only `foo`, plus an UNdeclared
-    plugin `bar` on disk. Also a premium `baz`. `_iter_plugins` walks the disk,
-    so it must find all three regardless of the manifest."""
+    plugin `bar` on disk. `_iter_plugins` walks the disk, so it must find both
+    regardless of the manifest."""
     bundle = root / "src" / "fwbg" / "plugins" / "fwbg-core"
     bundle.mkdir(parents=True)
     (bundle / "manifest.json").write_text(
@@ -36,26 +36,78 @@ def _fake_fwbg_tree(root: Path) -> Path:
     bar = bundle / "indicators" / "bar"
     bar.mkdir(parents=True)
     (bar / "__init__.py").write_text("class BarIndicator:\n    pass\n")
+    return foo
 
-    # Premium root plugin.
-    premium = (
-        root / "packages" / "fwbg-premium" / "src" / "fwbg_premium" / "plugins" / "fwbg-premium"
-    )
-    baz = premium / "models" / "baz"
+
+def _fake_installed_package(root: Path) -> Path:
+    """Plugins dir of a separately installed package (outside the fwbg tree)."""
+    plugins_dir = root / "site" / "fwbg_premium" / "plugins"
+    baz = plugins_dir / "fwbg-premium" / "models" / "baz"
     baz.mkdir(parents=True)
     (baz / "__init__.py").write_text("class BazModel:\n    pass\n")
-    return foo
+    return plugins_dir
 
 
 def test_iter_plugins_finds_declared_and_undeclared(tmp_path):
     mod = _load_backfill_module()
     foo_dir = _fake_fwbg_tree(tmp_path)
-    entries = list(mod._iter_plugins(tmp_path))
+    package_dir = _fake_installed_package(tmp_path)
+    entries = list(mod._iter_plugins(tmp_path, extra_roots=[package_dir]))
     slugs = {slug for slug, _cat, _dir in entries}
-    # manifest-declared, undeclared, and premium-root plugins all discovered
+    # manifest-declared, undeclared, and installed-package plugins all discovered
     assert {"foo", "bar", "baz"} <= slugs
     assert ("foo", "indicators", foo_dir) in entries
     assert foo_dir.is_dir()
+
+
+def test_iter_plugins_core_only_without_installed_package(tmp_path):
+    mod = _load_backfill_module()
+    _fake_fwbg_tree(tmp_path)
+    slugs = {slug for slug, _cat, _dir in mod._iter_plugins(tmp_path, extra_roots=[])}
+    assert slugs == {"foo", "bar"}
+
+
+def test_old_in_tree_premium_location_is_not_scanned(tmp_path):
+    mod = _load_backfill_module()
+    _fake_fwbg_tree(tmp_path)
+    old = tmp_path / "packages" / "fwbg-premium" / "src" / "fwbg_premium" / "plugins"
+    stale = old / "fwbg-premium" / "models" / "stale"
+    stale.mkdir(parents=True)
+    (stale / "__init__.py").write_text("class Stale:\n    pass\n")
+    slugs = {slug for slug, _cat, _dir in mod._iter_plugins(tmp_path, extra_roots=[])}
+    assert "stale" not in slugs
+
+
+class _FakeEntryPoint:
+    def __init__(self, name, loaded):
+        self.name = name
+        self._loaded = loaded
+
+    def load(self):
+        if isinstance(self._loaded, Exception):
+            raise self._loaded
+        return self._loaded
+
+
+def test_installed_plugin_roots_resolves_entry_points(tmp_path, monkeypatch):
+    mod = _load_backfill_module()
+    package_dir = _fake_installed_package(tmp_path)
+    eps = [
+        _FakeEntryPoint("fwbg-premium", lambda: package_dir),
+        _FakeEntryPoint("dup", lambda: package_dir),
+        _FakeEntryPoint("broken", ImportError("boom")),
+        _FakeEntryPoint("missing", lambda: tmp_path / "nope"),
+    ]
+    monkeypatch.setattr(mod, "entry_points", lambda group: eps)
+    assert mod.installed_plugin_roots() == [package_dir.resolve()]
+
+
+def test_installed_plugin_roots_empty_when_not_installed(monkeypatch, caplog):
+    mod = _load_backfill_module()
+    monkeypatch.setattr(mod, "entry_points", lambda group: [])
+    with caplog.at_level("INFO", logger="backfill_plugin_specs"):
+        assert mod.installed_plugin_roots() == []
+    assert "core plugins only" in caplog.text
 
 
 def test_read_plugin_source_excludes_tests(tmp_path):
