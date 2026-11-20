@@ -73,6 +73,22 @@ class FwbgClientError(RuntimeError):
         super().__init__(f"fwbg returned {status}: {body}")
 
 
+PLUGIN_UPLOAD_ENV = "FWBG_ALLOW_PLUGIN_UPLOAD"
+
+
+class PluginUploadDisabledError(FwbgClientError):
+    """fwbg refused POST /api/plugins because plugin upload is switched off."""
+
+    def __init__(self, body: str):
+        """Initialize."""
+        super().__init__(403, body)
+        self.args = (
+            f"fwbg rejected plugin registration (403): plugin upload is disabled on the fwbg "
+            f"backend. Set {PLUGIN_UPLOAD_ENV}=1 in the fwbg backend's environment to enable "
+            f"adoption of agent-authored plugins (server said: {body})",
+        )
+
+
 class FwbgClient:
     """Async HTTP client for the fwbg REST API."""
 
@@ -405,18 +421,25 @@ class FwbgClient:
 
         Returns ``{"fqn": "agent-authored:<slug>", "category": ..., "slug": ...}``.
         Raises FwbgClientError on any non-2xx response (incl. 422 when fwbg's
-        own validation rejects the code).
+        own validation rejects the code) and its subclass
+        PluginUploadDisabledError on the 403 fwbg returns while the backend
+        runs without ``FWBG_ALLOW_PLUGIN_UPLOAD``.
         """
-        return await self._post(
-            "/api/plugins",
-            {
-                "slug": slug,
-                "python_code": python_code,
-                "kind": kind,
-                "description": description,
-                "spec_md": spec_md,
-                "tests_code": tests_code,
-                "version": version,
-                "overwrite": overwrite,
-            },
-        )
+        try:
+            return await self._post(
+                "/api/plugins",
+                {
+                    "slug": slug,
+                    "python_code": python_code,
+                    "kind": kind,
+                    "description": description,
+                    "spec_md": spec_md,
+                    "tests_code": tests_code,
+                    "version": version,
+                    "overwrite": overwrite,
+                },
+            )
+        except FwbgClientError as exc:
+            if exc.status == 403 and PLUGIN_UPLOAD_ENV in exc.body:
+                raise PluginUploadDisabledError(exc.body) from exc
+            raise

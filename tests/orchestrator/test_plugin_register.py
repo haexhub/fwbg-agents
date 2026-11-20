@@ -223,3 +223,81 @@ async def test_fwbg_client_register_plugin_posts_correct_body():
     assert body["kind"] == "indicator"
     assert body["overwrite"] is True
     assert body["spec_md"] == "# Spec"
+
+
+@pytest.mark.asyncio
+async def test_register_plugin_403_names_the_upload_env_var():
+    """fwbg's upload API is opt-in; the 403 must say which flag to set."""
+    import httpx
+
+    from fwbg_agents.tools.fwbg_client import (
+        FwbgClient,
+        FwbgClientError,
+        PluginUploadDisabledError,
+    )
+
+    async def _forbidden(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            403,
+            json={
+                "detail": "Plugin registration is disabled on this server. "
+                "Set FWBG_ALLOW_PLUGIN_UPLOAD=1 to enable it."
+            },
+        )
+
+    http = httpx.AsyncClient(base_url="http://fwbg", transport=httpx.MockTransport(_forbidden))
+    client = FwbgClient(base_url="http://fwbg", http=http)
+    with pytest.raises(PluginUploadDisabledError) as info:
+        await client.register_plugin(slug="x", python_code="# code", kind="indicator")
+    await client.aclose()
+
+    assert isinstance(info.value, FwbgClientError)
+    assert info.value.status == 403
+    assert "FWBG_ALLOW_PLUGIN_UPLOAD=1" in str(info.value)
+    assert "fwbg backend" in str(info.value)
+
+
+@pytest.mark.asyncio
+async def test_register_plugin_other_403_is_not_reported_as_upload_disabled():
+    import httpx
+
+    from fwbg_agents.tools.fwbg_client import (
+        FwbgClient,
+        FwbgClientError,
+        PluginUploadDisabledError,
+    )
+
+    async def _forbidden(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(403, json={"detail": "Path traversal not allowed"})
+
+    http = httpx.AsyncClient(base_url="http://fwbg", transport=httpx.MockTransport(_forbidden))
+    client = FwbgClient(base_url="http://fwbg", http=http)
+    with pytest.raises(FwbgClientError) as info:
+        await client.register_plugin(slug="x", python_code="# code", kind="indicator")
+    await client.aclose()
+
+    assert not isinstance(info.value, PluginUploadDisabledError)
+
+
+@pytest.mark.asyncio
+async def test_upload_disabled_message_reaches_run_event(tmp_path, monkeypatch):
+    """The flow stays best-effort but the emitted failure names the env var."""
+    from fwbg_agents.config import settings
+    from fwbg_agents.tools.fwbg_client import PluginUploadDisabledError
+
+    monkeypatch.setattr(settings, "data_dir", tmp_path)
+    plugin = _plugin(tmp_path)
+    client = _mock_client()
+    client.register_plugin = AsyncMock(
+        side_effect=PluginUploadDisabledError("Set FWBG_ALLOW_PLUGIN_UPLOAD=1")
+    )
+
+    with (
+        patch("fwbg_agents.orchestrator.plugin_flow.FwbgClient", return_value=client),
+        patch("fwbg_agents.orchestrator.plugin_flow.emit_run_event") as emit,
+    ):
+        await _register_verified_plugin_in_fwbg(plugin, agent_run_id=7)
+
+    emit.assert_called_once()
+    assert emit.call_args.args[:2] == (7, "plugin_registration_failed")
+    assert "FWBG_ALLOW_PLUGIN_UPLOAD=1" in emit.call_args.kwargs["error"]
