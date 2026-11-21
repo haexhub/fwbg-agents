@@ -660,7 +660,7 @@ dev = [
 [[package]]
 name = "fwbg-sdk"
 version = "1.0.0"
-source = { git = "https://github.com/haexhub/fwbg?subdirectory=packages%2Ffwbg-sdk&branch=main#8306d90b9979d702c7e1f1f882014e7e5e3c6313" }
+source = { git = "https://github.com/haexhub/fwbg?subdirectory=packages%2Ffwbg-sdk&branch=main#6bf8ad84e83b3c5e703d6027513d6acaa57204f3" }
 dependencies = [
     { name = "click" },
     { name = "numpy" },
