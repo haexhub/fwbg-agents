@@ -19,6 +19,8 @@ from __future__ import annotations
 import argparse
 import asyncio
 import logging
+from collections.abc import Iterator, Sequence
+from importlib.metadata import entry_points
 from pathlib import Path
 
 from fwbg_agents.config import settings
@@ -32,9 +34,39 @@ log = logging.getLogger("backfill_plugin_specs")
 
 # This dev-time tool legitimately reads the fwbg repo off disk (unlike the
 # runtime catalog, which is API-only). Plugins live at
-# <root>/<bundle>/<category>/<slug>/__init__.py under both roots.
+# <root>/<bundle>/<category>/<slug>/__init__.py under every root.
 _FWBG_CORE_REL = Path("src/fwbg/plugins")
-_FWBG_PREMIUM_REL = Path("packages/fwbg-premium/src/fwbg_premium/plugins")
+# fwbg-premium is a separately installed package. Like fwbg itself, this tool
+# finds it through the entry point group below; each entry point resolves to a
+# callable returning that package's plugins directory.
+_PLUGIN_PACKAGES_GROUP = "fwbg.plugin_packages"
+
+
+def installed_plugin_roots() -> list[Path]:
+    """Plugin directories contributed by installed packages (entry points).
+
+    Returns an empty list when no such package (e.g. fwbg-premium) is installed;
+    the backfill then covers the core plugins only.
+    """
+    roots: list[Path] = []
+    for ep in entry_points(group=_PLUGIN_PACKAGES_GROUP):
+        try:
+            plugins_dir = Path(ep.load()()).resolve()
+        except (ImportError, AttributeError, TypeError, OSError) as exc:
+            log.warning("skip plugin package %r: cannot resolve its plugins dir: %s", ep.name, exc)
+            continue
+        if not plugins_dir.is_dir():
+            log.warning("skip plugin package %r: %s is not a directory", ep.name, plugins_dir)
+            continue
+        if plugins_dir not in roots:
+            roots.append(plugins_dir)
+    if not roots:
+        log.info(
+            "no installed plugin package found via entry point group %r "
+            "(fwbg-premium not installed): processing core plugins only",
+            _PLUGIN_PACKAGES_GROUP,
+        )
+    return roots
 
 
 def _read_plugin_source(plugin_dir: Path) -> str:
@@ -50,14 +82,21 @@ def _read_plugin_source(plugin_dir: Path) -> str:
     return "\n\n".join(parts)
 
 
-def _iter_plugins(fwbg_root: Path):
-    """Yield (slug, category, plugin_dir) for EVERY plugin on disk under both
-    roots — not just those declared in a bundle manifest.
+def _iter_plugins(
+    fwbg_root: Path, extra_roots: Sequence[Path] | None = None
+) -> Iterator[tuple[str, str, Path]]:
+    """Yield (slug, category, plugin_dir) for EVERY plugin on disk under the
+    core root and the installed plugin packages — not just those declared in a
+    bundle manifest.
+
+    ``extra_roots`` are plugin directories of installed packages; None resolves
+    them through the ``fwbg.plugin_packages`` entry point group.
 
     Layout: <root>/<bundle>/<category>/<slug>/__init__.py.
     """
-    for rel in (_FWBG_CORE_REL, _FWBG_PREMIUM_REL):
-        root = fwbg_root / rel
+    if extra_roots is None:
+        extra_roots = installed_plugin_roots()
+    for root in (fwbg_root / _FWBG_CORE_REL, *extra_roots):
         if not root.is_dir():
             continue
         for bundle_dir in sorted(p for p in root.iterdir() if p.is_dir()):

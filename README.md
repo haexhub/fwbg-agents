@@ -46,6 +46,21 @@ TAVILY_API_KEY=...
 FWBG_API_URL=http://localhost:8420
 ```
 
+### fwbg backend requirements
+
+- **Plugin adoption needs `FWBG_ALLOW_PLUGIN_UPLOAD=1` on the fwbg backend.**
+  Verified plugins are registered through `POST /api/plugins`. fwbg disables
+  that endpoint by default (it executes uploaded code) and answers 403 until
+  the flag is set in the *backend's* environment (not this service's). Without
+  it, plugin evaluation still completes, but registration fails (best-effort)
+  and the `plugin_registration_failed` run event and the log name the flag.
+- **fwbg-premium is optional.** It is a separately installed package that fwbg
+  discovers through the `fwbg.plugin_packages` entry point. This service reads
+  plugins only through the fwbg API; `scripts/backfill_plugin_specs.py` (which
+  reads plugin sources off disk) resolves the package through the same entry
+  point and covers the core plugins only when it is not installed in the
+  environment the script runs in.
+
 ## Development
 
 ```bash
