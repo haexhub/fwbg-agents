@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "checked": {
-    "source_hash": "1b7f51502d5db91cfbcd9895535cf80a1092198b7a8a84fa4c39933127b2af3a",
+    "source_hash": "2794b46bcee6ab66dabbee444dfab2cfdc40014d595b5aecbc5690bfcebf48d9",
     "prompt_hash": "aad1b9eb44b8d38d2bb92a30d9806c85710edad91159543012d0d3a0c686372a"
   },
   "decisions": {
@@ -67,6 +67,27 @@
       },
       "asked_at": "2026-11-22T23:34:25Z",
       "answered_at": "2026-11-22T23:34:25Z"
+    },
+    "43b3458be6ed92b0c0df225ecbc30af1957c2a2d4b0cceb373afad2029c52509": {
+      "kind": "duplicate",
+      "summary": "Both fragments mandate that /speckit-plan must check plans/specs against the constitution's principles, restating the same instruction.",
+      "passages": [
+        {
+          "scoped_id": "com.github.haexmas.atoms.spaex-constitution/constitution-enforcement-tooling",
+          "text_hash": "339ca1f7454a677481f70a239efbccca9bb3b78fa865a801fb5125f96aff29b0",
+          "text": "`/speckit-plan` and `/speckit-analyze` MUST check plans and cross-artifact consistency against this constitution. CI does not yet mechanically enforce this; when introduced, it MUST validate that no committed file violates the no-secrets-in-git, no-local-absolute-paths, or cross-repo-refs-pin-immutable-revisions principles."
+        },
+        {
+          "scoped_id": "com.github.haexmas.atoms.spaex-constitution/speckit-workflow-adherence",
+          "text_hash": "ca90eeb6cd9958d7adeed4abbb2160528be5fca24fd5429c33b7823801066a2d",
+          "text": "Every feature or spec created via `/speckit-specify` **MUST** be checked against this constitution's principles during `/speckit-plan`; any conflict is resolved by changing the plan or escalated to a constitution amendment, never silently accepted as an exception. The project's active speckit workflow, declared at `.specify/workflows/speckit/workflow.yml`, MUST be followed for every primary task landing, invoking the named commands at their corresponding stages; when that file is absent, the built-in speckit skills serve as the implicit default and MUST still be followed. Freehand edits against source files are permitted only for review-fix responses on an already-open PR, or follow-up doc-alignment surfaced during a walkthrough test, never for the primary task landing itself."
+        }
+      ],
+      "choice": {
+        "kind": "keep_all"
+      },
+      "asked_at": "2026-11-23T08:04:26Z",
+      "answered_at": "2026-11-23T08:04:26Z"
     },
     "7e45f4104af8df999f7b0fe5e3c723fde92eb2d5e2108f16df604df4fac1ea01": {
       "kind": "duplicate",
